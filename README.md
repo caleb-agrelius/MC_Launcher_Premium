@@ -3,6 +3,7 @@ Development Team:
 - Caleb Agrelius
 - Elijah Gibson
 - Michael Fisher
+- Benjamin Fisher
 
 # MC_Launcher_Premium
 
