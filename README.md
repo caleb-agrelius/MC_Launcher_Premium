@@ -68,6 +68,8 @@ You can also double-click the exe or start it from any folder. The app finds the
 | `installs\<pack>\`  | Extracted pack files                                           |
 | `imgui.ini`         | Window layout                                                  |
 | `settings.json`     | UI scale                                                       |
+| `library.json`      | Packs listed in My Library                                     |
+| `downloads.json`    | Finished downloads, restored on startup                        |
 
 All of these are gitignored.
 
@@ -142,6 +144,7 @@ src/Network/HttpClient.*  libcurl wrapper (downloads, GET, cancel)
 src/Network/Modrinth.*    Modrinth API client (search, versions)
 src/Storage/Installer.*   Zip extraction
 src/Storage/Settings.*    settings.json (UI scale)
+src/Storage/Library.*     library.json (My Library), downloads.json (finished downloads)
 src/UI/Theme.*            Colors, fonts, DPI/UI scaling
 src/UI/Widgets.*          Pack rows, hero banner, chips, spinner
 src/UI/ImageCache.*       Async icon/banner loading (PNG, JPEG, WebP)

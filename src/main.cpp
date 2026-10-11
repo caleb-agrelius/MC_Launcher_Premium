@@ -8,6 +8,7 @@
 #include "Network/HttpClient.h"
 #include "Network/Modrinth.h"
 #include "Storage/Installer.h"
+#include "Storage/Library.h"
 #include "Storage/Settings.h"
 #include "UI/ImageCache.h"
 #include "UI/Theme.h"
@@ -47,6 +48,8 @@ using Theme::S;
 
 static const fs::path kIndexRelativePath = fs::path("resources") / "index.json";
 static const char* kSettingsFile = "settings.json";
+static const char* kLibraryFile = "library.json";
+static const char* kDownloadsFile = "downloads.json";
 static constexpr float kUiScaleStep = 0.1f;
 static constexpr double kSearchDelaySeconds = 0.4; // pause after typing before searching
 static constexpr int kSearchLimit = 30;            // results per Modrinth search
@@ -200,16 +203,6 @@ struct UiQueue {
 			task();
 	}
 };
-
-static bool IsPackInstalled(const Modpack& pack, const std::map<std::string, DownloadState>& downloads)
-{
-	for (const PackFile& file : pack.files) {
-		const auto state = downloads.find(file.url);
-		if (state != downloads.end() && state->second.installed)
-			return true;
-	}
-	return false;
-}
 
 // Asks Windows 10/11 to draw the window's title bar in dark mode to match the app.
 static void UseDarkTitleBar(GLFWwindow* window)
@@ -365,8 +358,86 @@ int main(int argc, char** argv)
 		std::map<std::string, std::string> filesErrors;
 		// Full-size banner lookups, keyed by pack id.
 		std::set<std::string> bannersLoading;
-		// Packs the user has started installing, so My Library survives new searches.
-		std::map<std::string, Modpack> libraryPacks;
+		// Packs whose files were extracted (UI thread only). Saved to library.json so
+		// My Library survives restarts; packs whose installs/ folder is gone are dropped.
+		Library libraryPacks = LoadPackLibrary(kLibraryFile);
+		for (auto it = libraryPacks.begin(); it != libraryPacks.end();) {
+			std::error_code existsError;
+			if (fs::is_directory(fs::path("installs") / it->first, existsError))
+				++it;
+			else
+				it = libraryPacks.erase(it);
+		}
+		log << "Loaded " << libraryPacks.size() << " library pack(s)\n";
+
+		// Finished downloads from earlier sessions, so Discover offers "Install files" again.
+		// Entries whose file was deleted are skipped. Workers aren't running yet, so no lock.
+		for (SavedDownload& saved : LoadSavedDownloads(kDownloadsFile)) {
+			std::error_code existsError;
+			if (!fs::is_regular_file(saved.outPath, existsError))
+				continue;
+			DownloadState state;
+			state.fileName = std::move(saved.fileName);
+			state.outPath = std::move(saved.outPath);
+			state.installed = libraryPacks.count(saved.pack.id) > 0;
+			state.pack = std::move(saved.pack);
+			downloads[saved.url] = std::move(state);
+		}
+		log << "Loaded " << downloads.size() << " saved download(s)\n";
+
+		// Writes every finished download to downloads.json. UI thread only.
+		auto saveDownloads = [&]() {
+			std::vector<SavedDownload> saved;
+			{
+				std::lock_guard<std::mutex> lock(downloadsMutex);
+				for (const auto& [url, state] : downloads) {
+					if (!state.outPath.empty())
+						saved.push_back({ url, state.fileName, state.outPath, state.pack });
+				}
+			}
+			if (!SaveDownloads(kDownloadsFile, saved))
+				log << "Could not save " << kDownloadsFile << "\n";
+		};
+
+		// Extracts a downloaded file into installs/<pack id>/ and, on success, adds
+		// the pack to My Library. Used by Discover and the Downloads page.
+		auto startInstall = [&](const std::string& url, const Modpack& pack, const std::string& zipPath) {
+			{
+				std::lock_guard<std::mutex> lock(downloadsMutex);
+				DownloadState& current = downloads[url];
+				current.installing = true;
+				current.installProgress = 0.0;
+				current.installError.clear();
+			}
+			const std::string targetDir = (fs::path("installs") / pack.id).string();
+			StartWorker(workers, [zipPath, targetDir, &downloads, &downloadsMutex, &shuttingDown, &uiQueue,
+				&libraryPacks, &log, url, pack]() {
+				std::string error;
+				auto progress = [&](int total, int now) {
+					std::lock_guard<std::mutex> lock(downloadsMutex);
+					DownloadState& current = downloads[url];
+					if (total > 0)
+						current.installProgress = static_cast<double>(now) / static_cast<double>(total);
+				};
+				const bool ok = InstallZip(zipPath, targetDir, progress, &error, &shuttingDown);
+				{
+					std::lock_guard<std::mutex> lock(downloadsMutex);
+					DownloadState& current = downloads[url];
+					current.installing = false;
+					if (ok)
+						current.installed = true;
+					else
+						current.installError = error;
+				}
+				if (ok) {
+					uiQueue.Post([&libraryPacks, &log, pack]() {
+						libraryPacks[pack.id] = pack;
+						if (!SavePackLibrary(kLibraryFile, libraryPacks))
+							log << "Could not save " << kLibraryFile << "\n";
+					});
+				}
+			});
+		};
 
 		auto startSearch = [&]() {
 			const int generation = ++searchGeneration;
@@ -689,7 +760,8 @@ int main(int argc, char** argv)
 								// Per-pack folder so same-named files from different packs don't collide.
 								const fs::path packDownloadDir = fs::path("downloads") / pack.id;
 								const std::string outputPath = (packDownloadDir / file.name).string();
-								StartWorker(workers, [&http, &downloads, &downloadsMutex, &shuttingDown, url, packDownloadDir, outputPath]() {
+								StartWorker(workers, [&http, &downloads, &downloadsMutex, &shuttingDown, &uiQueue, &saveDownloads,
+									url, packDownloadDir, outputPath]() {
 									std::string error;
 									std::error_code dirError;
 									fs::create_directories(packDownloadDir, dirError);
@@ -700,13 +772,17 @@ int main(int argc, char** argv)
 										current.now = now;
 									};
 									const bool ok = http.DownloadToFile(url, outputPath, progress, &error, &shuttingDown);
-									std::lock_guard<std::mutex> lock(downloadsMutex);
-									DownloadState& current = downloads[url];
-									current.active = false;
+									{
+										std::lock_guard<std::mutex> lock(downloadsMutex);
+										DownloadState& current = downloads[url];
+										current.active = false;
+										if (ok)
+											current.outPath = outputPath;
+										else
+											current.error = error;
+									}
 									if (ok)
-										current.outPath = outputPath;
-									else
-										current.error = error;
+										uiQueue.Post([&saveDownloads]() { saveDownloads(); });
 								});
 							}
 							if (hasState && !state.error.empty())
@@ -730,36 +806,8 @@ int main(int argc, char** argv)
 							ImGui::TextColored(Theme::kAccent, "Extracted");
 						} else if (!state.outPath.empty()) {
 							AlignRightForButton("Install files");
-							if (ImGui::Button("Install files")) {
-								libraryPacks[pack.id] = pack;
-								{
-									std::lock_guard<std::mutex> lock(downloadsMutex);
-									DownloadState& current = downloads[file.url];
-									current.installing = true;
-									current.installProgress = 0.0;
-									current.installError.clear();
-								}
-								const std::string zipPath = state.outPath;
-								const std::string targetDir = (fs::path("installs") / pack.id).string();
-								const std::string url = file.url;
-								StartWorker(workers, [zipPath, targetDir, &downloads, &downloadsMutex, &shuttingDown, url]() {
-									std::string error;
-									auto progress = [&](int total, int now) {
-										std::lock_guard<std::mutex> lock(downloadsMutex);
-										DownloadState& current = downloads[url];
-										if (total > 0)
-											current.installProgress = static_cast<double>(now) / static_cast<double>(total);
-									};
-									const bool ok = InstallZip(zipPath, targetDir, progress, &error, &shuttingDown);
-									std::lock_guard<std::mutex> lock(downloadsMutex);
-									DownloadState& current = downloads[url];
-									current.installing = false;
-									if (ok)
-										current.installed = true;
-									else
-										current.installError = error;
-								});
-							}
+							if (ImGui::Button("Install files"))
+								startInstall(file.url, pack, state.outPath);
 						}
 
 						if (state.active && state.total > 0.0)
@@ -786,13 +834,8 @@ int main(int argc, char** argv)
 				}
 				ImGui::EndChild();
 			} else if (page == Page::Library) {
-				std::lock_guard<std::mutex> lock(downloadsMutex);
-				bool anyInstalled = false;
 				const float iconSize = S(64.0f);
 				for (const auto& [packId, pack] : libraryPacks) {
-					if (!IsPackInstalled(pack, downloads))
-						continue;
-					anyInstalled = true;
 					BeginCard(pack.id.c_str());
 					PackIconItem(pack, images, iconSize);
 					ImGui::SameLine(0.0f, S(14.0f));
@@ -804,7 +847,7 @@ int main(int argc, char** argv)
 					ImGui::EndGroup();
 					EndCard();
 				}
-				if (!anyInstalled)
+				if (libraryPacks.empty())
 					ImGui::TextDisabled("No extracted modpacks yet. Browse packs and install their files to see them here.");
 			} else {
 				std::vector<std::pair<std::string, DownloadState>> snapshot;
@@ -841,9 +884,14 @@ int main(int argc, char** argv)
 					} else if (state.installed) {
 						ImGui::TextColored(Theme::kAccent, "Files extracted");
 					} else {
-						ImGui::TextDisabled("Downloaded - open Discover to extract this pack.");
+						ImGui::TextDisabled("Downloaded - ready to extract.");
 					}
 					ImGui::EndGroup();
+					if (!state.active && !state.outPath.empty() && !state.installing && !state.installed) {
+						AlignRightForButton("Install files");
+						if (ImGui::Button("Install files"))
+							startInstall(item.first, state.pack, state.outPath);
+					}
 					if (state.active && state.total > 0.0)
 						Widgets::ThinProgressBar(static_cast<float>(state.now / state.total));
 					else if (state.installing)
@@ -872,6 +920,7 @@ int main(int argc, char** argv)
 			if (worker.thread.joinable())
 				worker.thread.join();
 		}
+		uiQueue.Drain(); // saves downloads/extractions that finished during shutdown
 
 		images.Shutdown(); // frees textures while the GL context still exists
 		ImGui_ImplOpenGL3_Shutdown();

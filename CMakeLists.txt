@@ -30,6 +30,7 @@ add_executable(MC_Launcher_Premium
   src/Network/HttpClient.cpp
   src/Network/Modrinth.cpp
   src/Storage/Installer.cpp
+  src/Storage/Library.cpp
   src/Storage/Settings.cpp
   src/UI/ImageCache.cpp
   src/UI/Theme.cpp
