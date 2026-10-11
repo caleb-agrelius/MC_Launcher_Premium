@@ -1,6 +1,7 @@
 # CMake / build output
 /build/
 /build-*/
+/Aggy_Min.*/
 /out/
 /cmake-build-*/
 /CMakeFiles/
