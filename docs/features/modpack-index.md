@@ -1,6 +1,6 @@
 # Modpack Index
 
-How the launcher learns which modpacks exist.
+The local modpack list. Discover normally shows live Modrinth results (see [modrinth-search.md](modrinth-search.md)); this index is the **offline fallback**, used when a Modrinth search fails.
 
 ## Source
 - Loaded once at startup from `resources/index.json` in the data folder, which is found by searching the working directory and the executable's folder and its parents (see [app-shell.md](app-shell.md)).

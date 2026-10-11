@@ -4,6 +4,7 @@ Downloading pack files, tracking their state, and the Downloads page.
 
 ## HTTP download (`src/Network/HttpClient.{h,cpp}`)
 - `HttpClient` wraps libcurl. Its constructor and destructor call `curl_global_init` and `curl_global_cleanup`, and `main()` owns a single instance.
+- Every request sends `User-Agent: MC_Launcher_Premium/0.1` and has a 20 s connect timeout. `Get()` (used for API calls) is covered in [modrinth-search.md](modrinth-search.md).
 - `DownloadToFile(url, outPath, progress, err, cancel)`:
   - Streams the response to `outPath`.
   - Follows redirects and treats HTTP status 400 and above as failure.

@@ -26,6 +26,7 @@ add_executable(MC_Launcher_Premium
   src/main.cpp
   src/Model/Modpack.cpp
   src/Network/HttpClient.cpp
+  src/Network/Modrinth.cpp
   src/Storage/Installer.cpp
   ${imgui_backend_source_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
   ${imgui_backend_source_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
@@ -53,5 +54,9 @@ endif()
 if (WIN32)
   target_compile_definitions(MC_Launcher_Premium PRIVATE "_CRT_SECURE_NO_WARNINGS" "GLFW_INCLUDE_NONE")
 endif()
+
+# Visual Studio: make F5 launch the app (not ALL_BUILD), running from the repo root.
+set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT MC_Launcher_Premium)
+set_target_properties(MC_Launcher_Premium PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
 message(STATUS "Configured MC_Launcher_Premium project (vcpkg mode)")

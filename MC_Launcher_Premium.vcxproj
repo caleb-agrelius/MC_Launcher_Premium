@@ -147,6 +147,7 @@
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\Model\Modpack.cpp" />
     <ClCompile Include="src\Network\HttpClient.cpp" />
+    <ClCompile Include="src\Network\Modrinth.cpp" />
     <ClCompile Include="src\Storage\Installer.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -155,6 +156,7 @@
     <ClInclude Include="src\backends\imgui_impl_opengl3.h" />
     <ClInclude Include="src\Model\Modpack.h" />
     <ClInclude Include="src\Network\HttpClient.h" />
+    <ClInclude Include="src\Network\Modrinth.h" />
     <ClInclude Include="src\Storage\Installer.h" />
   </ItemGroup>
   <ItemGroup>
