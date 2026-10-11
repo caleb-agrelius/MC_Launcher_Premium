@@ -43,4 +43,4 @@ Colors, fonts, and scaling live in `src/UI/Theme.{h,cpp}`. See [ui-theme.md](ui-
 - `PackIconItem(pack, images, size)` lays out a pack icon as an item.
 
 ## Runtime files (gitignored, created in the data folder)
-`app.log`, `imgui.ini` (ImGui layout persistence), `settings.json` (UI scale), `downloads/`, `installs/`.
+`app.log`, `imgui.ini` (ImGui layout persistence), `settings.json` (UI scale), `library.json` (My Library, see [library.md](library.md)), `downloads.json` (finished downloads, see [downloads.md](downloads.md)), `downloads/`, `installs/`.

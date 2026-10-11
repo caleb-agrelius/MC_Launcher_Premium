@@ -31,6 +31,13 @@ Shows one card per entry in `downloads`, with the pack icon, the pack name, and 
 - "Extracting files..." plus a thin progress bar
 - "Extraction failed: ..."
 - "Files extracted"
-- "Downloaded - open Discover to extract this pack."
+- "Downloaded - ready to extract."
 
-If nothing has been started, the page shows a message saying so. Download state is in memory only and resets when the app restarts.
+A finished download that isn't extracted or extracting also gets an **Install files** button. This includes one whose extraction failed. It calls the same `startInstall()` as Discover (see [installation.md](installation.md)), so a saved file can be installed even when Discover now lists a newer version of the pack.
+
+If nothing has been started, the page shows a message saying so.
+
+## Saved downloads (`downloads.json`)
+- When a download succeeds, the worker posts `saveDownloads()` to the `UiQueue`. That call copies every entry with a non-empty `outPath` under the lock and writes them to `downloads.json` with `SaveDownloads` (`src/Storage/Library.{h,cpp}`). Each record holds the URL, `fileName`, `outPath`, and a copy of the pack.
+- At startup, after My Library loads, `LoadSavedDownloads` restores those entries into `downloads`. Entries whose file is no longer on disk are skipped. A restored entry is marked `installed` when its pack is in My Library (see [library.md](library.md)). Otherwise, the Downloads page shows **Install files** for it, and so does Discover while the pack's listed file has the same URL.
+- Progress, failed downloads, and extraction errors aren't saved, so after a restart only finished downloads reappear.

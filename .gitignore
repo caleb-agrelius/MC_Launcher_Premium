@@ -38,6 +38,8 @@ installs/
 app.log
 imgui.ini
 settings.json
+library.json
+downloads.json
 
 # Modpack archives
 *.mrpack
