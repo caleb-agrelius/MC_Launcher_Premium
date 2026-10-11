@@ -37,3 +37,11 @@ bool FetchLatestModrinthVersion(HttpClient& http,
 								ModrinthVersion& out,
 								std::string* err = nullptr,
 								const std::atomic<bool>* cancel = nullptr);
+
+// Looks up a full-size gallery image for a project's banner (the featured image,
+// else the first one). Succeeds with an empty outUrl if the project has no gallery.
+bool FetchModrinthBanner(HttpClient& http,
+						 const std::string& projectIdOrSlug,
+						 std::string& outUrl,
+						 std::string* err = nullptr,
+						 const std::atomic<bool>* cancel = nullptr);

@@ -32,7 +32,7 @@ Run the commands below in **Developer PowerShell for VS 2022** (Start menu), whi
 ```powershell
 git clone https://github.com/microsoft/vcpkg C:\vcpkg
 C:\vcpkg\bootstrap-vcpkg.bat
-C:\vcpkg\vcpkg install glfw3 glad imgui nlohmann-json curl miniz --triplet x64-windows
+C:\vcpkg\vcpkg install glfw3 glad imgui nlohmann-json curl miniz libwebp stb --triplet x64-windows
 ```
 
 ## Build
@@ -67,6 +67,7 @@ You can also double-click the exe or start it from any folder. The app finds the
 | `downloads\<pack>\` | Downloaded `.mrpack` files                                     |
 | `installs\<pack>\`  | Extracted pack files                                           |
 | `imgui.ini`         | Window layout                                                  |
+| `settings.json`     | UI scale                                                       |
 
 All of these are gitignored.
 
@@ -140,6 +141,10 @@ src/Model/Modpack.*       Modpack data + local index loader
 src/Network/HttpClient.*  libcurl wrapper (downloads, GET, cancel)
 src/Network/Modrinth.*    Modrinth API client (search, versions)
 src/Storage/Installer.*   Zip extraction
+src/Storage/Settings.*    settings.json (UI scale)
+src/UI/Theme.*            Colors, fonts, DPI/UI scaling
+src/UI/Widgets.*          Pack rows, hero banner, chips, spinner
+src/UI/ImageCache.*       Async icon/banner loading (PNG, JPEG, WebP)
 resources/index.json      Offline fallback pack list
 docs/features/            What each feature does (start with CLAUDE.md)
 ```

@@ -8,10 +8,15 @@
 #include "Network/HttpClient.h"
 #include "Network/Modrinth.h"
 #include "Storage/Installer.h"
+#include "Storage/Settings.h"
+#include "UI/ImageCache.h"
+#include "UI/Theme.h"
+#include "UI/Widgets.h"
 
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstdint>
 #include <exception>
@@ -31,11 +36,18 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <dwmapi.h>
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
+#pragma comment(lib, "dwmapi.lib")
 #endif
 
 namespace fs = std::filesystem;
+using Theme::S;
 
 static const fs::path kIndexRelativePath = fs::path("resources") / "index.json";
+static const char* kSettingsFile = "settings.json";
+static constexpr float kUiScaleStep = 0.1f;
 static constexpr double kSearchDelaySeconds = 0.4; // pause after typing before searching
 static constexpr int kSearchLimit = 30;            // results per Modrinth search
 
@@ -79,6 +91,7 @@ static fs::path FindDataRoot(const char* argv0)
 
 struct DownloadState {
 	std::string fileName;
+	Modpack pack; // pack the file belongs to, for the Downloads page (name, icon)
 	double total = 0.0;
 	double now = 0.0;
 	bool active = false;
@@ -95,38 +108,6 @@ enum class Page {
 	Library,
 	Downloads
 };
-
-static void ApplyLauncherStyle()
-{
-	ImGui::StyleColorsDark();
-	ImGuiStyle& style = ImGui::GetStyle();
-	style.WindowRounding = 8.0f;
-	style.ChildRounding = 8.0f;
-	style.FrameRounding = 5.0f;
-	style.PopupRounding = 5.0f;
-	style.ScrollbarRounding = 8.0f;
-	style.GrabRounding = 5.0f;
-	style.WindowPadding = ImVec2(18.0f, 16.0f);
-	style.FramePadding = ImVec2(12.0f, 9.0f);
-	style.ItemSpacing = ImVec2(10.0f, 10.0f);
-
-	ImVec4* colors = style.Colors;
-	colors[ImGuiCol_WindowBg] = ImVec4(0.055f, 0.070f, 0.085f, 1.0f);
-	colors[ImGuiCol_ChildBg] = ImVec4(0.075f, 0.090f, 0.105f, 1.0f);
-	colors[ImGuiCol_Border] = ImVec4(0.15f, 0.19f, 0.21f, 1.0f);
-	colors[ImGuiCol_FrameBg] = ImVec4(0.10f, 0.13f, 0.14f, 1.0f);
-	colors[ImGuiCol_FrameBgHovered] = ImVec4(0.14f, 0.20f, 0.17f, 1.0f);
-	colors[ImGuiCol_FrameBgActive] = ImVec4(0.16f, 0.25f, 0.19f, 1.0f);
-	colors[ImGuiCol_Button] = ImVec4(0.16f, 0.34f, 0.22f, 1.0f);
-	colors[ImGuiCol_ButtonHovered] = ImVec4(0.20f, 0.43f, 0.28f, 1.0f);
-	colors[ImGuiCol_ButtonActive] = ImVec4(0.13f, 0.29f, 0.19f, 1.0f);
-	colors[ImGuiCol_Header] = ImVec4(0.13f, 0.25f, 0.18f, 1.0f);
-	colors[ImGuiCol_HeaderHovered] = ImVec4(0.16f, 0.33f, 0.22f, 1.0f);
-	colors[ImGuiCol_HeaderActive] = ImVec4(0.18f, 0.38f, 0.25f, 1.0f);
-	colors[ImGuiCol_CheckMark] = ImVec4(0.38f, 0.80f, 0.49f, 1.0f);
-	colors[ImGuiCol_SliderGrab] = ImVec4(0.30f, 0.68f, 0.40f, 1.0f);
-	colors[ImGuiCol_SliderGrabActive] = ImVec4(0.40f, 0.82f, 0.50f, 1.0f);
-}
 
 static std::string FormatFileSize(std::uint64_t bytes)
 {
@@ -230,6 +211,53 @@ static bool IsPackInstalled(const Modpack& pack, const std::map<std::string, Dow
 	return false;
 }
 
+// Asks Windows 10/11 to draw the window's title bar in dark mode to match the app.
+static void UseDarkTitleBar(GLFWwindow* window)
+{
+#ifdef _WIN32
+	const BOOL dark = TRUE;
+	DwmSetWindowAttribute(glfwGetWin32Window(window), 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, &dark, sizeof(dark));
+#else
+	(void)window;
+#endif
+}
+
+// Rounds to the nearest 5% and keeps the scale within the supported range.
+static float NormalizeUiScale(float scale)
+{
+	return std::clamp(std::round(scale * 20.0f) / 20.0f, kMinUiScale, kMaxUiScale);
+}
+
+// Moves the cursor so a button with this label ends at the right edge of the content region.
+static void AlignRightForButton(const char* label)
+{
+	const float width = ImGui::CalcTextSize(label, nullptr, true).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+	const float x = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - width;
+	ImGui::SameLine(std::max(ImGui::GetCursorPosX(), x));
+}
+
+// Starts a card: a bordered child with the card background color that grows to fit
+// its contents. Pair with EndCard().
+static void BeginCard(const char* id)
+{
+	ImGui::PushStyleColor(ImGuiCol_ChildBg, Theme::kCardBg);
+	ImGui::BeginChild(id, ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY);
+}
+
+static void EndCard()
+{
+	ImGui::EndChild();
+	ImGui::PopStyleColor();
+}
+
+// Draws a pack icon at the cursor and leaves the cursor beside it, ready for SameLine text.
+static void PackIconItem(const Modpack& pack, ImageCache& images, float size)
+{
+	const ImVec2 pos = ImGui::GetCursorScreenPos();
+	ImGui::Dummy(ImVec2(size, size));
+	Widgets::DrawPackIcon(ImGui::GetWindowDrawList(), images.Get(pack.iconUrl), pack, pos, size, S(8.0f));
+}
+
 int main(int argc, char** argv)
 {
 	(void)argc;
@@ -255,8 +283,10 @@ int main(int argc, char** argv)
 		glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
 		glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
 		glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
+		// Size the window in logical pixels, so it isn't tiny on high-DPI (e.g. 4K at 150%) monitors.
+		glfwWindowHint(GLFW_SCALE_TO_MONITOR, GLFW_TRUE);
 
-		GLFWwindow* window = glfwCreateWindow(1280, 760, "MC_Launcher_Premium", nullptr, nullptr);
+		GLFWwindow* window = glfwCreateWindow(1360, 840, "MC Launcher Premium", nullptr, nullptr);
 		if (window == nullptr) {
 			log << "glfwCreateWindow failed\n";
 			glfwTerminate();
@@ -264,6 +294,7 @@ int main(int argc, char** argv)
 		}
 		glfwMakeContextCurrent(window);
 		glfwSwapInterval(1);
+		UseDarkTitleBar(window);
 
 		if (!gladLoadGL()) {
 			fprintf(stderr, "Failed to initialize GL loader\n");
@@ -276,7 +307,16 @@ int main(int argc, char** argv)
 		ImGui::CreateContext();
 		ImGuiIO& io = ImGui::GetIO();
 		io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-		ApplyLauncherStyle();
+
+		// UI scale = monitor DPI scale (from Windows display settings) x the user's UI scale setting.
+		Settings settings = LoadSettings(kSettingsFile);
+		float requestedUiScale = settings.uiScale;
+		float dpiScale = 1.0f;
+		glfwGetWindowContentScale(window, &dpiScale, nullptr);
+		Theme::LoadFonts();
+		Theme::Apply(dpiScale, settings.uiScale);
+		glfwSetWindowSizeLimits(window, static_cast<int>(S(900.0f)), static_cast<int>(S(600.0f)), GLFW_DONT_CARE, GLFW_DONT_CARE);
+		log << "DPI scale " << dpiScale << ", UI scale " << settings.uiScale << "\n";
 
 		if (!ImGui_ImplGlfw_InitForOpenGL(window, true)) {
 			log << "ImGui GLFW backend initialization failed\n";
@@ -303,6 +343,7 @@ int main(int argc, char** argv)
 		Page page = Page::Discover;
 		char search[128] = "";
 		HttpClient http;
+		ImageCache images(http);
 		std::map<std::string, DownloadState> downloads;
 		std::mutex downloadsMutex;
 		std::vector<Worker> workers;
@@ -322,6 +363,8 @@ int main(int argc, char** argv)
 		// Per-pack version lookups for Modrinth results, keyed by pack id.
 		std::set<std::string> filesLoading;
 		std::map<std::string, std::string> filesErrors;
+		// Full-size banner lookups, keyed by pack id.
+		std::set<std::string> bannersLoading;
 		// Packs the user has started installing, so My Library survives new searches.
 		std::map<std::string, Modpack> libraryPacks;
 
@@ -392,13 +435,60 @@ int main(int argc, char** argv)
 			});
 		};
 
+		auto startFetchBanner = [&](const std::string& packId) {
+			bannersLoading.insert(packId);
+			StartWorker(workers, [&http, &uiQueue, &shuttingDown, &packs, &bannersLoading, &log, packId]() {
+				std::string url;
+				std::string error;
+				const bool ok = FetchModrinthBanner(http, packId, url, &error, &shuttingDown);
+				uiQueue.Post([&packs, &bannersLoading, &log, packId, ok, url, error]() {
+					bannersLoading.erase(packId);
+					if (!ok)
+						log << "Banner lookup for " << packId << " failed: " << error << "\n";
+					for (Modpack& pack : packs) {
+						if (pack.id != packId)
+							continue;
+						pack.bannerHiResUrl = url;
+						pack.bannerLoaded = true; // also on failure: keep the thumbnail, don't retry
+					}
+				});
+			});
+		};
+
 		while (!glfwWindowShouldClose(window)) {
 			glfwPollEvents();
 			ReapFinishedWorkers(workers);
 			uiQueue.Drain();
+
+			// Rebuild the style when the window moves to a monitor with a different DPI
+			// or the user changes the UI scale.
+			float contentScale = dpiScale;
+			glfwGetWindowContentScale(window, &contentScale, nullptr);
+			if (contentScale > 0.0f && (contentScale != dpiScale || requestedUiScale != settings.uiScale)) {
+				dpiScale = contentScale;
+				if (requestedUiScale != settings.uiScale) {
+					settings.uiScale = requestedUiScale;
+					if (!SaveSettings(kSettingsFile, settings))
+						log << "Could not save " << kSettingsFile << "\n";
+				}
+				Theme::Apply(dpiScale, settings.uiScale);
+				glfwSetWindowSizeLimits(window, static_cast<int>(S(900.0f)), static_cast<int>(S(600.0f)), GLFW_DONT_CARE, GLFW_DONT_CARE);
+			}
+			images.Update(ImGui::GetTime());
+
 			ImGui_ImplOpenGL3_NewFrame();
 			ImGui_ImplGlfw_NewFrame();
 			ImGui::NewFrame();
+
+			// Ctrl + / Ctrl - / Ctrl 0 change the UI scale (applied next frame).
+			if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Equal) || ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_KeypadAdd))
+				requestedUiScale = NormalizeUiScale(settings.uiScale + kUiScaleStep);
+			if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Minus) || ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_KeypadSubtract))
+				requestedUiScale = NormalizeUiScale(settings.uiScale - kUiScaleStep);
+			if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_0) || ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Keypad0))
+				requestedUiScale = 1.0f;
+
+			const Theme::Fonts& fonts = Theme::GetFonts();
 
 			ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f));
 			ImGui::SetNextWindowSize(io.DisplaySize);
@@ -406,78 +496,116 @@ int main(int argc, char** argv)
 				ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
 				ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBringToFrontOnFocus);
 
-			ImGui::BeginChild("sidebar", ImVec2(205.0f, 0.0f), true);
-			ImGui::TextColored(ImVec4(0.40f, 0.83f, 0.50f, 1.0f), "MC_Launcher_Premium");
-			ImGui::TextDisabled("MINECRAFT JAVA");
-			ImGui::Spacing();
-			ImGui::Separator();
-			ImGui::Spacing();
-
-			if (ImGui::Selectable("Discover", page == Page::Discover, 0, ImVec2(0.0f, 42.0f)))
+			// ---- Sidebar ----
+			ImGui::BeginChild("sidebar", ImVec2(S(230.0f), 0.0f), ImGuiChildFlags_Borders);
+			{
+				// Logo: a little grass block, then the name.
+				ImDrawList* drawList = ImGui::GetWindowDrawList();
+				const ImVec2 logo = ImGui::GetCursorScreenPos();
+				const float block = S(34.0f);
+				const float px = block / 8.0f;
+				for (int y = 0; y < 8; ++y) {
+					for (int x = 0; x < 8; ++x) {
+						const bool grass = y < 3 || (y == 3 && (x * 7 + 3) % 3 == 0);
+						const float shade = 0.85f + 0.15f * static_cast<float>((x * 5 + y * 3) % 4) / 3.0f;
+						const ImVec4 color = grass ? ImVec4(0.30f * shade, 0.68f * shade, 0.36f * shade, 1.0f)
+							: ImVec4(0.47f * shade, 0.33f * shade, 0.22f * shade, 1.0f);
+						drawList->AddRectFilled(ImVec2(logo.x + x * px, logo.y + y * px),
+							ImVec2(logo.x + (x + 1) * px, logo.y + (y + 1) * px), ImGui::GetColorU32(color));
+					}
+				}
+				ImGui::Dummy(ImVec2(block, block));
+				ImGui::SameLine(0.0f, S(12.0f));
+				ImGui::BeginGroup();
+				Widgets::Text(fonts.bold, Theme::kFontHeading, Theme::kText, "MC Launcher");
+				ImGui::SetCursorPosY(ImGui::GetCursorPosY() - S(6.0f));
+				Widgets::Text(fonts.bold, Theme::kFontSmall, Theme::kAccent, "PREMIUM  \xC2\xB7  JAVA");
+				ImGui::EndGroup();
+			}
+			ImGui::Dummy(ImVec2(0.0f, S(14.0f)));
+			Widgets::SectionLabel("BROWSE");
+			if (Widgets::NavItem("Discover", page == Page::Discover))
 				page = Page::Discover;
-			if (ImGui::Selectable("My Library", page == Page::Library, 0, ImVec2(0.0f, 42.0f)))
+			if (Widgets::NavItem("My Library", page == Page::Library))
 				page = Page::Library;
-			if (ImGui::Selectable("Downloads", page == Page::Downloads, 0, ImVec2(0.0f, 42.0f)))
+			if (Widgets::NavItem("Downloads", page == Page::Downloads))
 				page = Page::Downloads;
 
-			ImGui::SetCursorPosY(ImGui::GetWindowHeight() - 92.0f);
+			// Footer: UI scale control.
+			const float footerHeight = ImGui::GetFrameHeight() + ImGui::GetTextLineHeightWithSpacing() * 2.0f +
+				ImGui::GetStyle().ItemSpacing.y * 3.0f;
+			ImGui::SetCursorPosY(std::max(ImGui::GetCursorPosY(), ImGui::GetWindowHeight() - footerHeight - ImGui::GetStyle().WindowPadding.y));
 			ImGui::Separator();
-			ImGui::TextDisabled("Minecraft Java Edition");
-			ImGui::TextDisabled("Launcher integration");
-			ImGui::TextDisabled("coming soon");
+			Widgets::SectionLabel("UI SCALE");
+			if (ImGui::Button("-", ImVec2(ImGui::GetFrameHeight(), 0.0f)))
+				requestedUiScale = NormalizeUiScale(settings.uiScale - kUiScaleStep);
+			ImGui::SetItemTooltip("Smaller (Ctrl -)");
+			ImGui::SameLine();
+			char scaleLabel[32];
+			std::snprintf(scaleLabel, sizeof(scaleLabel), "%.0f%%##scale", settings.uiScale * 100.0f);
+			const float plusWidth = ImGui::GetFrameHeight();
+			if (ImGui::Button(scaleLabel, ImVec2(ImGui::GetContentRegionAvail().x - plusWidth - ImGui::GetStyle().ItemSpacing.x, 0.0f)))
+				requestedUiScale = 1.0f;
+			ImGui::SetItemTooltip("Reset to 100%% (Ctrl 0)");
+			ImGui::SameLine();
+			if (ImGui::Button("+", ImVec2(plusWidth, 0.0f)))
+				requestedUiScale = NormalizeUiScale(settings.uiScale + kUiScaleStep);
+			ImGui::SetItemTooltip("Larger (Ctrl +)");
+			ImGui::TextDisabled("Launching: coming soon");
 			ImGui::EndChild();
 
+			// ---- Main content ----
 			ImGui::SameLine();
-			ImGui::BeginChild("main_content", ImVec2(0.0f, 0.0f), false);
-			ImGui::TextColored(ImVec4(0.40f, 0.83f, 0.50f, 1.0f), "MINECRAFT  /  MODPACKS");
+			ImGui::BeginChild("main_content", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None);
+			Widgets::Text(fonts.bold, Theme::kFontSmall, Theme::kAccent, "MINECRAFT  /  MODPACKS");
 			if (page == Page::Discover) {
-				ImGui::Text("Discover modpacks");
+				Widgets::Text(fonts.bold, Theme::kFontTitle, Theme::kText, "Discover modpacks");
 				ImGui::TextDisabled("Find a pack, download its files, and prepare it for Minecraft.");
 			} else if (page == Page::Library) {
-				ImGui::Text("My library");
+				Widgets::Text(fonts.bold, Theme::kFontTitle, Theme::kText, "My library");
 				ImGui::TextDisabled("Modpack files you have extracted are listed here.");
 			} else {
-				ImGui::Text("Downloads");
+				Widgets::Text(fonts.bold, Theme::kFontTitle, Theme::kText, "Downloads");
 				ImGui::TextDisabled("Track downloads and extraction progress.");
 			}
-			ImGui::Spacing();
-			ImGui::Separator();
 			ImGui::Spacing();
 
 			if (page == Page::Discover) {
 				ImGui::SetNextItemWidth(-1.0f);
+				ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(S(14.0f), S(11.0f)));
+				ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, S(8.0f));
 				if (ImGui::InputTextWithHint("##search", "Search Modrinth modpacks...", search, sizeof(search))) {
 					searchPending = true;
 					lastSearchEdit = ImGui::GetTime();
 				}
+				ImGui::PopStyleVar(2);
 				if (searchPending && ImGui::GetTime() - lastSearchEdit >= kSearchDelaySeconds) {
 					searchPending = false;
 					startSearch();
 				}
-				if (searching)
+				if (searching) {
+					Widgets::Spinner(Theme::kAccent);
+					ImGui::SameLine();
 					ImGui::TextDisabled("Searching Modrinth...");
-				else if (searchFailed)
-					ImGui::TextColored(ImVec4(1.0f, 0.42f, 0.38f, 1.0f), "%s", searchStatus.c_str());
-				else
+				} else if (searchFailed) {
+					ImGui::TextColored(Theme::kError, "%s", searchStatus.c_str());
+				} else {
 					ImGui::TextDisabled("%s", searchStatus.c_str());
-				ImGui::Spacing();
+				}
 
-				ImGui::BeginChild("pack_list", ImVec2(285.0f, 0.0f), true);
-				ImGui::TextDisabled(search[0] == '\0' ? "MOST DOWNLOADED" : "RESULTS");
-				ImGui::Spacing();
+				// Pack list
+				ImGui::BeginChild("pack_list", ImVec2(S(340.0f), 0.0f), ImGuiChildFlags_Borders);
+				Widgets::SectionLabel(search[0] == '\0' ? "MOST DOWNLOADED" : "RESULTS");
 				for (std::size_t i = 0; i < packs.size(); ++i) {
 					const Modpack& item = packs[i];
-					ImGui::PushID(static_cast<int>(i));
-					if (ImGui::Selectable(item.name.c_str(), selected == static_cast<int>(i),
-						ImGuiSelectableFlags_AllowDoubleClick, ImVec2(0.0f, 54.0f)))
-						selected = static_cast<int>(i);
+					std::string meta;
 					if (item.fromModrinth)
-						ImGui::TextDisabled("  %s  |  %s downloads", item.gameVersion.c_str(),
-							FormatCount(item.downloads).c_str());
+						meta = item.gameVersion + "  \xC2\xB7  " + FormatCount(item.downloads) + " downloads";
 					else
-						ImGui::TextDisabled("  %s  |  %llu files", item.version.c_str(),
-							static_cast<unsigned long long>(item.files.size()));
-					ImGui::Spacing();
+						meta = item.version + "  \xC2\xB7  " + std::to_string(item.files.size()) + " files";
+					ImGui::PushID(static_cast<int>(i));
+					if (Widgets::PackRow(item, images, selected == static_cast<int>(i), meta))
+						selected = static_cast<int>(i);
 					ImGui::PopID();
 				}
 				if (packs.empty() && !searching)
@@ -485,47 +613,44 @@ int main(int argc, char** argv)
 				ImGui::EndChild();
 				ImGui::SameLine();
 
-				ImGui::BeginChild("pack_details", ImVec2(0.0f, 0.0f), true);
+				// Pack details
+				ImGui::BeginChild("pack_details", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders);
 				if (selected >= 0 && selected < static_cast<int>(packs.size())) {
 					const Modpack& pack = packs[static_cast<std::size_t>(selected)];
 					const bool loadingFiles = filesLoading.count(pack.id) > 0;
 					const auto filesError = filesErrors.find(pack.id);
 					if (pack.fromModrinth && !pack.filesLoaded && !loadingFiles && filesError == filesErrors.end())
 						startFetchFiles(pack.id);
+					if (pack.fromModrinth && !pack.bannerLoaded && bannersLoading.count(pack.id) == 0)
+						startFetchBanner(pack.id);
 
-					ImGui::TextColored(ImVec4(0.40f, 0.83f, 0.50f, 1.0f), "MODPACK");
-					ImGui::SameLine();
-					ImGui::TextDisabled("  %s", pack.version.c_str());
+					Widgets::HeroBanner(pack, images, std::clamp(ImGui::GetContentRegionAvail().x * 0.36f, S(200.0f), S(340.0f)));
 					ImGui::Spacing();
-					ImGui::Text("%s", pack.name.c_str());
+
 					if (pack.fromModrinth) {
-						std::string meta = "by " + pack.author + "  |  " + FormatCount(pack.downloads) + " downloads";
-						if (!pack.gameVersion.empty())
-							meta += "  |  Minecraft " + pack.gameVersion;
-						if (!pack.loaders.empty())
-							meta += "  |  " + pack.loaders;
-						ImGui::TextDisabled("%s", meta.c_str());
+						Widgets::Chip((FormatCount(pack.downloads) + " downloads").c_str(), Theme::kAccent);
+						ImGui::SameLine();
+						ImGui::AlignTextToFramePadding();
 						ImGui::TextDisabled("modrinth.com/modpack/%s", pack.id.c_str());
 					}
-					ImGui::Separator();
+					ImGui::Spacing();
+					ImGui::PushFont(nullptr, Theme::kFontBody + 1.0f);
 					ImGui::TextWrapped("%s", pack.description.c_str());
-					ImGui::Spacing();
+					ImGui::PopFont();
+					ImGui::Dummy(ImVec2(0.0f, S(8.0f)));
 
-					ImGui::BeginChild("play_banner", ImVec2(0.0f, 80.0f), true);
-					ImGui::Text("Ready your next adventure");
-					ImGui::TextDisabled("Download and extract a pack to prepare its files.");
-					ImGui::EndChild();
-					ImGui::Spacing();
+					char filesLabel[48];
+					std::snprintf(filesLabel, sizeof(filesLabel), "PACK FILES  (%llu)", static_cast<unsigned long long>(pack.files.size()));
+					Widgets::SectionLabel(filesLabel);
 					if (loadingFiles) {
+						Widgets::Spinner(Theme::kAccent);
+						ImGui::SameLine();
 						ImGui::TextDisabled("Loading latest version...");
 					} else if (filesError != filesErrors.end()) {
-						ImGui::TextColored(ImVec4(1.0f, 0.42f, 0.38f, 1.0f), "Couldn't load versions: %s",
-							filesError->second.c_str());
+						ImGui::TextColored(Theme::kError, "Couldn't load versions: %s", filesError->second.c_str());
 						if (ImGui::Button("Retry"))
 							startFetchFiles(pack.id);
 					}
-					ImGui::Text("PACK FILES  (%llu)", static_cast<unsigned long long>(pack.files.size()));
-					ImGui::Separator();
 
 					for (const PackFile& file : pack.files) {
 						DownloadState state;
@@ -540,15 +665,21 @@ int main(int argc, char** argv)
 						}
 
 						ImGui::PushID(file.url.c_str());
-						ImGui::Text("%s", file.name.c_str());
+						BeginCard("file_card");
+						ImGui::AlignTextToFramePadding();
+						ImGui::PushFont(fonts.bold, 0.0f);
+						ImGui::TextUnformatted(file.name.c_str());
+						ImGui::PopFont();
 						ImGui::SameLine();
 						ImGui::TextDisabled("%s", FormatFileSize(file.size).c_str());
-						ImGui::SameLine();
 
 						if (!hasState || (!state.active && state.outPath.empty())) {
-							if (ImGui::Button(hasState ? "Retry" : "Download")) {
+							const char* label = hasState ? "Retry" : "Download";
+							AlignRightForButton(label);
+							if (ImGui::Button(label)) {
 								DownloadState started;
 								started.fileName = file.name;
+								started.pack = pack;
 								started.active = true;
 								{
 									std::lock_guard<std::mutex> lock(downloadsMutex);
@@ -578,17 +709,27 @@ int main(int argc, char** argv)
 										current.error = error;
 								});
 							}
-							if (hasState && !state.error.empty()) {
-								ImGui::SameLine();
-								ImGui::TextColored(ImVec4(1.0f, 0.42f, 0.38f, 1.0f), "Download failed: %s", state.error.c_str());
-							}
+							if (hasState && !state.error.empty())
+								ImGui::TextColored(Theme::kError, "Download failed: %s", state.error.c_str());
 						} else if (state.active) {
-							ImGui::TextDisabled("Downloading");
+							char progressLabel[64];
+							if (state.total > 0.0)
+								std::snprintf(progressLabel, sizeof(progressLabel), "Downloading  %.0f%%", 100.0 * state.now / state.total);
+							else
+								std::snprintf(progressLabel, sizeof(progressLabel), "Downloading");
+							AlignRightForButton(progressLabel);
+							ImGui::AlignTextToFramePadding();
+							ImGui::TextDisabled("%s", progressLabel);
 						} else if (state.installing) {
+							AlignRightForButton("Extracting");
+							ImGui::AlignTextToFramePadding();
 							ImGui::TextDisabled("Extracting");
 						} else if (state.installed) {
-							ImGui::TextColored(ImVec4(0.40f, 0.83f, 0.50f, 1.0f), "Extracted");
+							AlignRightForButton("Extracted");
+							ImGui::AlignTextToFramePadding();
+							ImGui::TextColored(Theme::kAccent, "Extracted");
 						} else if (!state.outPath.empty()) {
+							AlignRightForButton("Install files");
 							if (ImGui::Button("Install files")) {
 								libraryPacks[pack.id] = pack;
 								{
@@ -621,41 +762,47 @@ int main(int argc, char** argv)
 							}
 						}
 
-						if (state.active && state.total > 0.0) {
-							const float fraction = static_cast<float>(state.now / state.total);
-							ImGui::ProgressBar(fraction, ImVec2(-1.0f, 0.0f));
-						} else if (state.installing) {
-							ImGui::ProgressBar(static_cast<float>(state.installProgress), ImVec2(-1.0f, 0.0f));
-						}
+						if (state.active && state.total > 0.0)
+							Widgets::ThinProgressBar(static_cast<float>(state.now / state.total));
+						else if (state.installing)
+							Widgets::ThinProgressBar(static_cast<float>(state.installProgress));
 						if (!state.installError.empty())
-							ImGui::TextColored(ImVec4(1.0f, 0.42f, 0.38f, 1.0f), "Extraction failed: %s", state.installError.c_str());
-						ImGui::Separator();
+							ImGui::TextColored(Theme::kError, "Extraction failed: %s", state.installError.c_str());
+						EndCard();
 						ImGui::PopID();
 					}
 
-					ImGui::Spacing();
+					ImGui::Dummy(ImVec2(0.0f, S(6.0f)));
+					ImGui::PushFont(fonts.bold, Theme::kFontHeading);
+					ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, S(8.0f));
 					ImGui::BeginDisabled(true);
-					ImGui::Button("PLAY  -  COMING SOON", ImVec2(-1.0f, 42.0f));
+					ImGui::Button("PLAY  \xE2\x80\x94  COMING SOON", ImVec2(-1.0f, S(52.0f)));
 					ImGui::EndDisabled();
+					ImGui::PopStyleVar();
+					ImGui::PopFont();
 					ImGui::TextDisabled("Minecraft installation, account sign-in, and launching are not wired up yet.");
 				} else {
-					ImGui::Text("No modpacks match your search.");
+					ImGui::TextDisabled("No modpacks match your search.");
 				}
 				ImGui::EndChild();
 			} else if (page == Page::Library) {
 				std::lock_guard<std::mutex> lock(downloadsMutex);
 				bool anyInstalled = false;
+				const float iconSize = S(64.0f);
 				for (const auto& [packId, pack] : libraryPacks) {
 					if (!IsPackInstalled(pack, downloads))
 						continue;
 					anyInstalled = true;
-					ImGui::BeginChild(pack.id.c_str(), ImVec2(0.0f, 100.0f), true);
-					ImGui::Text("%s", pack.name.c_str());
-					ImGui::TextDisabled("%s  |  %llu extracted file(s)",
+					BeginCard(pack.id.c_str());
+					PackIconItem(pack, images, iconSize);
+					ImGui::SameLine(0.0f, S(14.0f));
+					ImGui::BeginGroup();
+					Widgets::Text(fonts.bold, Theme::kFontHeading, Theme::kText, pack.name.c_str());
+					ImGui::TextDisabled("%s  \xC2\xB7  %llu extracted file(s)",
 						pack.version.c_str(), static_cast<unsigned long long>(pack.files.size()));
 					ImGui::TextDisabled("Files are prepared; this prototype does not launch Minecraft yet.");
-					ImGui::EndChild();
-					ImGui::Spacing();
+					ImGui::EndGroup();
+					EndCard();
 				}
 				if (!anyInstalled)
 					ImGui::TextDisabled("No extracted modpacks yet. Browse packs and install their files to see them here.");
@@ -668,27 +815,40 @@ int main(int argc, char** argv)
 				if (snapshot.empty()) {
 					ImGui::TextDisabled("Nothing downloaded yet. Choose a pack and start a download.");
 				}
+				const float iconSize = S(56.0f);
 				for (const auto& item : snapshot) {
-					ImGui::BeginChild(item.first.c_str(), ImVec2(0.0f, 105.0f), true);
-					ImGui::Text("%s", item.second.fileName.c_str());
-					if (item.second.active) {
-						ImGui::TextDisabled("Downloading...");
-						if (item.second.total > 0.0)
-							ImGui::ProgressBar(static_cast<float>(item.second.now / item.second.total), ImVec2(-1.0f, 0.0f));
-					} else if (!item.second.error.empty()) {
-						ImGui::TextColored(ImVec4(1.0f, 0.42f, 0.38f, 1.0f), "Download failed: %s", item.second.error.c_str());
-					} else if (item.second.installing) {
+					const DownloadState& state = item.second;
+					BeginCard(item.first.c_str());
+					PackIconItem(state.pack, images, iconSize);
+					ImGui::SameLine(0.0f, S(14.0f));
+					ImGui::BeginGroup();
+					Widgets::Text(fonts.bold, Theme::kFontBody, Theme::kText,
+						state.pack.name.empty() ? state.fileName.c_str() : state.pack.name.c_str());
+					if (!state.pack.name.empty())
+						ImGui::TextDisabled("%s", state.fileName.c_str());
+					if (state.active) {
+						if (state.total > 0.0)
+							ImGui::TextDisabled("Downloading...  %s of %s", FormatFileSize(static_cast<std::uint64_t>(state.now)).c_str(),
+								FormatFileSize(static_cast<std::uint64_t>(state.total)).c_str());
+						else
+							ImGui::TextDisabled("Downloading...");
+					} else if (!state.error.empty()) {
+						ImGui::TextColored(Theme::kError, "Download failed: %s", state.error.c_str());
+					} else if (state.installing) {
 						ImGui::TextDisabled("Extracting files...");
-						ImGui::ProgressBar(static_cast<float>(item.second.installProgress), ImVec2(-1.0f, 0.0f));
-					} else if (!item.second.installError.empty()) {
-						ImGui::TextColored(ImVec4(1.0f, 0.42f, 0.38f, 1.0f), "Extraction failed: %s", item.second.installError.c_str());
-					} else if (item.second.installed) {
-						ImGui::TextColored(ImVec4(0.40f, 0.83f, 0.50f, 1.0f), "Files extracted");
+					} else if (!state.installError.empty()) {
+						ImGui::TextColored(Theme::kError, "Extraction failed: %s", state.installError.c_str());
+					} else if (state.installed) {
+						ImGui::TextColored(Theme::kAccent, "Files extracted");
 					} else {
 						ImGui::TextDisabled("Downloaded - open Discover to extract this pack.");
 					}
-					ImGui::EndChild();
-					ImGui::Spacing();
+					ImGui::EndGroup();
+					if (state.active && state.total > 0.0)
+						Widgets::ThinProgressBar(static_cast<float>(state.now / state.total));
+					else if (state.installing)
+						Widgets::ThinProgressBar(static_cast<float>(state.installProgress));
+					EndCard();
 				}
 			}
 
@@ -713,6 +873,7 @@ int main(int argc, char** argv)
 				worker.thread.join();
 		}
 
+		images.Shutdown(); // frees textures while the GL context still exists
 		ImGui_ImplOpenGL3_Shutdown();
 		ImGui_ImplGlfw_Shutdown();
 		ImGui::DestroyContext();

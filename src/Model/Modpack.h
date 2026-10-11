@@ -22,6 +22,11 @@ struct Modpack {
 	std::uint64_t downloads = 0;
 	std::string gameVersion; // newest supported Minecraft version
 	std::string loaders;     // e.g. "fabric", "fabric, quilt"
+	std::string iconUrl;     // square pack icon (png/webp)
+	std::string bannerUrl;   // small featured gallery image, shown until bannerHiResUrl loads
+	std::string bannerHiResUrl; // full-size gallery image, fetched when the pack is selected
+	bool bannerLoaded = false;  // true once the full-size banner lookup has finished
+	std::uint32_t color = 0; // project accent color as 0xRRGGBB, 0 if unknown
 	bool fromModrinth = false;
 	// Modrinth search results don't include files; they're fetched when the pack is selected.
 	bool filesLoaded = true;

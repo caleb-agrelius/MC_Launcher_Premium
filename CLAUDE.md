@@ -1,6 +1,6 @@
 # MC_Launcher_Premium
 
-A C++ Dear ImGui desktop app (GLFW + OpenGL3) for browsing, downloading, and extracting Minecraft Java modpacks. Dependencies come from vcpkg: glfw3, glad, imgui, nlohmann-json, curl, and miniz. Build with CMake (see README.md).
+A C++ Dear ImGui desktop app (GLFW + OpenGL3) for browsing, downloading, and extracting Minecraft Java modpacks. Dependencies come from vcpkg: glfw3, glad, imgui, nlohmann-json, curl, miniz, libwebp, and stb. Build with CMake (see README.md).
 
 ## Feature docs
 
@@ -8,7 +8,9 @@ A C++ Dear ImGui desktop app (GLFW + OpenGL3) for browsing, downloading, and ext
 
 | Doc | Read when working on |
 |---|---|
-| [app-shell.md](docs/features/app-shell.md) | Startup/shutdown, window, render loop, sidebar navigation, theme, logging |
+| [app-shell.md](docs/features/app-shell.md) | Startup/shutdown, window, render loop, sidebar navigation, logging |
+| [ui-theme.md](docs/features/ui-theme.md) | Colors, fonts, DPI and UI scaling, `settings.json`, shared widgets (`src/UI/Theme`, `src/UI/Widgets`) |
+| [images.md](docs/features/images.md) | Pack icons and banners: `ImageCache` (download, decode, GL textures) |
 | [modpack-index.md](docs/features/modpack-index.md) | `resources/index.json` (offline fallback), `LoadIndex`, `Modpack`/`PackFile` structs |
 | [modrinth-search.md](docs/features/modrinth-search.md) | Modrinth API client, `HttpClient::Get`, search/version lookup threading (`UiQueue`) |
 | [discover.md](docs/features/discover.md) | Discover page: search, pack list, details pane, per-file action buttons |

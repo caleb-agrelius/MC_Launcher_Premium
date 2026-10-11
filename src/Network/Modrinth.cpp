@@ -22,6 +22,13 @@ static std::string JoinStrings(const json& array, const std::string& separator)
 	return result;
 }
 
+// Search hits use null for missing icons/gallery images, which json::value() would throw on.
+static std::string StringOrEmpty(const json& object, const char* key)
+{
+	const auto it = object.find(key);
+	return (it != object.end() && it->is_string()) ? it->get<std::string>() : std::string();
+}
+
 bool SearchModrinthModpacks(HttpClient& http,
 							const std::string& query,
 							int limit,
@@ -55,6 +62,13 @@ bool SearchModrinthModpacks(HttpClient& http,
 			pack.downloads = hit.value("downloads", 0ULL);
 			if (hit.contains("versions") && hit["versions"].is_array() && !hit["versions"].empty())
 				pack.gameVersion = hit["versions"].back().get<std::string>();
+			pack.iconUrl = StringOrEmpty(hit, "icon_url");
+			pack.bannerUrl = StringOrEmpty(hit, "featured_gallery");
+			if (pack.bannerUrl.empty() && hit.contains("gallery") && hit["gallery"].is_array() &&
+				!hit["gallery"].empty() && hit["gallery"].front().is_string())
+				pack.bannerUrl = hit["gallery"].front().get<std::string>();
+			if (hit.contains("color") && hit["color"].is_number_unsigned())
+				pack.color = hit["color"].get<std::uint32_t>() & 0xFFFFFFu;
 			pack.fromModrinth = true;
 			pack.filesLoaded = false;
 			if (!pack.id.empty())
@@ -135,6 +149,46 @@ bool FetchLatestModrinthVersion(HttpClient& http,
 	}
 	catch (const std::exception& ex) {
 		if (err) *err = std::string("Unexpected version response: ") + ex.what();
+		return false;
+	}
+	return true;
+}
+
+bool FetchModrinthBanner(HttpClient& http,
+						 const std::string& projectIdOrSlug,
+						 std::string& outUrl,
+						 std::string* err,
+						 const std::atomic<bool>* cancel)
+{
+	outUrl.clear();
+	const std::string url = std::string(kApiBase) + "/project/" + HttpClient::UrlEncode(projectIdOrSlug);
+
+	std::string body;
+	if (!http.Get(url, body, err, cancel))
+		return false;
+
+	try {
+		const json project = json::parse(body);
+		const json gallery = project.value("gallery", json::array());
+		// Prefer the featured image, then the gallery's first (lowest ordering) image.
+		const json* chosen = nullptr;
+		for (const auto& image : gallery) {
+			if (image.value("featured", false)) {
+				chosen = &image;
+				break;
+			}
+		}
+		if (!chosen && !gallery.empty())
+			chosen = &gallery.front();
+		if (chosen) {
+			// raw_url is the original upload; url may be a 350px thumbnail.
+			outUrl = StringOrEmpty(*chosen, "raw_url");
+			if (outUrl.empty())
+				outUrl = StringOrEmpty(*chosen, "url");
+		}
+	}
+	catch (const std::exception& ex) {
+		if (err) *err = std::string("Unexpected project response: ") + ex.what();
 		return false;
 	}
 	return true;

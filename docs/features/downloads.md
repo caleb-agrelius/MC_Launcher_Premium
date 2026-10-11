@@ -18,17 +18,17 @@ Downloading pack files, tracking their state, and the Downloads page.
 ## Download state (`src/main.cpp`)
 - `std::map<std::string, DownloadState> downloads` is keyed by file **URL** and guarded by `downloadsMutex`.
 - `DownloadState` fields:
-  - Download: `fileName` (set when the download starts), `active`, `total`, `now`, `outPath` (set on success), `error`
+  - Download: `fileName` and `pack` (a copy of the pack, for its name and icon; both set when the download starts), `active`, `total`, `now`, `outPath` (set on success), `error`
   - Extraction: `installing`, `installProgress` (0–1), `installed`, `installError`
 - Each download runs on a background thread started with `StartWorker()`. Each `Worker` has a `done` flag, and `ReapFinishedWorkers()` joins and removes finished workers at the start of every frame.
 - On exit, `main()` sets `shuttingDown`, which cancels in-flight downloads and extractions, then joins the remaining workers. There is no per-download cancel button.
 - The UI copies state under the lock, then draws from the copy.
 
 ## Downloads page (`Page::Downloads`)
-Shows one card per entry in `downloads`, labeled with the file name (`fileName`). Each card shows one of these statuses:
-- "Downloading..." plus a progress bar once the total is known
+Shows one card per entry in `downloads`, with the pack icon, the pack name, and the file name (`fileName`). Each card shows one of these statuses:
+- "Downloading..." plus bytes so far / total and a thin progress bar, once the total is known
 - "Download failed: ..."
-- "Extracting files..." plus a progress bar
+- "Extracting files..." plus a thin progress bar
 - "Extraction failed: ..."
 - "Files extracted"
 - "Downloaded - open Discover to extract this pack."

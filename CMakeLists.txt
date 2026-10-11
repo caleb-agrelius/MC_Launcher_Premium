@@ -12,6 +12,8 @@ find_package(imgui CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(CURL REQUIRED)
 find_package(miniz CONFIG QUIET)
+find_package(WebP CONFIG REQUIRED)
+find_package(Stb REQUIRED)
 
 include(FetchContent)
 FetchContent_Declare(
@@ -28,6 +30,10 @@ add_executable(MC_Launcher_Premium
   src/Network/HttpClient.cpp
   src/Network/Modrinth.cpp
   src/Storage/Installer.cpp
+  src/Storage/Settings.cpp
+  src/UI/ImageCache.cpp
+  src/UI/Theme.cpp
+  src/UI/Widgets.cpp
   ${imgui_backend_source_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
   ${imgui_backend_source_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
 )
@@ -35,6 +41,7 @@ add_executable(MC_Launcher_Premium
 target_include_directories(MC_Launcher_Premium PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/src
   ${imgui_backend_source_SOURCE_DIR}/backends
+  ${Stb_INCLUDE_DIR}
 )
 
 target_link_libraries(MC_Launcher_Premium PRIVATE
@@ -43,6 +50,7 @@ target_link_libraries(MC_Launcher_Premium PRIVATE
   glad::glad
   nlohmann_json::nlohmann_json
   CURL::libcurl
+  WebP::webp
 )
 
 if (miniz_FOUND)

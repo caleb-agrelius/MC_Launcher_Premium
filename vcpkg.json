@@ -8,6 +8,11 @@
     "imgui",
     "nlohmann-json",
     "curl",
-    "miniz"
+    "miniz",
+    {
+      "name": "libwebp",
+      "default-features": false
+    },
+    "stb"
   ]
 }
