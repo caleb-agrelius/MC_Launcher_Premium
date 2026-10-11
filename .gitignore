@@ -1,6 +1,7 @@
 # CMake / build output
 /build/
 /build-*/
+/Aggy_Min.*/
 /out/
 /cmake-build-*/
 /CMakeFiles/
@@ -10,6 +11,11 @@
 /Makefile
 _deps/
 /vcpkg_installed/
+
+# Dependencies / package manager outputs
+/vcpkg_installed/
+/vcpkg_installed.*
+/vcpkg-configuration.json
 
 # Visual Studio
 /.vs/

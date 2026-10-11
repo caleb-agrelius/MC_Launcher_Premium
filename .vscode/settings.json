@@ -1,0 +1,6 @@
+{
+    "cmake.cmakePath": "cmake",
+    "terminal.integrated.env.windows": {
+        "PATH": "${workspaceFolder};${env:PATH}"
+    }
+}
