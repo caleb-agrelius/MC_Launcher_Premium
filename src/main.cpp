@@ -6,6 +6,7 @@
 
 #include "Model/Modpack.h"
 #include "Network/HttpClient.h"
+#include "Network/Modrinth.h"
 #include "Storage/Installer.h"
 
 #include <algorithm>
@@ -21,6 +22,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -34,6 +36,8 @@
 namespace fs = std::filesystem;
 
 static const fs::path kIndexRelativePath = fs::path("resources") / "index.json";
+static constexpr double kSearchDelaySeconds = 0.4; // pause after typing before searching
+static constexpr int kSearchLimit = 30;            // results per Modrinth search
 
 static fs::path GetExecutableDir(const char* argv0)
 {
@@ -138,6 +142,19 @@ static std::string FormatFileSize(std::uint64_t bytes)
 	return formatted;
 }
 
+// Formats large counts compactly: 950, 12.3K, 18.4M.
+static std::string FormatCount(std::uint64_t count)
+{
+	char formatted[32];
+	if (count >= 1000000)
+		std::snprintf(formatted, sizeof(formatted), "%.1fM", count / 1000000.0);
+	else if (count >= 1000)
+		std::snprintf(formatted, sizeof(formatted), "%.1fK", count / 1000.0);
+	else
+		std::snprintf(formatted, sizeof(formatted), "%llu", static_cast<unsigned long long>(count));
+	return formatted;
+}
+
 static std::string ToLower(std::string text)
 {
 	std::transform(text.begin(), text.end(), text.begin(),
@@ -178,6 +195,30 @@ static void ReapFinishedWorkers(std::vector<Worker>& workers)
 		}
 	}
 }
+
+// Work handed from background threads to the UI thread. Drain() runs it at the
+// start of a frame, so UI state (pack list, selection) is only touched on the UI thread.
+struct UiQueue {
+	std::mutex mutex;
+	std::vector<std::function<void()>> tasks;
+
+	void Post(std::function<void()> task)
+	{
+		std::lock_guard<std::mutex> lock(mutex);
+		tasks.push_back(std::move(task));
+	}
+
+	void Drain()
+	{
+		std::vector<std::function<void()>> pending;
+		{
+			std::lock_guard<std::mutex> lock(mutex);
+			pending.swap(tasks);
+		}
+		for (auto& task : pending)
+			task();
+	}
+};
 
 static bool IsPackInstalled(const Modpack& pack, const std::map<std::string, DownloadState>& downloads)
 {
@@ -253,10 +294,12 @@ int main(int argc, char** argv)
 			return -1;
 		}
 
-		std::vector<Modpack> packs = LoadIndex(kIndexRelativePath.string());
-		log << "Loaded " << packs.size() << " modpack(s)\n";
+		// The local index is the offline fallback; Discover normally shows Modrinth results.
+		const std::vector<Modpack> localPacks = LoadIndex(kIndexRelativePath.string());
+		log << "Loaded " << localPacks.size() << " local modpack(s)\n";
 		log.flush();
-		int selected = packs.empty() ? -1 : 0;
+		std::vector<Modpack> packs;
+		int selected = -1;
 		Page page = Page::Discover;
 		char search[128] = "";
 		HttpClient http;
@@ -264,12 +307,95 @@ int main(int argc, char** argv)
 		std::mutex downloadsMutex;
 		std::vector<Worker> workers;
 		std::atomic<bool> shuttingDown{ false };
+		UiQueue uiQueue;
 		fs::create_directories("downloads");
 		fs::create_directories("installs");
+
+		// Search state (UI thread only). Typing schedules a search; it runs once
+		// the query has been unchanged for kSearchDelaySeconds.
+		bool searchPending = true; // run the initial "most downloaded" search on the first frame
+		double lastSearchEdit = -1.0;
+		bool searching = false;
+		int searchGeneration = 0; // results from older searches are ignored
+		std::string searchStatus;
+		bool searchFailed = false;
+		// Per-pack version lookups for Modrinth results, keyed by pack id.
+		std::set<std::string> filesLoading;
+		std::map<std::string, std::string> filesErrors;
+		// Packs the user has started installing, so My Library survives new searches.
+		std::map<std::string, Modpack> libraryPacks;
+
+		auto startSearch = [&]() {
+			const int generation = ++searchGeneration;
+			const std::string query = search;
+			searching = true;
+			StartWorker(workers, [&http, &uiQueue, &shuttingDown, &packs, &selected, &searching,
+				&searchStatus, &searchFailed, &searchGeneration, &localPacks, &log, query, generation]() {
+				ModrinthSearchResult result;
+				std::string error;
+				const bool ok = SearchModrinthModpacks(http, query, kSearchLimit, result, &error, &shuttingDown);
+				uiQueue.Post([&packs, &selected, &searching, &searchStatus, &searchFailed, &searchGeneration,
+					&localPacks, &log, query, generation, ok, result, error]() {
+					if (generation != searchGeneration)
+						return;
+					searching = false;
+					searchFailed = !ok;
+					if (ok) {
+						packs = result.packs;
+						searchStatus = FormatCount(result.totalHits) + " modpacks on Modrinth";
+						log << "Search \"" << query << "\": " << result.packs.size() << " of "
+							<< result.totalHits << " result(s)\n";
+					} else {
+						log << "Search \"" << query << "\" failed: " << error << "\n";
+						// Offline or API error: fall back to the local index.
+						const std::string lowerQuery = ToLower(query);
+						packs.clear();
+						for (const Modpack& pack : localPacks) {
+							if (lowerQuery.empty() || ContainsIgnoreCase(pack.name, lowerQuery) ||
+								ContainsIgnoreCase(pack.description, lowerQuery))
+								packs.push_back(pack);
+						}
+						searchStatus = "Modrinth unavailable (" + error + ") - showing local packs";
+					}
+					selected = packs.empty() ? -1 : 0;
+				});
+			});
+		};
+
+		auto startFetchFiles = [&](const std::string& packId) {
+			filesLoading.insert(packId);
+			filesErrors.erase(packId);
+			StartWorker(workers, [&http, &uiQueue, &shuttingDown, &packs, &filesLoading, &filesErrors, &log, packId]() {
+				ModrinthVersion version;
+				std::string error;
+				const bool ok = FetchLatestModrinthVersion(http, packId, version, &error, &shuttingDown);
+				uiQueue.Post([&packs, &filesLoading, &filesErrors, &log, packId, ok, version, error]() {
+					filesLoading.erase(packId);
+					if (!ok) {
+						log << "Version lookup for " << packId << " failed: " << error << "\n";
+						filesErrors[packId] = error;
+						return;
+					}
+					log << "Version lookup for " << packId << ": " << version.versionNumber << " ("
+						<< (version.files.empty() ? std::string("no file") : version.files.front().name) << ")\n";
+					for (Modpack& pack : packs) {
+						if (pack.id != packId)
+							continue;
+						pack.version = version.versionNumber;
+						if (!version.gameVersion.empty())
+							pack.gameVersion = version.gameVersion;
+						pack.loaders = version.loaders;
+						pack.files = version.files;
+						pack.filesLoaded = true;
+					}
+				});
+			});
+		};
 
 		while (!glfwWindowShouldClose(window)) {
 			glfwPollEvents();
 			ReapFinishedWorkers(workers);
+			uiQueue.Drain();
 			ImGui_ImplOpenGL3_NewFrame();
 			ImGui_ImplGlfw_NewFrame();
 			ImGui::NewFrame();
@@ -320,38 +446,67 @@ int main(int argc, char** argv)
 
 			if (page == Page::Discover) {
 				ImGui::SetNextItemWidth(-1.0f);
-				ImGui::InputTextWithHint("##search", "Search modpacks...", search, sizeof(search));
+				if (ImGui::InputTextWithHint("##search", "Search Modrinth modpacks...", search, sizeof(search))) {
+					searchPending = true;
+					lastSearchEdit = ImGui::GetTime();
+				}
+				if (searchPending && ImGui::GetTime() - lastSearchEdit >= kSearchDelaySeconds) {
+					searchPending = false;
+					startSearch();
+				}
+				if (searching)
+					ImGui::TextDisabled("Searching Modrinth...");
+				else if (searchFailed)
+					ImGui::TextColored(ImVec4(1.0f, 0.42f, 0.38f, 1.0f), "%s", searchStatus.c_str());
+				else
+					ImGui::TextDisabled("%s", searchStatus.c_str());
 				ImGui::Spacing();
 
 				ImGui::BeginChild("pack_list", ImVec2(285.0f, 0.0f), true);
-				ImGui::TextDisabled("AVAILABLE PACKS");
+				ImGui::TextDisabled(search[0] == '\0' ? "MOST DOWNLOADED" : "RESULTS");
 				ImGui::Spacing();
-				const std::string query = ToLower(search);
 				for (std::size_t i = 0; i < packs.size(); ++i) {
-					if (!query.empty() && !ContainsIgnoreCase(packs[i].name, query) &&
-						!ContainsIgnoreCase(packs[i].description, query))
-						continue;
-
+					const Modpack& item = packs[i];
 					ImGui::PushID(static_cast<int>(i));
-					if (ImGui::Selectable(packs[i].name.c_str(), selected == static_cast<int>(i),
+					if (ImGui::Selectable(item.name.c_str(), selected == static_cast<int>(i),
 						ImGuiSelectableFlags_AllowDoubleClick, ImVec2(0.0f, 54.0f)))
 						selected = static_cast<int>(i);
-					ImGui::TextDisabled("  %s  |  %llu files", packs[i].version.c_str(),
-						static_cast<unsigned long long>(packs[i].files.size()));
+					if (item.fromModrinth)
+						ImGui::TextDisabled("  %s  |  %s downloads", item.gameVersion.c_str(),
+							FormatCount(item.downloads).c_str());
+					else
+						ImGui::TextDisabled("  %s  |  %llu files", item.version.c_str(),
+							static_cast<unsigned long long>(item.files.size()));
 					ImGui::Spacing();
 					ImGui::PopID();
 				}
+				if (packs.empty() && !searching)
+					ImGui::TextDisabled("No modpacks found.");
 				ImGui::EndChild();
 				ImGui::SameLine();
 
 				ImGui::BeginChild("pack_details", ImVec2(0.0f, 0.0f), true);
 				if (selected >= 0 && selected < static_cast<int>(packs.size())) {
 					const Modpack& pack = packs[static_cast<std::size_t>(selected)];
+					const bool loadingFiles = filesLoading.count(pack.id) > 0;
+					const auto filesError = filesErrors.find(pack.id);
+					if (pack.fromModrinth && !pack.filesLoaded && !loadingFiles && filesError == filesErrors.end())
+						startFetchFiles(pack.id);
+
 					ImGui::TextColored(ImVec4(0.40f, 0.83f, 0.50f, 1.0f), "MODPACK");
 					ImGui::SameLine();
 					ImGui::TextDisabled("  %s", pack.version.c_str());
 					ImGui::Spacing();
 					ImGui::Text("%s", pack.name.c_str());
+					if (pack.fromModrinth) {
+						std::string meta = "by " + pack.author + "  |  " + FormatCount(pack.downloads) + " downloads";
+						if (!pack.gameVersion.empty())
+							meta += "  |  Minecraft " + pack.gameVersion;
+						if (!pack.loaders.empty())
+							meta += "  |  " + pack.loaders;
+						ImGui::TextDisabled("%s", meta.c_str());
+						ImGui::TextDisabled("modrinth.com/modpack/%s", pack.id.c_str());
+					}
 					ImGui::Separator();
 					ImGui::TextWrapped("%s", pack.description.c_str());
 					ImGui::Spacing();
@@ -361,6 +516,14 @@ int main(int argc, char** argv)
 					ImGui::TextDisabled("Download and extract a pack to prepare its files.");
 					ImGui::EndChild();
 					ImGui::Spacing();
+					if (loadingFiles) {
+						ImGui::TextDisabled("Loading latest version...");
+					} else if (filesError != filesErrors.end()) {
+						ImGui::TextColored(ImVec4(1.0f, 0.42f, 0.38f, 1.0f), "Couldn't load versions: %s",
+							filesError->second.c_str());
+						if (ImGui::Button("Retry"))
+							startFetchFiles(pack.id);
+					}
 					ImGui::Text("PACK FILES  (%llu)", static_cast<unsigned long long>(pack.files.size()));
 					ImGui::Separator();
 
@@ -427,6 +590,7 @@ int main(int argc, char** argv)
 							ImGui::TextColored(ImVec4(0.40f, 0.83f, 0.50f, 1.0f), "Extracted");
 						} else if (!state.outPath.empty()) {
 							if (ImGui::Button("Install files")) {
+								libraryPacks[pack.id] = pack;
 								{
 									std::lock_guard<std::mutex> lock(downloadsMutex);
 									DownloadState& current = downloads[file.url];
@@ -481,7 +645,7 @@ int main(int argc, char** argv)
 			} else if (page == Page::Library) {
 				std::lock_guard<std::mutex> lock(downloadsMutex);
 				bool anyInstalled = false;
-				for (const Modpack& pack : packs) {
+				for (const auto& [packId, pack] : libraryPacks) {
 					if (!IsPackInstalled(pack, downloads))
 						continue;
 					anyInstalled = true;
