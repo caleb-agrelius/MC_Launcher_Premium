@@ -1,0 +1,15 @@
+[
+  {
+    "id": "example-modpack-1",
+    "name": "Example Modpack 1",
+    "description": "A sample modpack for testing",
+    "version": "1.0.0",
+    "files": [
+      {
+        "name": "example-mods.zip",
+        "url": "https://example.com/example-mods.zip",
+        "size": 1024
+      }
+    ]
+  }
+]
