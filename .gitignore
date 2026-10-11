@@ -6,6 +6,11 @@
 /cmake_install.cmake
 /Makefile
 
+# Dependencies / package manager outputs
+/vcpkg_installed/
+/vcpkg_installed.*
+/vcpkg-configuration.json
+
 # Visual Studio
 /.vs/
 /x64/
