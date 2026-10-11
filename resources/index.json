@@ -1,14 +1,14 @@
 [
   {
-    "id": "example-modpack-1",
-    "name": "Example Modpack 1",
-    "description": "A sample modpack for testing",
-    "version": "1.0.0",
+    "id": "fabulously-optimized",
+    "name": "Fabulously Optimized",
+    "description": "Beautiful graphics, speedy performance and familiar features in a simple package. Fabric, Minecraft 26.2.",
+    "version": "14.1.1",
     "files": [
       {
-        "name": "example-mods.zip",
-        "url": "https://example.com/example-mods.zip",
-        "size": 1024
+        "name": "Fabulously.Optimized-v14.1.1.mrpack",
+        "url": "https://cdn.modrinth.com/data/1KVo5zza/versions/uQxD0ENB/Fabulously.Optimized-v14.1.1.mrpack",
+        "size": 192991
       }
     ]
   }

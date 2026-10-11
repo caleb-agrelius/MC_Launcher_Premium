@@ -1,10 +1,15 @@
-# CMake
+# CMake / build output
 /build/
+/build-*/
+/out/
 /cmake-build-*/
 /CMakeFiles/
 /CMakeCache.txt
 /cmake_install.cmake
+/CMakeUserPresets.json
 /Makefile
+_deps/
+/vcpkg_installed/
 
 # Dependencies / package manager outputs
 /vcpkg_installed/
@@ -14,7 +19,8 @@
 # Visual Studio
 /.vs/
 /x64/
-/Aggy_Min.*/
+/Debug/
+/Release/
 *.user
 *.suo
 *.VC.db
@@ -25,11 +31,19 @@
 *.tlog/
 *.recipe
 
-# Application-generated data
-/downloads/
-/installs/
-/app.log
-/imgui.ini
+# Application-generated data (also matches copies next to the exe)
+downloads/
+installs/
+app.log
+imgui.ini
+
+# Modpack archives
+*.mrpack
+*.zip
+
+# Test output
+/Testing/
+tests/out/
 
 # Executables and libraries
 *.exe
