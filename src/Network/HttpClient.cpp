@@ -6,6 +6,7 @@
 
 struct ProgressData {
 	std::function<void(double,double)> callback;
+	const std::atomic<bool>* cancel = nullptr;
 };
 
 static size_t write_data(void* ptr, size_t size, size_t nmemb, void* stream)
@@ -21,6 +22,8 @@ static int xferinfo(void* p,
 					curl_off_t ulnow)
 {
 	ProgressData* pd = static_cast<ProgressData*>(p);
+	if (pd && pd->cancel && pd->cancel->load())
+		return 1; // abort the transfer
 	if (pd && pd->callback) {
 		double total = static_cast<double>(dltotal);
 		double now = static_cast<double>(dlnow);
@@ -42,7 +45,8 @@ HttpClient::~HttpClient()
 bool HttpClient::DownloadToFile(const std::string& url,
 								const std::string& outPath,
 								std::function<void(double, double)> progress,
-								std::string* err)
+								std::string* err,
+								const std::atomic<bool>* cancel)
 {
 	CURL* curl = curl_easy_init();
 	if (!curl) {
@@ -64,7 +68,7 @@ bool HttpClient::DownloadToFile(const std::string& url,
 		return false;
 	}
 
-	ProgressData pd{progress};
+	ProgressData pd{progress, cancel};
 
 	curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
@@ -83,7 +87,7 @@ bool HttpClient::DownloadToFile(const std::string& url,
 
 	CURLcode res = curl_easy_perform(curl);
 	if (res != CURLE_OK) {
-		if (err) *err = curl_easy_strerror(res);
+		if (err) *err = (cancel && cancel->load()) ? "Cancelled" : curl_easy_strerror(res);
 		fclose(fp);
 		curl_easy_cleanup(curl);
 		// remove partial file
