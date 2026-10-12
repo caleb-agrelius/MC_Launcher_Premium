@@ -15,6 +15,8 @@ namespace Widgets {
 
 // Text in a given font, size (unscaled, see Theme::kFont*) and color.
 void Text(ImFont* font, float size, const ImVec4& color, const char* text);
+// Colored text that wraps at the edge of the window.
+void WrappedText(const ImVec4& color, const char* text);
 // Small uppercase-style section heading, e.g. "PACK FILES".
 void SectionLabel(const char* text);
 // A spinning arc sized to the current text line.
@@ -24,8 +26,13 @@ void Chip(const char* text, const ImVec4& tint);
 // Thin accent progress bar spanning the available width.
 void ThinProgressBar(float fraction);
 
+// A text row for lists and combo popups, with a rounded hover/selection highlight.
+// Returns true when clicked.
+bool ListItem(const char* label, bool selected);
 // Sidebar navigation entry with an accent bar when selected. Returns true when clicked.
 bool NavItem(const char* label, bool selected);
+// Smaller, indented entry under a NavItem (e.g. each Discover source). Returns true when clicked.
+bool SubNavItem(const char* label, bool selected);
 
 // Opacity for an image that just finished loading (fades in over a quarter second).
 float FadeAlpha(const LoadedImage& image);

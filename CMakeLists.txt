@@ -27,20 +27,34 @@ FetchContent_MakeAvailable(imgui_backend_source)
 add_executable(MC_Launcher_Premium
   src/main.cpp
   src/Model/Modpack.cpp
+  src/Network/AtLauncher.cpp
+  src/Network/CurseForge.cpp
+  src/Network/Ftb.cpp
   src/Network/HttpClient.cpp
   src/Network/Modrinth.cpp
+  src/Network/PackSources.cpp
+  src/Network/Technic.cpp
+  src/Storage/InstallPlan.cpp
   src/Storage/Installer.cpp
   src/Storage/Library.cpp
   src/Storage/Settings.cpp
   src/UI/ImageCache.cpp
   src/UI/Theme.cpp
   src/UI/Widgets.cpp
+  src/Util/Hash.cpp
+  src/Util/Paths.cpp
   ${imgui_backend_source_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
   ${imgui_backend_source_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
 )
 
+# CurseForge API key: never commit it. Pass -DCURSEFORGE_API_KEY=<key> when configuring
+# (it stays in the build folder's CMakeCache.txt), or set MCLP_CURSEFORGE_API_KEY at runtime.
+set(CURSEFORGE_API_KEY "" CACHE STRING "CurseForge API key built into the app (optional)")
+configure_file(src/BuildSecrets.h.in ${CMAKE_CURRENT_BINARY_DIR}/generated/BuildSecrets.h @ONLY)
+
 target_include_directories(MC_Launcher_Premium PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/src
+  ${CMAKE_CURRENT_BINARY_DIR}/generated
   ${imgui_backend_source_SOURCE_DIR}/backends
   ${Stb_INCLUDE_DIR}
 )

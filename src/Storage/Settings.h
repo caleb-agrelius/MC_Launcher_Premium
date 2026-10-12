@@ -6,6 +6,8 @@
 struct Settings {
 	// Multiplies the monitor's DPI scale. 1.0 = the size Windows display scaling asks for.
 	float uiScale = 1.0f;
+	// Discover sub-page shown at startup (a PackSourceKey, e.g. "modrinth").
+	std::string discoverSource = "modrinth";
 };
 
 static constexpr float kMinUiScale = 0.75f;

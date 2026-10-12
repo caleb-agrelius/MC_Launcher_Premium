@@ -4,7 +4,7 @@ Window, rendering loop, navigation, theme, and logging.
 
 ## Startup and shutdown (`main()` in `src/main.cpp`)
 1. Finds the **data folder** (`FindDataRoot`): the first of the working directory, the executable's folder, or any parent of the executable's folder that contains `resources/index.json`. The app then makes that folder the working directory, so launching `build/Debug/MC_Launcher_Premium.exe` directly still uses the repo root. If none is found, the working directory stays as-is and the pack list is empty.
-2. Opens `app.log` in the data folder (append mode). It logs startup, the data folder (or that none was found), the number of local packs loaded, each Modrinth search and version lookup (result count or error), failures, and unhandled exceptions.
+2. Opens `app.log` in the data folder (append mode). It logs startup, the data folder (or that none was found), the number of local packs loaded, each search (with its source) and version lookup (result count or error), each pack install, failures, and unhandled exceptions.
 3. Initializes GLFW and creates a resizable 1360x840 window with an OpenGL 3.0 context (GLSL `#version 130`) and vsync. `GLFW_SCALE_TO_MONITOR` makes that size logical, so the window is 1.5x larger at 150% Windows display scaling. On Windows the title bar is switched to dark mode (`UseDarkTitleBar`). The minimum window size is 900x600, scaled.
 4. Loads GL functions via glad, then creates the ImGui context with keyboard navigation. It loads `settings.json`, the fonts, and the scaled style (see [ui-theme.md](ui-theme.md)), then starts the GLFW + OpenGL3 backends and the `ImageCache` (see [images.md](images.md)).
 5. Loads the modpack index (see [modpack-index.md](modpack-index.md)) and creates the `downloads/` and `installs/` folders.
@@ -17,10 +17,10 @@ Window, rendering loop, navigation, theme, and logging.
 
 ## Layout
 One full-window ImGui window with no title bar, split into:
-- **Sidebar** (230px, scaled): a grass-block logo drawn from small squares, "MC Launcher" with a "PREMIUM · JAVA" tag, and the nav entries **Discover**, **My Library**, and **Downloads** (`Widgets::NavItem`; the selected one has a green bar and bold text). The footer holds the **UI scale** control (`-`, the current percentage, which resets to 100% when clicked, and `+`) and a "Launching: coming soon" note.
+- **Sidebar** (230px, scaled): a grass-block logo drawn from small squares, "MC Launcher" with a "PREMIUM · JAVA" tag, and the nav entries **Discover**, **My Library**, and **Downloads** (`Widgets::NavItem`; the selected one has a green bar and bold text). Under **Discover** is one smaller entry per pack source (`Widgets::SubNavItem`, with a dot that turns green when selected); see [discover.md](discover.md). The footer holds the **UI scale** control (`-`, the current percentage, which resets to 100% when clicked, and `+`) and a "Launching: coming soon" note.
 - **Main content:** a header (green "MINECRAFT / MODPACKS" breadcrumb, a large bold page title, and a subtitle), then the active page.
 
-Navigation state is the `Page` enum (`Discover`, `Library`, `Downloads`). Discover is the default.
+Navigation state is the `Page` enum (`Discover`, `Library`, `Downloads`) plus `discoverSource`, the selected Discover sub-page. Discover is the default page, and the sub-page is restored from `settings.json`.
 
 ## Pages
 - Discover: [discover.md](discover.md)
@@ -43,4 +43,4 @@ Colors, fonts, and scaling live in `src/UI/Theme.{h,cpp}`. See [ui-theme.md](ui-
 - `PackIconItem(pack, images, size)` lays out a pack icon as an item.
 
 ## Runtime files (gitignored, created in the data folder)
-`app.log`, `imgui.ini` (ImGui layout persistence), `settings.json` (UI scale), `library.json` (My Library, see [library.md](library.md)), `downloads.json` (finished downloads, see [downloads.md](downloads.md)), `downloads/`, `installs/`.
+`app.log`, `imgui.ini` (ImGui layout persistence), `settings.json` (UI scale, last Discover sub-page), `library.json` (My Library, see [library.md](library.md)), `downloads.json` (finished downloads, see [downloads.md](downloads.md)), `downloads/`, `installs/`.

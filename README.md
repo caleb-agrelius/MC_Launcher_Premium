@@ -11,9 +11,14 @@ A Minecraft Java Edition modpack browser and downloader built with C++ and Dear 
 
 ## Features
 
-- Search modpacks live on [Modrinth](https://modrinth.com/modpacks), no API key needed. The app falls back to `resources/index.json` when offline.
-- Download a pack's `.mrpack` with progress.
-- Extract it into `installs/<pack>/`, with protection against malicious archive paths.
+- Browse modpacks from several sources, each on its own Discover sub-page with search filters (Minecraft version, loader, sort):
+  - [Modrinth](https://modrinth.com/modpacks), no API key needed. The app falls back to `resources/index.json` when offline.
+  - [CurseForge](https://www.curseforge.com/minecraft/search?class=modpacks), which needs an API key (see [CurseForge API key](#curseforge-api-key)).
+  - [FTB](https://www.feed-the-beast.com/modpacks), no key needed.
+  - [Technic](https://www.technicpack.net/modpacks), no key needed.
+  - [ATLauncher](https://atlauncher.com/packs), no key needed.
+- Download a Modrinth pack's `.mrpack` with progress, then extract it into `installs/<pack>/`, with protection against malicious archive paths.
+- Install a whole pack from the other sources in one step. Every mod file is downloaded and hash-checked into `installs/<pack>/minecraft/`.
 
 Launching Minecraft, downloading the game, and account sign-in aren't implemented yet. See [docs/features/planned.md](docs/features/planned.md).
 
@@ -51,6 +56,25 @@ cmake --build build --config Release    # -> build\Release\MC_Launcher_Premium.e
 - The first configure downloads the ImGui GLFW/OpenGL backend files from GitHub.
 - The build copies the required DLLs (glfw3, libcurl, zlib, miniz) next to the exe.
 
+### CurseForge API key
+
+CurseForge requires every app to use its own API key. Without one, the CurseForge sub-page is disabled; the other sources still work.
+
+1. Apply for a key in the [CurseForge for Studios console](https://console.curseforge.com/) and accept the [3rd-party API terms](https://support.curseforge.com/en/support/solutions/articles/9000207405-curse-forge-3rd-party-api-terms-and-conditions). Don't reuse another launcher's key.
+2. Give the app the key in one of two ways. **Never commit the key.**
+   - **At runtime:** set the `MCLP_CURSEFORGE_API_KEY` environment variable. It overrides a built-in key.
+
+     ```powershell
+     $env:MCLP_CURSEFORGE_API_KEY = '<your key>'   # single quotes: keys contain '$'
+     .uild\Debug\MC_Launcher_Premium.exe
+     ```
+
+   - **Built in:** pass it when configuring. It is saved in `build\CMakeCache.txt` and written to `build\generated\BuildSecrets.h`, both inside the gitignored build folder.
+
+     ```powershell
+     cmake -S . -B build -DCURSEFORGE_API_KEY='<your key>'
+     ```
+
 > The `MC_Launcher_Premium.slnx` / `.vcxproj` in the repo root don't build as-is because they expect ImGui backend files that aren't in the repo. Use the CMake build, or the solution CMake generates (see below).
 
 ## Run
@@ -64,10 +88,10 @@ You can also double-click the exe or start it from any folder. The app finds the
 | Path                | Contents                                                       |
 | ------------------- | -------------------------------------------------------------- |
 | `app.log`           | Startup info, packs loaded, each search/version lookup, errors |
-| `downloads\<pack>\` | Downloaded `.mrpack` files                                     |
-| `installs\<pack>\`  | Extracted pack files                                           |
+| `downloads\<pack>\` | Downloaded `.mrpack` files and pack archives                   |
+| `installs\<pack>\`  | Extracted pack files; whole-pack installs use `minecraft\` + `pack.json` |
 | `imgui.ini`         | Window layout                                                  |
-| `settings.json`     | UI scale                                                       |
+| `settings.json`     | UI scale, last Discover sub-page                               |
 | `library.json`      | Packs listed in My Library                                     |
 | `downloads.json`    | Finished downloads, restored on startup                        |
 
@@ -83,7 +107,8 @@ All of these are gitignored.
 
    | Area           | Code                                                   |
    | -------------- | ------------------------------------------------------ |
-   | Search results | `SearchModrinthModpacks` in `src/Network/Modrinth.cpp` |
+   | Search results | `SearchPacks` in `src/Network/PackSources.cpp` (dispatches to each source) |
+   | Pack installs  | `BuildInstallPlan` / `RunInstallPlan` (`src/Storage/InstallPlan.cpp`) |
    | Downloads      | `HttpClient::DownloadToFile`                           |
    | Extraction     | `InstallZip` in `src/Storage/Installer.cpp`            |
    | UI             | the frame loop in `src/main.cpp`                       |
@@ -128,22 +153,31 @@ Version lookup for fabulously-optimized: 14.1.1 (Fabulously.Optimized-v14.1.1.mr
 
 | Symptom                                                                  | Cause / fix                                                                                                                        |
 | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| CurseForge sub-page says it needs an API key, or "rejected the API key"  | See [CurseForge API key](#curseforge-api-key).                                                                                     |
 | Pack list is empty and the status line is red                            | Modrinth couldn't be reached. The error appears in the status line and in `app.log`; the app falls back to `resources\index.json`. |
 | `Could not find resources\index.json` in `app.log`                       | The exe was moved outside the repo. Run it from inside the repo tree.                                                              |
 | `Could not find a package configuration file provided by "glfw3"` (etc.) | vcpkg libraries aren't installed, or `CMAKE_TOOLCHAIN_FILE` is wrong. Re-run the vcpkg install and configure steps.                |
 | Errors in `imgui_impl_glfw.cpp` / `imgui_impl_opengl3.cpp`               | The vcpkg ImGui version doesn't match the backend tag in `CMakeLists.txt` (`GIT_TAG`). Make them match.                            |
 | `LNK1104: cannot open file ...MC_Launcher_Premium.exe`                   | The app is still running. Close it and rebuild.                                                                                    |
-| Extraction fails with `Failed to extract file`                           | The path is longer than Windows' 260-character limit. Keep the repo in a short path such as `C:\src\`.                             |
 
 ## Project layout
 
 ```
 src/main.cpp              Window, UI, threading
 src/Model/Modpack.*       Modpack data + local index loader
-src/Network/HttpClient.*  libcurl wrapper (downloads, GET, cancel)
+src/Network/HttpClient.*  libcurl wrapper (downloads, GET, POST, headers, cancel)
+src/Network/PackSources.* One entry point per operation for every pack source
 src/Network/Modrinth.*    Modrinth API client (search, versions)
+src/Network/CurseForge.*  CurseForge API client (search, versions, install plans)
+src/Network/Ftb.*         FTB API client
+src/Network/Technic.*     Technic Platform + Solder client
+src/Network/AtLauncher.*  ATLauncher CDN client
 src/Storage/Installer.*   Zip extraction
-src/Storage/Settings.*    settings.json (UI scale)
+src/Storage/InstallPlan.* Whole-pack installs: download, verify, merge overrides
+src/Util/Hash.*           SHA-1 / MD5
+src/Util/Paths.*          Long (260+ character) Windows paths
+src/BuildSecrets.h.in     Template for the built-in CurseForge key (generated into build/)
+src/Storage/Settings.*    settings.json (UI scale, Discover sub-page)
 src/Storage/Library.*     library.json (My Library), downloads.json (finished downloads)
 src/UI/Theme.*            Colors, fonts, DPI/UI scaling
 src/UI/Widgets.*          Pack rows, hero banner, chips, spinner

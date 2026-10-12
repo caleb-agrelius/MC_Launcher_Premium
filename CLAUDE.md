@@ -12,6 +12,11 @@ A C++ Dear ImGui desktop app (GLFW + OpenGL3) for browsing, downloading, and ext
 | [ui-theme.md](docs/features/ui-theme.md) | Colors, fonts, DPI and UI scaling, `settings.json`, shared widgets (`src/UI/Theme`, `src/UI/Widgets`) |
 | [images.md](docs/features/images.md) | Pack icons and banners: `ImageCache` (download, decode, GL textures) |
 | [modpack-index.md](docs/features/modpack-index.md) | `resources/index.json` (offline fallback), `LoadIndex`, `Modpack`/`PackFile` structs |
+| [pack-sources.md](docs/features/pack-sources.md) | Source dispatcher (`PackSources`), search filters, Discover sub-pages, install plans (`InstallPlan`, `RunInstallPlan`) |
+| [curseforge.md](docs/features/curseforge.md) | CurseForge client, API key setup (`BuildSecrets.h.in`, `MCLP_CURSEFORGE_API_KEY`), blocked files, Modrinth hash fallback |
+| [ftb.md](docs/features/ftb.md) | FTB client: in-memory search over all packs, version manifests, one-at-a-time downloads |
+| [technic.md](docs/features/technic.md) | Technic client: `build` parameter, Solder vs single-zip packs, local filters |
+| [atlauncher.md](docs/features/atlauncher.md) | ATLauncher client: CDN pack list, `Configs.json`, mod types and folders |
 | [modrinth-search.md](docs/features/modrinth-search.md) | Modrinth API client, `HttpClient::Get`, search/version lookup threading (`UiQueue`) |
 | [discover.md](docs/features/discover.md) | Discover page: search, pack list, details pane, per-file action buttons |
 | [downloads.md](docs/features/downloads.md) | `HttpClient`, download state map and threading, Downloads page |

@@ -52,7 +52,7 @@ Dark slate backgrounds with green accents:
 On Windows 10/11 the native title bar is switched to dark mode.
 
 ## Settings (`src/Storage/Settings.{h,cpp}`)
-- `settings.json` in the data folder is gitignored. Today it only holds `{"uiScale": 1.0}`.
+- `settings.json` in the data folder is gitignored. It holds `uiScale` and `discoverSource` (the last Discover sub-page, a source key such as `"modrinth"`).
 - `LoadSettings` returns the defaults if the file is missing or invalid, and clamps the scale to its range.
 - `SaveSettings` writes the scale rounded to two decimals.
 
@@ -66,8 +66,13 @@ On Windows 10/11 the native title bar is switched to dark mode.
 | `Chip` | A rounded pill tag tinted with a color |
 | `ThinProgressBar` | An 8px accent progress bar with no text |
 | `NavItem` | A sidebar entry with a green bar when selected |
+| `SubNavItem` | A smaller, indented sidebar entry with a dot (green when selected), used for Discover's source sub-pages |
+| `ListItem` | A text row for lists and combo popups (Discover's loader and sort filters); closes its popup when clicked |
+| `WrappedText` | Colored text that wraps at the window edge (Discover's error statuses) |
 | `PackRow` | A pack list row (see [discover.md](discover.md)) |
 | `HeroBanner` | The banner at the top of the pack details pane (see [discover.md](discover.md)) |
 | `DrawPackIcon` | The pack icon, or a placeholder tile in the pack's color with its first letter, shown until the icon loads or if it fails |
 
 Images fade in over 0.25 s (`FadeAlpha`).
+
+**Selection highlights:** `NavItem`, `SubNavItem`, `PackRow` and `ListItem` share `RoundedSelectable`, an `InvisibleButton` with its own highlight instead of `ImGui::Selectable`. The highlight is a rounded rectangle (`ImGuiCol_Header` when selected, `HeaderHovered` on hover, `HeaderActive` while pressed). It is drawn inside the content region, so it never reaches the panel's padding or border. The green selection bar sits just inside the highlight's left edge.
