@@ -9,6 +9,7 @@
 
 #include <fstream>
 #include <map>
+#include <set>
 #include <regex>
 
 namespace fs = std::filesystem;
@@ -163,18 +164,35 @@ bool SetupServer(HttpClient& http, const ServerSetupRequest& request, ServerInfo
 	if (!DownloadAll(http, jobs, "Downloading server mods", progress, err, cancel))
 		return false;
 	const std::string current = index.versionId.empty() ? "unknown" : index.versionId;
+	// The marker holds the prepared pack version, then the files that version listed.
 	std::string prepared;
+	std::vector<std::string> previousFiles;
 	{
 		std::ifstream in(dir / kPreparedMarker);
 		std::getline(in, prepared);
+		for (std::string line; std::getline(in, line);) {
+			if (!line.empty())
+				previousFiles.push_back(line);
+		}
 	}
+	std::set<std::string> currentFiles;
+	for (const DownloadJob& job : index.files)
+		currentFiles.insert(job.path.generic_string());
 	if (prepared != current) {
+		// Another pack version: remove mods the old one listed and this one doesn't.
+		for (const std::string& old : previousFiles) {
+			const fs::path relative = fs::u8path(old).lexically_normal();
+			if (currentFiles.count(old) == 0 && !relative.empty() && relative.is_relative() && *relative.begin() != "..")
+				fs::remove(dir / relative, ec);
+		}
 		if (progress)
 			progress("Copying pack configuration", -1.0);
 		if (!CopyOverrides(request.extractedDir, dir, err))
 			return false;
 		std::ofstream marker(dir / kPreparedMarker, std::ios::trunc);
 		marker << current << "\n";
+		for (const std::string& file : currentFiles)
+			marker << file << "\n";
 		marker.close();
 		if (!marker.good()) {
 			if (err) *err = "Couldn't save the server configuration marker";

@@ -32,6 +32,14 @@ bool SearchCurseForgeModpacks(HttpClient& http,
 							  std::string* err = nullptr,
 							  const std::atomic<bool>* cancel = nullptr);
 
+// Every file of a modpack project (pack.sourceId), newest first, read page by page
+// (up to 500 files).
+bool ListCurseForgeVersions(HttpClient& http,
+		const Modpack& pack,
+		std::vector<PackVersionInfo>& out,
+		std::string* err = nullptr,
+		const std::atomic<bool>* cancel = nullptr);
+
 // The newest release file of a modpack project (pack.sourceId).
 bool FetchCurseForgeVersion(HttpClient& http,
 							const Modpack& pack,

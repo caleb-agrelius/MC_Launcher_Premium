@@ -32,6 +32,9 @@ The API has no search endpoint, so the first search loads everything:
 ## Version (`FetchFtbVersion`)
 The default version is the newest one (highest id) of type `release`, else the newest that isn't `archived`, else the newest. Its id becomes `sourceVersionId`.
 
+## Version list (`ListFtbVersions`)
+Every entry of the pack's `versions`, newest (highest id) first: its name, id, `type` (release, beta, alpha, archived), the date of `updated` (UTC), and the Minecraft version and loader from its `targets`.
+
 ## Install (`BuildFtbPlan`)
 - **Manifest:** `GET /modpack/{id}/{versionId}` lists `targets` (Minecraft version and loader) and `files`.
 - **Files:**

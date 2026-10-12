@@ -16,8 +16,9 @@ The ATLauncher Discover sub-page: search, version lookup, and whole-pack install
 - **Filters:** **Minecraft version**, a prefix match (`1.12` matches `1.12.x`). There's no loader filter, because the pack list doesn't say which loader a pack uses.
 - **Sorts:** **Featured** (featured packs first, then ATLauncher's `position`) and **Name**.
 
-## Version (`FetchAtLauncherVersion`)
-- Installs the newest version.
+## Versions (`ListAtLauncherVersions`, `FetchAtLauncherVersion`)
+- The pack list keeps every version with its Minecraft version (newest first), which `ListAtLauncherVersions` returns for the version picker. The loader is only known from a version's `Configs.json`.
+- The default is the newest version.
 - Reads `packs/<safeName>/versions/<version>/Configs.json` to fill in the Minecraft version and the loader type (`loader.type`).
 
 ## Install (`BuildAtLauncherPlan`)

@@ -35,7 +35,7 @@ Turning an installed modpack into a running Minecraft. Entry point: `PlayModpack
 - Libraries with `downloads.artifact` use its URL and SHA-1. Libraries without it (Fabric/Quilt style) use `url` (default `libraries.minecraft.net`) plus the maven path. Libraries with an empty URL must already exist, because Forge's installer generates them.
 
 ## Downloads
-`DownloadAll()` skips files that exist with the expected size and downloads the rest on 8 threads. Each file goes to a uniquely named `<file>.<tag>-<n>.part`, is checked against its SHA-1, then renamed into place. Two packs or two launcher windows fetching the same shared file therefore don't collide, and a file another downloader finished first counts as done. Each file gets 3 attempts, and the first failure stops the step. Progress is reported as "<step> (done/total)".
+`DownloadAll()` skips files that exist with the expected size and downloads the rest on 8 threads. Each file goes to a uniquely named `<file>.<tag>-<n>.part`, is checked against its SHA-1, then renamed into place. Two packs or two launcher windows fetching the same shared file therefore don't collide, and a file another downloader finished first counts as done. Replacing an existing file (e.g. a server's `server.jar` when its Minecraft version changes) is retried for about 2 seconds, removing the old file halfway, because Windows can keep a just-closed file locked briefly. Each file gets 3 download attempts, and the first failure stops the step. Progress is reported as "<step> (done/total)".
 
 ## Command line
 - Placeholders (`${auth_player_name}`, `${classpath}`, `${natives_directory}`, `${library_directory}`, `${classpath_separator}`, ...) are substituted. Unknown ones become empty. `user_type` is `msa`.

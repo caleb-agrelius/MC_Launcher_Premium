@@ -166,6 +166,9 @@ struct ServerState {
 	double progress = -1.0;
 	std::string error;
 	std::shared_ptr<std::atomic<bool>> cancel = std::make_shared<std::atomic<bool>>(false);
+	// The pack version Create/Update server files uses; unset = the version installed in My Library.
+	bool hasVersion = false;
+	PackVersionInfo version;
 };
 
 // Per-server memory, kept next to the server so it survives reinstalls of the launcher.
@@ -675,6 +678,9 @@ int main(int argc, char** argv)
 			StartWorker(workers, [zipPath, targetDir, &downloads, &downloadsMutex, &shuttingDown, &uiQueue,
 				&libraryPacks, &log, url, pack]() {
 				std::string error;
+				// Start from an empty folder, so another version's overrides don't linger.
+				std::error_code clearError;
+				fs::remove_all(targetDir, clearError);
 				auto progress = [&](int total, int now) {
 					std::lock_guard<std::mutex> lock(downloadsMutex);
 					DownloadState& current = downloads[url];
@@ -781,9 +787,13 @@ int main(int argc, char** argv)
 
 		auto startServerSetup = [&](const Modpack& pack) {
 			auto cancel = std::make_shared<std::atomic<bool>>(false);
+			// A version other than the installed one: setup downloads that version's .mrpack.
+			PackFile otherVersion;
 			{
 				std::lock_guard<std::mutex> lock(serversMutex);
 				ServerState& state = servers[pack.id];
+				if (state.hasVersion && !state.version.files.empty())
+					otherVersion = state.version.files.front();
 				state.busy = true;
 				state.step = "Starting";
 				state.progress = -1.0;
@@ -798,7 +808,8 @@ int main(int argc, char** argv)
 			const std::string packId = pack.id;
 			const std::string packName = pack.name;
 			log << "Setting up server for " << packId << "\n";
-			StartWorker(workers, [&http, &uiQueue, &servers, &serversMutex, &log, request, packId, packName, cancel]() {
+			StartWorker(workers, [&http, &uiQueue, &servers, &serversMutex, &log, request, packId, packName, cancel,
+				otherVersion]() mutable {
 				auto progress = [&](const std::string& step, double fraction) {
 					std::lock_guard<std::mutex> lock(serversMutex);
 					ServerState& state = servers.at(packId);
@@ -807,9 +818,28 @@ int main(int argc, char** argv)
 				};
 				ServerInfo info;
 				std::string error;
-				bool ok = false;
+				bool ok = true;
 				try {
-					ok = SetupServer(http, request, info, progress, &error, cancel.get());
+					if (!otherVersion.url.empty()) {
+						// The chosen version's .mrpack, unpacked into servers/<id>/.mclp-pack/ (fresh each time).
+						const fs::path zip = fs::absolute(fs::path("downloads") / packId / "server" / otherVersion.name);
+						const fs::path unpacked = request.serverDir / ".mclp-pack";
+						std::error_code ec;
+						fs::create_directories(zip.parent_path(), ec);
+						progress("Downloading " + otherVersion.name, -1.0);
+						ok = http.DownloadToFile(otherVersion.url, zip.string(), [&](double total, double now) {
+							if (total > 0.0)
+								progress("Downloading " + otherVersion.name, now / total);
+						}, &error, cancel.get());
+						if (ok) {
+							progress("Unpacking " + otherVersion.name, -1.0);
+							fs::remove_all(unpacked, ec);
+							ok = InstallZip(zip.string(), unpacked.string(), nullptr, &error, cancel.get());
+						}
+						request.extractedDir = unpacked;
+					}
+					if (ok)
+						ok = SetupServer(http, request, info, progress, &error, cancel.get());
 				} catch (const std::exception& ex) {
 					error = std::string("Server setup failed: ") + ex.what();
 				}
@@ -1212,6 +1242,95 @@ int main(int argc, char** argv)
 			int generation = 0;
 		};
 		OptionalPicker picker;
+
+		// Every version of a pack, for the version dropdowns (UI thread only, keyed by pack id).
+		struct VersionList {
+			bool loading = false;
+			bool loaded = false;
+			std::string error;
+			std::vector<PackVersionInfo> versions;
+		};
+		std::map<std::string, VersionList> versionLists;
+		auto startListVersions = [&](const Modpack& pack) {
+			VersionList& list = versionLists[pack.id];
+			list.loading = true;
+			list.error.clear();
+			StartWorker(workers, [&http, &uiQueue, &shuttingDown, &versionLists, &log, pack]() {
+				std::vector<PackVersionInfo> versions;
+				std::string error;
+				const bool ok = ListPackVersions(http, pack, versions, &error, &shuttingDown);
+				uiQueue.Post([&versionLists, &log, id = pack.id, ok, versions, error]() {
+					VersionList& list = versionLists[id];
+					list.loading = false;
+					list.loaded = ok;
+					list.error = ok ? std::string() : error;
+					list.versions = versions;
+					log << "Versions of " << id << ": " << (ok ? std::to_string(versions.size()) : "failed: " + error) << "\n";
+				});
+			});
+		};
+		// The details after a version in a dropdown row, e.g. "Minecraft 1.20.1 - beta - 2024-05-01".
+		auto versionDetails = [](const PackVersionInfo& v) {
+			std::string details;
+			auto add = [&](const std::string& part) {
+				if (!part.empty())
+					details += (details.empty() ? "" : "  \xC2\xB7  ") + part;
+			};
+			add(v.gameVersion.empty() ? std::string() : "Minecraft " + v.gameVersion);
+			add(v.versionType == "release" ? std::string() : v.versionType);
+			add(v.published);
+			return details;
+		};
+		// A dropdown of the pack's versions; the list loads the first time it opens. currentId
+		// (a sourceVersionId) is highlighted. Returns true when the player picked one.
+		auto versionCombo = [&](const char* id, const Modpack& pack, const std::string& preview, const std::string& currentId,
+			PackVersionInfo& picked) {
+			bool chosen = false;
+			if (ImGui::BeginCombo(id, preview.c_str(), ImGuiComboFlags_HeightLarge)) {
+				VersionList& list = versionLists[pack.id];
+				if (!list.loaded && !list.loading && list.error.empty())
+					startListVersions(pack);
+				if (list.loading) {
+					Widgets::Spinner(Theme::C().accent);
+					ImGui::SameLine();
+					ImGui::TextDisabled("Loading versions...");
+				} else if (!list.error.empty()) {
+					ImGui::TextColored(Theme::C().error, "Couldn't load versions: %s", list.error.c_str());
+					if (ImGui::Selectable("Retry", false, ImGuiSelectableFlags_DontClosePopups))
+						startListVersions(pack);
+				}
+				for (std::size_t i = 0; i < list.versions.size(); ++i) {
+					const PackVersionInfo& v = list.versions[i];
+					ImGui::PushID(static_cast<int>(i));
+					const bool current = !currentId.empty() && v.sourceVersionId == currentId;
+					if (ImGui::Selectable(v.versionNumber.empty() ? v.sourceVersionId.c_str() : v.versionNumber.c_str(), current)) {
+						picked = v;
+						chosen = true;
+					}
+					if (current)
+						ImGui::SetItemDefaultFocus();
+					const std::string details = (i == 0 ? std::string("newest  \xC2\xB7  ") : std::string()) + versionDetails(v);
+					if (!details.empty()) {
+						ImGui::SameLine();
+						ImGui::TextDisabled("%s", details.c_str());
+					}
+					ImGui::PopID();
+				}
+				ImGui::EndCombo();
+			}
+			return chosen;
+		};
+		// Puts a picked version on a pack. Its Minecraft version replaces the old one even
+		// when unknown, so the pack doesn't show the previous version's.
+		auto applyPickedVersion = [](Modpack& target, const PackVersionInfo& v) {
+			target.gameVersion = v.gameVersion;
+			ApplyPackVersion(target, v);
+		};
+		// True when v is the version a library pack has installed. Modrinth packs installed
+		// before versions had ids only know their version number.
+		auto isInstalledVersion = [](const Modpack& pack, const PackVersionInfo& v) {
+			return pack.sourceVersionId.empty() ? v.versionNumber == pack.version : v.sourceVersionId == pack.sourceVersionId;
+		};
 
 		// Checks or unchecks an optional mod, keeping the choice consistent: checking adds the
 		// mods it depends on and unchecks others in its group; unchecking drops mods that need it.
@@ -1867,9 +1986,15 @@ int main(int argc, char** argv)
 							if (ImGui::Button("Retry"))
 								startFetchFiles(view, pack);
 						} else if (pack.filesLoaded) {
-							ImGui::PushFont(fonts.bold, 0.0f);
-							ImGui::TextUnformatted(pack.version.empty() ? "Latest version" : pack.version.c_str());
-							ImGui::PopFont();
+							// Version to install; the newest release is chosen at first.
+							ImGui::SetNextItemWidth(S(200.0f));
+							ImGui::BeginDisabled(hasState && state.active);
+							PackVersionInfo picked;
+							if (versionCombo("##install_version", pack, pack.version.empty() ? "Latest version" : pack.version,
+									pack.sourceVersionId, picked))
+								applyPickedVersion(*selectedPack, picked);
+							ImGui::EndDisabled();
+							ImGui::SetItemTooltip("Pick which version of the pack to install");
 							ImGui::SameLine();
 							std::string details;
 							if (!pack.gameVersion.empty())
@@ -1936,6 +2061,22 @@ int main(int argc, char** argv)
 							ImGui::TextColored(Theme::C().error, "Couldn't load versions: %s", filesError->second.c_str());
 							if (ImGui::Button("Retry"))
 								startFetchFiles(view, pack);
+						}
+						if (online && pack.filesLoaded) {
+							// Which version's .mrpack to download; the newest release is chosen at first.
+							ImGui::AlignTextToFramePadding();
+							ImGui::TextDisabled("Version");
+							ImGui::SameLine();
+							ImGui::SetNextItemWidth(S(220.0f));
+							PackVersionInfo picked;
+							if (versionCombo("##file_version", pack, pack.version.empty() ? "Latest version" : pack.version,
+									pack.sourceVersionId, picked))
+								applyPickedVersion(*selectedPack, picked);
+							ImGui::SameLine();
+							std::string details = pack.gameVersion.empty() ? std::string() : "Minecraft " + pack.gameVersion;
+							if (!pack.loaders.empty())
+								details += (details.empty() ? "" : "  \xC2\xB7  ") + pack.loaders;
+							ImGui::TextDisabled("%s", details.c_str());
 						}
 
 						for (const PackFile& file : pack.files) {
@@ -2301,6 +2442,32 @@ int main(int argc, char** argv)
 							if (progress >= 0.0)
 								Widgets::ThinProgressBar(static_cast<float>(progress));
 						} else {
+							// Which pack version to set up: the one installed in My Library unless another is picked.
+							if (pack.source != PackSource::LocalIndex) {
+								ImGui::AlignTextToFramePadding();
+								ImGui::TextDisabled("Pack version");
+								ImGui::SameLine();
+								ImGui::SetNextItemWidth(S(240.0f));
+								std::string chosenId;
+								std::string preview;
+								{
+									std::lock_guard<std::mutex> lock(serversMutex);
+									chosenId = server.hasVersion ? server.version.sourceVersionId : pack.sourceVersionId;
+									preview = server.hasVersion ? server.version.versionNumber : pack.version + " (installed)";
+								}
+								ImGui::BeginDisabled(server.running);
+								PackVersionInfo picked;
+								if (versionCombo("##server_version", pack, preview, chosenId, picked)) {
+									std::lock_guard<std::mutex> lock(serversMutex);
+									server.hasVersion = !isInstalledVersion(pack, picked);
+									server.version = picked;
+								}
+								ImGui::EndDisabled();
+								if (server.ready && !server.info.packVersion.empty()) {
+									ImGui::SameLine();
+									ImGui::TextDisabled("Server has %s", server.info.packVersion.c_str());
+								}
+							}
 							const char* label = server.ready ? "Update server files" : "Create server files";
 							// Wrap the description short of the buttons on its right.
 							float buttonsWidth = ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 2.0f;
