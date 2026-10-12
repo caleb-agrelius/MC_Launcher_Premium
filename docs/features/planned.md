@@ -3,7 +3,6 @@
 Features that don't exist yet:
 
 - **Microsoft sign-in approval:** the sign-in flow is built (see [accounts.md](accounts.md)), but it needs an Azure app client ID that Mojang has approved for the Minecraft API. Until one is set (Settings > Account, saved as `microsoftClientId`), only offline mode works.
-- **Servers for old Forge packs:** whole-pack servers need the loader declared in `pack.json`; Forge found in a pack's own jar (old ATLauncher and Technic packs) is only installed for the client.
 - **Other platforms:** launching is Windows x64 only. See [Linux and Windows builds](#linux-and-windows-builds) below.
 - **CurseForge in Browse:** Manage > Content > **Browse Modrinth** searches Modrinth only. CurseForge mods, resource packs and shaders (`/v1/mods/search` with class ids 6, 12 and 6552, files from `/v1/mods/{id}/files`, dependencies with `relationType` 3, installed mods found by CurseForge fingerprint) could be a second source when an API key is set. It needs a key to build and check against the real API.
 - **Modpack source follow-ups:** a live CurseForge test with a real API key. The original spec is [plans/modpack-sources.md](../plans/modpack-sources.md).

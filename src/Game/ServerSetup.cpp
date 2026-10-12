@@ -4,6 +4,7 @@
 #include "Game/Loaders.h"
 #include "Game/PackInstance.h"
 #include "Network/HttpClient.h"
+#include "Storage/Installer.h"
 #include "Util/Paths.h"
 #include "Util/Text.h"
 #include "Util/Process.h"
@@ -18,6 +19,7 @@
 #include <fstream>
 #include <map>
 #include <set>
+#include <sstream>
 #include <regex>
 
 namespace fs = std::filesystem;
@@ -252,6 +254,126 @@ static bool DownloadVanillaServer(HttpClient& http, const fs::path& gameRoot, co
 	job.size = server.value("size", 0ULL);
 	job.path = target;
 	return DownloadAll(http, { job }, "Downloading the Minecraft " + minecraftVersion + " server", progress, err, cancel);
+}
+
+bool ReadForgeServerClassPath(const fs::path& forgeJar, std::vector<std::string>& out, std::string* err)
+{
+	out.clear();
+	std::string manifest;
+	if (!ReadZipEntry(forgeJar.u8string(), "META-INF/MANIFEST.MF", manifest)) {
+		if (err) *err = forgeJar.filename().u8string() + " has no manifest";
+		return false;
+	}
+	// Manifest lines are wrapped at 72 bytes; a line starting with a space continues the last one.
+	std::vector<std::string> lines;
+	std::size_t start = 0;
+	while (start < manifest.size()) {
+		std::size_t end = manifest.find('\n', start);
+		if (end == std::string::npos)
+			end = manifest.size();
+		std::string line = manifest.substr(start, end - start);
+		if (!line.empty() && line.back() == '\r')
+			line.pop_back();
+		if (!line.empty() && line[0] == ' ' && !lines.empty())
+			lines.back() += line.substr(1);
+		else
+			lines.push_back(line);
+		start = end + 1;
+	}
+	for (const std::string& line : lines) {
+		if (line.rfind("Class-Path:", 0) != 0)
+			continue;
+		std::istringstream entries(line.substr(11));
+		for (std::string entry; entries >> entry;) {
+			// Only plain relative paths: they're joined to the server folder.
+			if (IsSafeRelativePath(entry))
+				out.push_back(entry);
+		}
+	}
+	if (out.empty()) {
+		if (err) *err = forgeJar.filename().u8string() + " doesn't list the server's libraries (no Class-Path in its manifest)";
+		return false;
+	}
+	return true;
+}
+
+const std::vector<std::string>& LegacyForgeLibraryMirrors()
+{
+	static const std::vector<std::string> mirrors = {
+		"https://libraries.minecraft.net/",
+		"https://maven.minecraftforge.net/",
+		"https://repo1.maven.org/maven2/",
+	};
+	return mirrors;
+}
+
+// An old Forge server (Minecraft 1.6 to 1.12) from the Forge universal jar the pack ships (Technic's
+// bin/modpack.jar, or an ATLauncher jar mod). Forge's installers for these versions download from
+// retired URLs, so this lays the server out the way they did: the jar in the server folder, and the
+// files its manifest's Class-Path names beside it (the vanilla server and libraries/). Libraries
+// the client already installed are copied from gameRoot/libraries/. Sets jarName to the jar to run.
+static bool InstallLegacyForgeServer(HttpClient& http, const fs::path& gameRoot, const fs::path& forgeJar,
+	const std::string& minecraftVersion, const std::string& forgeVersion, const fs::path& serverDir, std::string& jarName,
+	const ProgressFn& progress, std::string* err, const std::atomic<bool>* cancel)
+{
+	std::vector<std::string> classPath;
+	if (!ReadForgeServerClassPath(forgeJar, classPath, err))
+		return false;
+	std::error_code ec;
+	jarName = "forge-" + minecraftVersion + "-" + forgeVersion + "-universal.jar";
+	fs::copy_file(forgeJar, serverDir / jarName, fs::copy_options::overwrite_existing, ec);
+	if (ec) {
+		if (err) *err = "Couldn't copy the pack's Forge jar to the server: " + ec.message();
+		return false;
+	}
+	std::size_t done = 0;
+	for (const std::string& entry : classPath) {
+		if (cancel && cancel->load()) {
+			if (err) *err = "Cancelled";
+			return false;
+		}
+		++done;
+		const fs::path target = serverDir / fs::u8path(entry);
+		if (entry.rfind("libraries/", 0) != 0) {
+			// The vanilla server, named as Forge expects (minecraft_server.<version>.jar).
+			if (entry.rfind("minecraft_server.", 0) == 0 &&
+				!DownloadVanillaServer(http, gameRoot, minecraftVersion, target, progress, err, cancel))
+				return false;
+			continue;
+		}
+		if (fs::file_size(target, ec) > 0 && !ec)
+			continue;
+		if (progress)
+			progress("Downloading Forge libraries (" + std::to_string(done) + "/" + std::to_string(classPath.size()) + ")",
+				static_cast<double>(done) / static_cast<double>(classPath.size()));
+		fs::create_directories(target.parent_path(), ec);
+		const fs::path installed = gameRoot / fs::u8path(entry);
+		ec.clear();
+		if (fs::file_size(installed, ec) > 0 && !ec) {
+			fs::copy_file(installed, target, fs::copy_options::overwrite_existing, ec);
+			if (!ec)
+				continue;
+		}
+		const std::string mavenPath = entry.substr(std::strlen("libraries/"));
+		std::string lastError;
+		bool downloaded = false;
+		for (const std::string& mirror : LegacyForgeLibraryMirrors()) {
+			DownloadJob job;
+			job.url = mirror + mavenPath;
+			job.path = target;
+			if (DownloadAll(http, { job }, "Downloading Forge libraries", nullptr, &lastError, cancel)) {
+				downloaded = true;
+				break;
+			}
+			if (cancel && cancel->load())
+				break;
+		}
+		if (!downloaded) {
+			if (err) *err = "Couldn't download the Forge library " + fs::u8path(mavenPath).filename().u8string() + ": " + lastError;
+			return false;
+		}
+	}
+	return true;
 }
 
 // Finds Forge/NeoForge's Windows argument file (newer versions), relative to the server folder.
@@ -508,6 +630,22 @@ bool SetupServer(HttpClient& http, const ServerSetupRequest& request, ServerInfo
 	}
 	case LoaderKind::Forge:
 	case LoaderKind::NeoForge: {
+		if (index.loader == LoaderKind::Forge && wholePack && !installed.loaderJar.empty() &&
+			IsLegacyForgeMinecraft(index.minecraftVersion)) {
+			// Old Forge found in the pack's own jar: built from that jar, not Forge's installer.
+			std::string jar;
+			if (!InstallLegacyForgeServer(http, request.gameRoot, installed.loaderJar, index.minecraftVersion,
+					index.loaderVersion, dir, jar, progress, err, cancel))
+				return false;
+			if (NeedsLegacyJavaFixer(index.minecraftVersion, index.loaderVersion) &&
+				!DownloadAll(http, { LegacyJavaFixerJob(dir) }, "Downloading LegacyJavaFixer", progress, err, cancel))
+				return false;
+			// Like Play: current Java 8 rejects the SHA-1 signatures old FML checks.
+			out.launchArgs = { "-Dfml.ignoreInvalidMinecraftCertificates=true", "-Dfml.ignorePatchDiscrepancies=true",
+				"-jar", jar, "nogui" };
+			out.notes.push_back("Forge " + index.loaderVersion + " was set up from the pack's own " + installed.loaderSource + ".");
+			break;
+		}
 		fs::path installer;
 		if (!DownloadForgeInstaller(http, request.gameRoot, index.loader, index.minecraftVersion, index.loaderVersion,
 				installer, progress, err, cancel))

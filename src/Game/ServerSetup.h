@@ -58,6 +58,15 @@ bool SetupServer(HttpClient& http,
 				 std::string* err,
 				 const std::atomic<bool>* cancel);
 
+// The files an old Forge server (Minecraft 1.6 to 1.12) loads from beside its universal jar: the
+// Class-Path of the jar's META-INF/MANIFEST.MF, e.g. "libraries/net/minecraft/launchwrapper/1.12/
+// launchwrapper-1.12.jar" and "minecraft_server.1.7.10.jar". Fails when the jar has none.
+bool ReadForgeServerClassPath(const std::filesystem::path& forgeJar, std::vector<std::string>& out, std::string* err);
+
+// Where an old Forge server's libraries are downloaded from, tried in order: the libraries
+// Forge's retired files.minecraftforge.net used to serve are now on these.
+const std::vector<std::string>& LegacyForgeLibraryMirrors();
+
 // Reads .mclp-server.json. False if the server hasn't been set up.
 bool LoadServerInfo(const std::filesystem::path& serverDir, ServerInfo& out);
 

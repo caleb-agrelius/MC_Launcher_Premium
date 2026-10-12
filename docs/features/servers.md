@@ -28,6 +28,14 @@ The server pane has four tabs (`ServerState::tab`, a `Widgets::TabStrip`):
 
 Java comes from Settings > Minecraft: a chosen Java, or Automatic (an installed Java with the major version the Minecraft version needs, else Mojang's runtime, as for PLAY in [launching.md](launching.md)); the server uses its console `java.exe`. Setup installs the vanilla server, Fabric server launcher, Quilt server launcher, or Forge/NeoForge server. Fabric launchers use version-specific filenames, and Forge/NeoForge launch arguments select the exact installed version, so updates cannot select an older loader left on disk. Loader command formats follow the [Fabric server documentation](https://fabricmc.net/use/?page=server), [Quilt server documentation](https://quiltmc.org/en/install/server/), and [Forge installer](https://github.com/MinecraftForge/Installer/blob/2.0/src/main/java/net/minecraftforge/installer/SimpleInstaller.java).
 
+**Old Forge from the pack's own jar** (Minecraft 1.6 to 1.12, for whole-pack installs whose loader `ReadInstalledPack` found in `bin/modpack.jar` or an ATLauncher jar mod rather than `pack.json`; see [launching.md](launching.md)): Forge's installers for these versions download from retired URLs, so `InstallLegacyForgeServer` (`src/Game/ServerSetup.cpp`) builds the server from that jar instead, laid out the way those installers did:
+- The jar is copied into the server folder as `forge-<Minecraft>-<Forge>-universal.jar`.
+- The files its manifest's `Class-Path` names are put beside it (`ReadForgeServerClassPath`): the vanilla server as `minecraft_server.<version>.jar` (from Mojang's version JSON), and every `libraries/...` jar. A library the client already installed under `minecraft/libraries/` is copied. Otherwise it's downloaded from the first mirror that has it (`LegacyForgeLibraryMirrors`): `libraries.minecraft.net`, `maven.minecraftforge.net`, then Maven Central.
+- LegacyJavaFixer goes into the server's `mods/` when the Forge version needs it (as for PLAY).
+- The launch arguments are `-Dfml.ignoreInvalidMinecraftCertificates=true -Dfml.ignorePatchDiscrepancies=true -jar <jar> nogui`. Java follows the rule above; these versions ask for Java 8.
+- Setup adds a note naming the jar Forge came from.
+- Old Forge declared in `pack.json` still uses Forge's installer.
+
 Successful setup saves Java, Minecraft and loader versions, pack version, launch arguments and setup notes in `.mclp-server.json`. Write failures are reported as setup failures. Configuration-copy state is saved in `.mclp-server-prepared`. Installer output goes to `minecraft/logs/server-installer.log`.
 
 ## Mods

@@ -19,7 +19,7 @@ The CTest checks cover window settings, server file filtering and setup, preserv
 build\Debug\live_checks.exe
 ```
 
-It prints PASS or FAIL per source and skips CurseForge unless `MCLP_CURSEFORGE_API_KEY` is set.
+It prints PASS or FAIL per source and skips CurseForge unless `MCLP_CURSEFORGE_API_KEY` is set. It also builds old Forge servers (1.7.10 from a Technic-style `bin/modpack.jar`, 1.6.4 from an ATLauncher-style jar mod) from Forge's maven, and starts each until it prints "Done". That takes a few minutes and downloads Java 8 the first time if none is installed. The servers are kept under `tests/out/live/` for inspection.
 
 ## Visual Studio
 

@@ -583,6 +583,31 @@ static void SharedFileChecks(const fs::path& dir)
 	SharedFiles::Configure({}, false);
 }
 
+// Old Forge servers: the universal jar's manifest Class-Path, with 72-byte wrapped lines.
+static void LegacyForgeServerChecks(const fs::path& dir)
+{
+	const fs::path jar = dir / "legacy-forge" / "forge-universal.jar";
+	WriteJar(jar, { { "META-INF/MANIFEST.MF",
+		"Manifest-Version: 1.0\r\n"
+		"Main-Class: cpw.mods.fml.relauncher.ServerLaunchWrapper\r\n"
+		"Class-Path: libraries/net/minecraft/launchwrapper/1.12/launchwrapper-1.\r\n"
+		" 12.jar libraries/org/ow2/asm/asm-all/5.0.3/asm-all-5.0.3.jar ../evil.jar\r\n"
+		"  minecraft_server.1.7.10.jar\r\n"
+		"Tweak-Class: cpw.mods.fml.common.launcher.FMLTweaker\r\n" } });
+	std::vector<std::string> classPath;
+	std::string error;
+	Check(ReadForgeServerClassPath(jar, classPath, &error), error);
+	const std::vector<std::string> expected = {
+		"libraries/net/minecraft/launchwrapper/1.12/launchwrapper-1.12.jar",
+		"libraries/org/ow2/asm/asm-all/5.0.3/asm-all-5.0.3.jar",
+		"minecraft_server.1.7.10.jar",
+	};
+	Check(classPath == expected, "Class-Path wasn't read as expected (" + std::to_string(classPath.size()) + " entries)");
+	WriteJar(jar, { { "META-INF/MANIFEST.MF", "Manifest-Version: 1.0\n" } });
+	Check(!ReadForgeServerClassPath(jar, classPath, &error), "A jar without a Class-Path was accepted");
+	Check(!LegacyForgeLibraryMirrors().empty(), "No library mirrors");
+}
+
 // Jar mods: pack.json order, layering over the game jar, META-INF removal, and skipping rebuilds.
 static void JarModChecks(const fs::path& dir)
 {
@@ -888,6 +913,7 @@ int main(int argc, char** argv)
 		PackCreatorChecks(dir);
 		JavaChecks(dir);
 		JarModChecks(dir);
+		LegacyForgeServerChecks(dir);
 		SharedFileChecks(dir);
 		std::cout << "Window settings, server setup, cards and console checks passed\n";
 		return 0;
