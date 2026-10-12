@@ -21,6 +21,8 @@ Window, rendering loop, navigation, theme, and logging.
    - after the main window, draws toast notifications (`Toasts::Draw`)
 7. On exit (`AppRoot::Shutdown`), asks running servers to save and stop, sets the shutdown flag (which cancels setup, download and sign-in work), joins remaining workers, and drains `UiQueue` to save completed work. It saves settings and the last normal window size/position and maximized state. A minimized window keeps its prior placement. It then stops the image cache and mascot, and `Application` tears down the ImGui backends, the ImGui context and the window.
 
+**Minimum window size:** `ThemeController::ApplyAll` sets it to 1180x720 logical pixels (`Theme::S`, so it grows with Windows scaling and the UI scale; below that Discover's filter row and the sidebar's account buttons get cut off). `GlfwWindow::SetMinimumSize` caps it to the usable area (monitor minus taskbar) of the monitor under the window, so on a small screen or at a high scale the window can still be as large as the screen. A saved window smaller than the minimum is grown to it.
+
 ## Layout
 One full-window ImGui window with no title bar (`AppShell::Draw`), split into:
 - **Sidebar** (`Sidebar`, 230px, scaled): the interactive mob mascot beside the blocky "MC LAUNCHER" wordmark, Discover, My Library, Downloads, Servers, Settings, and account controls. Downloads shows an active-work badge. The sidebar never scrolls. Discover uses source filter chips within the page.

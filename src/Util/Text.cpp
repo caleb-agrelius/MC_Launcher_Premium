@@ -225,6 +225,55 @@ std::string FormatCount(std::uint64_t count)
 	return formatted;
 }
 
+std::string FormatShortDate(const std::string& iso)
+{
+	static const char* const months[] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+	if (iso.size() < 10 || iso[4] != '-' || iso[7] != '-')
+		return {};
+	for (std::size_t i : { 0, 1, 2, 3, 5, 6, 8, 9 }) {
+		if (iso[i] < '0' || iso[i] > '9')
+			return {};
+	}
+	const int month = std::stoi(iso.substr(5, 2));
+	const int day = std::stoi(iso.substr(8, 2));
+	if (month < 1 || month > 12 || day < 1 || day > 31)
+		return {};
+	return std::string(months[month - 1]) + " " + std::to_string(day) + ", " + iso.substr(0, 4);
+}
+
+std::string IsoDateFromEpoch(std::int64_t seconds)
+{
+	if (seconds <= 0)
+		return {};
+	const std::time_t time = static_cast<std::time_t>(seconds);
+	std::tm utc{};
+#ifdef _WIN32
+	gmtime_s(&utc, &time);
+#else
+	gmtime_r(&time, &utc);
+#endif
+	char formatted[16];
+	std::strftime(formatted, sizeof(formatted), "%Y-%m-%d", &utc);
+	return formatted;
+}
+
+std::string CategoryLabel(const std::string& slug)
+{
+	std::string label = slug;
+	bool wordStart = true;
+	for (char& c : label) {
+		if (c == '-' || c == '_') {
+			c = ' ';
+			wordStart = true;
+		} else {
+			if (wordStart && c >= 'a' && c <= 'z')
+				c = static_cast<char>(c - 'a' + 'A');
+			wordStart = c == ' ';
+		}
+	}
+	return label;
+}
+
 std::string ToLower(std::string text)
 {
 	std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });

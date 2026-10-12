@@ -49,6 +49,7 @@ enum class DiscoverViewMode { List, Grid };
 
 struct DiscoverState {
 	DiscoverViewMode viewMode = DiscoverViewMode::List;
+	int gridScalePercent = 100; // grid view: card size in percent (saved as Settings::discoverGridScale)
 	bool detailsOpen = false; // grid view: the selected pack's details modal is showing
 	char search[128] = "";
 	char gameVersion[32] = "";

@@ -1,6 +1,7 @@
 #include "Modrinth.h"
 #include "HttpClient.h"
 #include "Util/Json.h"
+#include "Util/Text.h"
 
 #include <nlohmann/json.hpp>
 
@@ -116,6 +117,16 @@ bool SearchModrinthModpacks(IHttpClient& http,
 				pack.color = hit["color"].get<std::uint32_t>() & 0xFFFFFFu;
 			pack.source = PackSource::Modrinth;
 			pack.sourceId = pack.id;
+			pack.updated = hit.value("date_modified", "");
+			// The loaders are listed with the categories; the card shows them separately.
+			const json& categories = hit.contains("display_categories") ? hit["display_categories"] : hit.value("categories", json::array());
+			if (categories.is_array()) {
+				for (const auto& category : categories) {
+					const std::string slug = category.is_string() ? category.get<std::string>() : "";
+					if (!slug.empty() && slug != "fabric" && slug != "forge" && slug != "neoforge" && slug != "quilt")
+						pack.categories.push_back(CategoryLabel(slug));
+				}
+			}
 			pack.websiteUrl = "https://modrinth.com/modpack/" + pack.id;
 			pack.filesLoaded = false;
 			if (!pack.id.empty())

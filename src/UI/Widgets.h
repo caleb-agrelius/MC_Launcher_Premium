@@ -130,15 +130,18 @@ bool NavItem(const char* label, bool selected, int badge = 0);
 float FadeAlpha(const LoadedImage& image);
 
 // Pack icon: the loaded image, or a tile in the pack's color with its first letter.
+// flags picks which corners are rounded (ImDrawFlags_RoundCorners*; 0 = all).
 void DrawPackIcon(ImDrawList* drawList, const LoadedImage* image, const Modpack& pack,
-				  ImVec2 min, float size, float rounding);
+				  ImVec2 min, float size, float rounding, ImDrawFlags flags = 0);
 
 // Selectable row for the pack list: icon, name, and a metadata line. Returns true when clicked.
 // tag (optional) is drawn as a small pill in tagColor before the metadata, e.g. the source.
 bool PackRow(const Modpack& pack, ImageCache& images, bool selected, const std::string& meta,
 	const char* tag = nullptr, const ImVec4& tagColor = ImVec4(0, 0, 0, 0));
 
-// Selectable card for the pack grid: icon on top, then the name, the source tag and the metadata.
+// Card for the pack grid, in the style of CurseForge's: a wide cover (the pack's banner image, else a tile in its color) with the source
+// on a pill over it, then the pack icon beside the name and "by author" (as on Modrinth), the first category chip and "+N" for the rest, and a
+// footer with downloads and the last update (meta stands in when a source has neither).
 // width is the card's width; the height follows from it. Returns true when clicked.
 bool PackCard(const Modpack& pack, ImageCache& images, bool selected, const std::string& meta,
 	const char* tag, const ImVec4& tagColor, float width);

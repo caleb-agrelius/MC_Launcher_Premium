@@ -163,6 +163,24 @@ float GlfwWindow::ContentScale() const
 
 void GlfwWindow::SetMinimumSize(int width, int height)
 {
+	// The monitor under the middle of the window; its usable area (minus the taskbar) caps the minimum, so
+	// on a small screen or at a high Windows scale the window can still be as large as the screen.
+	int x = 0, y = 0, w = 0, h = 0;
+	glfwGetWindowPos(m_window, &x, &y);
+	glfwGetWindowSize(m_window, &w, &h);
+	const int centerX = x + w / 2;
+	const int centerY = y + h / 2;
+	int count = 0;
+	GLFWmonitor** monitors = glfwGetMonitors(&count);
+	for (int i = 0; i < count; ++i) {
+		int areaX = 0, areaY = 0, areaWidth = 0, areaHeight = 0;
+		glfwGetMonitorWorkarea(monitors[i], &areaX, &areaY, &areaWidth, &areaHeight);
+		if (centerX >= areaX && centerX < areaX + areaWidth && centerY >= areaY && centerY < areaY + areaHeight) {
+			width = std::min(width, areaWidth);
+			height = std::min(height, areaHeight);
+			break;
+		}
+	}
 	glfwSetWindowSizeLimits(m_window, width, height, GLFW_DONT_CARE, GLFW_DONT_CARE);
 }
 

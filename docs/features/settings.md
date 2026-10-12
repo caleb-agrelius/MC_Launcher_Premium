@@ -31,6 +31,7 @@ Saved in the data folder (gitignored). A missing or invalid file gives the defau
 | `dismissedNotices` | [] | Ids of Settings tips closed with "Don't show again" |
 | `searchLimit` | 30 | Results per search, 10–100 (CurseForge caps it at 50) |
 | `discoverSources` | `[]` | Discover source filters (source keys); the selected sources; empty (or none saved) selects all sources. Unknown keys are ignored |
+| `discoverGridScale` | `100` | Discover grid view card size in percent (60-160), set with the - and + buttons (10% steps) |
 | `window` | omitted | Last normal launcher size and position (`width`, `height`, `x`, `y`, in screen pixels) and `maximized`; saved at shutdown |
 | `microsoftClientId` | `""` | Azure app ID for Microsoft sign-in; empty disables it |
 | `curseForgeApiKey` | `""` | CurseForge API key, stored in plain text; empty uses `MCLP_CURSEFORGE_API_KEY` |

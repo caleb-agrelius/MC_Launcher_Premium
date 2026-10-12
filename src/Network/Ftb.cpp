@@ -157,8 +157,13 @@ static bool LoadAllPacks(IHttpClient& http, std::vector<FtbPack>& out, std::stri
 				entry.updated = detail.value("updated", 0LL);
 				entry.featured = detail.value("featured", false);
 				entry.searchText = ToLower(pack.name + "\n" + pack.description);
-				for (const auto& tag : detail.value("tags", json::array()))
-					entry.searchText += "\n" + ToLower(StringOrEmpty(tag, "name"));
+				pack.updated = IsoDateFromEpoch(entry.updated);
+				for (const auto& tag : detail.value("tags", json::array())) {
+					const std::string name = StringOrEmpty(tag, "name");
+					entry.searchText += "\n" + ToLower(name);
+					if (!name.empty())
+						pack.categories.push_back(CategoryLabel(name));
+				}
 				std::lock_guard<std::mutex> lock(mutex);
 				loaded[index] = true;
 			}

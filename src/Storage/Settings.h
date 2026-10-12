@@ -56,6 +56,7 @@ struct Settings {
 	float uiScale = 1.0f;
 	// Discover's source filter (PackSourceKeys, e.g. "modrinth"). Empty = every source.
 	std::vector<std::string> discoverSources;
+	int discoverGridScale = 100; // Discover grid card size in percent, kMinGridScale to kMaxGridScale
 	std::string theme = "grass"; // Theme::ThemeInfo::id
 	bool reduceMotion = false;   // no image fade-ins or toast slide-ins
 	float animationSpeed = 1.0f; // multiplies how fast animations play (2 = twice as fast); unused while reduceMotion is on
@@ -89,6 +90,9 @@ struct Settings {
 
 static constexpr float kMinUiScale = 0.75f;
 static constexpr float kMaxUiScale = 2.0f;
+static constexpr int kMinGridScale = 60;
+static constexpr int kMaxGridScale = 160;
+static constexpr int kGridScaleStep = 10; // what the - and + buttons change it by
 static constexpr float kMinAnimationSpeed = 0.25f;
 static constexpr float kMaxAnimationSpeed = 3.0f;
 static constexpr int kMinSearchLimit = 10;

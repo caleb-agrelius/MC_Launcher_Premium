@@ -75,6 +75,12 @@ static void SettingsChecks(const fs::path& dir)
 	Check(SaveSettings(path.string(), settings) && LoadSettings(path.string()).animationSpeed == 1.5f, "Animation speed did not round-trip");
 	settings.animationSpeed = 99.0f;
 	Check(SaveSettings(path.string(), settings) && LoadSettings(path.string()).animationSpeed == kMaxAnimationSpeed, "Animation speed was not clamped");
+	Check(restored.discoverGridScale == 100, "The grid scale default changed");
+	settings.discoverGridScale = 130;
+	Check(SaveSettings(path.string(), settings) && LoadSettings(path.string()).discoverGridScale == 130, "Grid scale did not round-trip");
+	settings.discoverGridScale = 900;
+	Check(SaveSettings(path.string(), settings) && LoadSettings(path.string()).discoverGridScale == kMaxGridScale, "Grid scale was not clamped");
+	settings.discoverGridScale = 100;
 	settings.animationSpeed = 1.0f;
 	Check(SaveSettings(path.string(), settings), "Settings save failed");
 	Check(restored.paneWidths.size() == 2 && restored.paneWidths.at("discover") == 412.0f &&
@@ -867,6 +873,12 @@ static void PackEditChecks(const fs::path& dir)
 	Check(LoadPackLibrary(libraryFile.string()).at("edited").playSeconds == 11100, "Play time did not round-trip through library.json");
 	AddInstalledVersion(library, pack, PlanInstalledVersion(library, pack, false));
 	Check(library.at("edited").playSeconds == 11100, "Installing a version reset the play time");
+	Check(FormatShortDate("2026-10-07T12:00:00Z") == "Oct 7, 2026" && FormatShortDate("2025-01-31") == "Jan 31, 2025" &&
+		FormatShortDate("").empty() && FormatShortDate("yesterday").empty() && FormatShortDate("2026-13-01").empty(),
+		"Short dates were formatted wrongly");
+	Check(IsoDateFromEpoch(0).empty() && IsoDateFromEpoch(1760000000) == "2025-10-09", "An epoch time was formatted wrongly");
+	Check(CategoryLabel("adventure-and-rpg") == "Adventure And Rpg" && CategoryLabel("technology") == "Technology",
+		"A category slug was formatted wrongly");
 	Check(FormatPlaytime(0) == "Not played yet" && FormatPlaytime(45) == "Under a minute" && FormatPlaytime(12 * 60) == "12 min" &&
 		FormatPlaytime(11100) == "3 h 05 min" && FormatPlaytime(120 * 3600) == "120 h", "Play time was formatted wrongly");
 }
