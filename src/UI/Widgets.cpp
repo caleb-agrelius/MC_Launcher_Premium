@@ -171,26 +171,33 @@ static void DrawTopFade()
 	if (scroll < 1.0f)
 		return;
 	ImGuiWindow* window = ImGui::GetCurrentWindow();
-	// Inside the panel's border and rounded corners, so the fade never paints over its outline.
+	// Inside a bordered panel's outline and rounded corners, so the fade never paints over them. A borderless
+	// area has neither, and the fade runs to its very edge so content there fades too.
 	const float border = window->WindowBorderSize;
-	const float inset = border + std::ceil(window->WindowRounding * 0.5f);
+	const float inset = border > 0.0f ? border + std::ceil(window->WindowRounding * 0.5f) : 0.0f;
 	const ImVec2 min(std::max(window->InnerRect.Min.x, window->Pos.x + inset), std::max(window->InnerRect.Min.y, window->Pos.y + border));
 	const float width = std::min(window->InnerRect.Max.x, window->Pos.x + window->Size.x - inset) - min.x;
-	const float height = std::min(S(28.0f), window->InnerRect.GetHeight() * 0.25f);
+	const float height = std::min(S(64.0f), window->InnerRect.GetHeight() * 0.3f);
 	if (height < 1.0f || width < 1.0f)
 		return;
 	ImVec4 color = ImGui::GetStyleColorVec4(ImGuiCol_ChildBg);
 	color.w = 1.0f;
-	// Eases in over the first few pixels so the fade doesn't pop in at the first notch.
-	const float strength = std::clamp(scroll / S(24.0f), 0.0f, 1.0f) * 0.9f;
+	// Eases in over the first few pixels so the fade doesn't pop in at the first notch. Fully opaque at the
+	// edge, so no line of cut-off content shows.
+	const float strength = std::clamp(scroll / S(24.0f), 0.0f, 1.0f);
 	ImGui::SetCursorScreenPos(min);
 	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
 	ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 0.0f);
 	if (ImGui::BeginChild("##top_fade", ImVec2(width, height), ImGuiChildFlags_None,
 			ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings)) {
+		// Two linear steps approximate an ease-out: dense at the top, then a long soft tail with no visible end.
+		const float midY = min.y + height * 0.4f;
 		const ImU32 solid = ImGui::GetColorU32(Theme::WithAlpha(color, strength));
+		const ImU32 mid = ImGui::GetColorU32(Theme::WithAlpha(color, strength * 0.5f));
 		const ImU32 clear = ImGui::GetColorU32(Theme::WithAlpha(color, 0.0f));
-		ImGui::GetWindowDrawList()->AddRectFilledMultiColor(min, ImVec2(min.x + width, min.y + height), solid, solid, clear, clear);
+		ImDrawList* drawList = ImGui::GetWindowDrawList();
+		drawList->AddRectFilledMultiColor(min, ImVec2(min.x + width, midY), solid, solid, mid, mid);
+		drawList->AddRectFilledMultiColor(ImVec2(min.x, midY), ImVec2(min.x + width, min.y + height), mid, mid, clear, clear);
 	}
 	ImGui::EndChild();
 	ImGui::PopStyleVar(2);
@@ -1026,9 +1033,16 @@ void HeroBanner(const Modpack& pack, ImageCache& images, float height, bool show
 	const float pad = S(22.0f);
 	const float iconSize = S(84.0f);
 	const ImVec2 iconMin(min.x + pad, max.y - pad - iconSize);
-	drawList->AddRectFilled(ImVec2(iconMin.x - S(3.0f), iconMin.y - S(3.0f)),
-		ImVec2(iconMin.x + iconSize + S(3.0f), iconMin.y + iconSize + S(3.0f)), ImGui::GetColorU32(panel), S(15.0f));
-	DrawPackIcon(drawList, images.Get(pack.iconUrl), pack, iconMin, iconSize, S(12.0f));
+	// A loaded icon is drawn as it is, so transparent parts show the banner. The panel-colored plate behind the
+	// icon (and the placeholder tile) is only for while it loads or when the pack has none.
+	const LoadedImage* icon = images.Get(pack.iconUrl);
+	if (icon && FadeAlpha(*icon) >= 1.0f) {
+		DrawImageCover(drawList, *icon, iconMin, ImVec2(iconMin.x + iconSize, iconMin.y + iconSize), S(12.0f), 1.0f);
+	} else {
+		drawList->AddRectFilled(ImVec2(iconMin.x - S(3.0f), iconMin.y - S(3.0f)),
+			ImVec2(iconMin.x + iconSize + S(3.0f), iconMin.y + iconSize + S(3.0f)), ImGui::GetColorU32(panel), S(15.0f));
+		DrawPackIcon(drawList, icon, pack, iconMin, iconSize, S(12.0f));
+	}
 
 	const Theme::Fonts& fonts = Theme::GetFonts();
 	const float scale = ImGui::GetFontSize() / Theme::kFontBody; // font scale incl. DPI and user scale

@@ -49,6 +49,24 @@ void DiscoverDetails::DrawCompactTop(SourceView& view, Modpack& pack)
 	ImGui::EndChild();
 }
 
+// The list view's install card on the left (75% of the width) and PLAY on the right (25%), the same
+// height as the card and level with it. Draws the section label above both.
+void DiscoverDetails::DrawInstallAndPlay(SourceView& view, Modpack& pack)
+{
+	Widgets::SectionLabel(PackInstallSection::Title(view, pack).c_str());
+	const float gap = ImGui::GetStyle().ItemSpacing.x;
+	const float usable = std::max(0.0f, ImGui::GetContentRegionAvail().x - gap);
+	// The compact layout: no labels, and a pack with one file gets a single one-row card.
+	if (ImGui::BeginChild("##details_install", ImVec2(usable * 0.75f, 0.0f), ImGuiChildFlags_AutoResizeY, ImGuiWindowFlags_NoScrollbar))
+		m_install.Draw(view, pack, true);
+	ImGui::EndChild();
+	const float height = ImGui::GetItemRectSize().y;
+	ImGui::SameLine(0.0f, gap);
+	if (ImGui::BeginChild("##details_play", ImVec2(0.0f, height), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar))
+		m_play.Draw(pack, false, height);
+	ImGui::EndChild();
+}
+
 void DiscoverDetails::Draw(SourceView* view, Modpack* selected, bool searching, const PageFrame& frame, bool compact)
 {
 	Widgets::BeginScrollArea("pack_details", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders);
@@ -65,6 +83,12 @@ void DiscoverDetails::Draw(SourceView* view, Modpack* selected, bool searching, 
 		const bool online = pack.source != PackSource::LocalIndex;
 		if (online && !pack.filesLoaded && !m_details.FilesLoading(pack.id) && !m_details.FilesError(pack.id))
 			m_details.FetchFiles(*view, pack);
+		// How much the version downloads, for the install row; once per version.
+		if (online && pack.filesLoaded && CanEstimatePackSize(pack)) {
+			const std::string sizeKey = PackDetailsService::ModsKey(pack);
+			if (!m_details.Size(sizeKey) && !m_details.SizeLoading(sizeKey) && !m_details.SizeFailed(sizeKey))
+				m_details.FetchSize(pack);
+		}
 		if (settings.showGalleryBanners && pack.source == PackSource::Modrinth && !pack.bannerLoaded && !m_details.BannerLoading(pack.id))
 			m_details.FetchBanner(*view, pack.id);
 
@@ -83,9 +107,7 @@ void DiscoverDetails::Draw(SourceView* view, Modpack* selected, bool searching, 
 			ImGui::TextWrapped("%s", pack.description.c_str());
 			ImGui::PopFont();
 			ImGui::Dummy(ImVec2(0.0f, S(8.0f)));
-			m_install.Draw(*view, pack);
-			ImGui::Dummy(ImVec2(0.0f, S(6.0f)));
-			m_play.Draw(pack);
+				DrawInstallAndPlay(*view, pack);
 			ImGui::Dummy(ImVec2(0.0f, S(10.0f))); // what's in the pack
 		}
 		if (online && m_tabs.Draw(pack))

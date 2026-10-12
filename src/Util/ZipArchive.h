@@ -24,6 +24,14 @@ public:
 		return m_open;
 	}
 
+	// Opens a zip held in memory; data must stay valid while the reader is open.
+	bool OpenMemory(const void* data, std::size_t size)
+	{
+		Close();
+		m_open = mz_zip_reader_init_mem(&m_zip, data, size, 0) != MZ_FALSE;
+		return m_open;
+	}
+
 	void Close()
 	{
 		if (m_open)

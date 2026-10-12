@@ -7,6 +7,7 @@
 #include "HttpClient.h"
 #include "Modrinth.h"
 #include "Util/Text.h"
+#include "Util/TracedFs.h"
 
 #include <algorithm>
 #include <cctype>
@@ -438,6 +439,12 @@ bool IsSourceAvailable(PackSource source, std::string* reason)
 	return Client(source).Available(reason);
 }
 
+void ClearSourceCaches()
+{
+	ClearFtbPackCache();
+	ClearAtLauncherPackCache();
+}
+
 bool SearchPacks(IHttpClient& http,
 				 PackSource source,
 				 const std::string& query,
@@ -552,6 +559,41 @@ bool FetchPackMods(IHttpClient& http,
 		return false;
 	std::stable_sort(out.mods.begin(), out.mods.end(),
 		[](const PackMod& a, const PackMod& b) { return ToLower(a.name) < ToLower(b.name); });
+	return true;
+}
+
+bool CanEstimatePackSize(const Modpack& pack)
+{
+	return pack.source == PackSource::Modrinth || pack.source == PackSource::FTB || pack.source == PackSource::Technic ||
+		pack.source == PackSource::ATLauncher;
+}
+
+bool FetchPackDownloadSize(IHttpClient& http,
+						   const Modpack& pack,
+						   const std::string& workDir,
+						   PackSizeEstimate& out,
+						   std::string* err,
+						   const std::atomic<bool>* cancel)
+{
+	out = {};
+	if (!CanEstimatePackSize(pack)) {
+		if (err) *err = "The size isn't available for this source";
+		return false;
+	}
+	if (pack.source == PackSource::Modrinth)
+		return FetchModrinthPackSize(http, pack, out.bytes, out.partial, err, cancel);
+	std::error_code ec;
+	TracedFs::CreateDirectories(workDir, ec); // some plans keep what they download here
+	InstallPlan plan;
+	if (!BuildInstallPlan(http, pack, workDir, plan, nullptr, err, cancel))
+		return false;
+	for (const PlannedFile& file : plan.files) {
+		if (file.url.empty())
+			continue; // blocked: downloaded by hand
+		out.bytes += file.size;
+		out.partial = out.partial || file.size == 0;
+	}
+	out.partial = out.partial || !plan.overrides.empty(); // override zips aren't counted
 	return true;
 }
 

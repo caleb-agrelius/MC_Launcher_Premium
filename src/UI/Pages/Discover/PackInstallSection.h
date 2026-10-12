@@ -22,17 +22,23 @@ public:
 	// card holding the version picker and that file.
 	void Draw(SourceView& view, Modpack& pack, bool compact = false);
 
+	// The section label the non-compact layout draws above it: "INSTALL" or "PACK FILES  (n)".
+	static std::string Title(const SourceView& view, const Modpack& pack);
+
 private:
 	void DrawPlanInstallCard(SourceView& view, Modpack& pack, bool compact);
 	void DrawFileCards(SourceView& view, Modpack& pack, bool compact);
 	// "Version [picker]  Minecraft x . loader" for a source that installs file by file.
-	void DrawVersionRow(Modpack& pack, float comboWidth);
+	// withLabel: the leading "Version" text. reserve: width the row's right side needs, so the details text can shrink to fit. file: a merged row also shows this file's size (its name is the tooltip).
+	void DrawVersionRow(Modpack& pack, float comboWidth, bool withLabel, float reserve,
+		const PackFile* file);
 	// Stand-ins with the loaded layout's sizes while the pack's versions and files load, so the PLAY
 	// button and everything below stay put when they arrive.
 	void DrawVersionRowPlaceholder(float comboWidth);
 	void DrawFileRowPlaceholder();
 	// One file: name, size and its Install / progress / Installed state. Draws inside a card.
-	void DrawFileRow(Modpack& pack, const PackFile& file);
+	// inlineRow: continues the version row above it (just the Install / progress / Installed part; the size and name are in that row).
+	void DrawFileRow(Modpack& pack, const PackFile& file, bool inlineRow);
 
 	PackDetailsService& m_details;
 	DownloadService& m_downloads;

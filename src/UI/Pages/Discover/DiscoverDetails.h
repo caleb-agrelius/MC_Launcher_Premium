@@ -29,6 +29,7 @@ public:
 private:
 	static void DrawStatsRow(const Modpack& pack, bool trimScheme);
 	void DrawCompactTop(SourceView& view, Modpack& pack);
+	void DrawInstallAndPlay(SourceView& view, Modpack& pack);
 
 	PackDetailsService& m_details;
 	SettingsStore& m_settings;

@@ -23,6 +23,7 @@ Other docs: [docs/development.md](docs/development.md) (debugging, logs, trouble
 | [technic.md](docs/features/technic.md) | Technic client: `build` parameter, Solder vs single-zip packs, local filters |
 | [atlauncher.md](docs/features/atlauncher.md) | ATLauncher client: CDN pack list, `Configs.json`, mod types and folders |
 | [modrinth-search.md](docs/features/modrinth-search.md) | Modrinth API client, `HttpClient::Get`, search/version lookup threading (`UiQueue`) |
+| [request-caching.md](docs/features/request-caching.md) | `CachingHttpClient`: which GETs are remembered and for how long, what stays uncached, Discover's Refresh button |
 | [discover.md](docs/features/discover.md) | Discover page: search, pack list, details pane, per-file action buttons |
 | [downloads.md](docs/features/downloads.md) | `HttpClient`, download state map and threading, Downloads page |
 | [shared-files.md](docs/features/shared-files.md) | Sharing identical mod files between packs (hard links, `minecraft/shared-files/`, `SharedFiles`) |

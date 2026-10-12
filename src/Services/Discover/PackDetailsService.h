@@ -49,10 +49,21 @@ public:
 	const std::string* ModsError(const std::string& key) const;
 	void FetchMods(const Modpack& pack);
 
+	// ---- Download size of a version (for the install row), keyed by ModsKey ----
+	// Null until FetchSize has found it (also null when the source can't tell: see CanEstimatePackSize).
+	const PackSizeEstimate* Size(const std::string& key) const;
+	bool SizeLoading(const std::string& key) const { return m_sizesLoading.count(key) > 0; }
+	bool SizeFailed(const std::string& key) const { return m_sizeFailed.count(key) > 0; }
+	void FetchSize(const Modpack& pack);
+
 	// ---- All versions of a pack ----
 	// The pack's list (created empty if it has none yet).
 	VersionList& Versions(const std::string& packId) { return m_versionLists[packId]; }
 	void ListVersions(const Modpack& pack);
+
+	// Forgets everything fetched so far (descriptions, mod lists, version lists, lookup errors), so the
+	// next time the details pane needs one it asks again. Used by Discover's Refresh.
+	void Clear();
 
 private:
 	Runtime m_rt;
@@ -62,6 +73,9 @@ private:
 	std::map<std::string, PackModList> m_packMods;
 	std::set<std::string> m_modsLoading;
 	std::map<std::string, std::string> m_modsErrors;
+	std::map<std::string, PackSizeEstimate> m_sizes;
+	std::set<std::string> m_sizesLoading;
+	std::set<std::string> m_sizeFailed; // not retried until Clear()
 	std::map<std::string, std::string> m_packDescriptions;
 	std::set<std::string> m_descriptionsLoading;
 	std::map<std::string, std::string> m_descriptionErrors;

@@ -5,7 +5,9 @@
 #include "Game/PackCreator.h"
 #include "Game/PackInstance.h"
 #include "Game/ServerSetup.h"
+#include "Network/CachingHttpClient.h"
 #include "Network/HttpClient.h"
+#include "Network/Modrinth.h"
 #include "Network/OfflineHttpClient.h"
 #include "Network/TracingHttpClient.h"
 #include "Platform/Platform.h"
@@ -907,6 +909,207 @@ static void PackCreatorChecks(const fs::path& dir)
 		pack.loader == LoaderKind::Vanilla, "A vanilla pack couldn't be read back: " + error);
 }
 
+// Counts the GETs it answers, optionally slowly, and fails the URLs listed in failing.
+class CountingHttp final : public IHttpClient {
+public:
+	std::atomic<int> gets{ 0 };
+	std::atomic<int> posts{ 0 };
+	int delayMs = 0;
+	bool fail = false;
+	std::string reply = "v1";
+
+	bool DownloadToFile(const std::string&, const std::string&, std::function<void(double, double)>, std::string*,
+		const std::atomic<bool>*, const std::vector<std::string>&) override { return true; }
+	bool Get(const std::string& url, std::string& body, std::string* err, const std::atomic<bool>*,
+		const std::vector<std::string>&) override
+	{
+		++gets;
+		if (delayMs > 0)
+			std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
+		if (fail) {
+			if (err) *err = "connection refused";
+			return false;
+		}
+		body = reply + ":" + url;
+		return true;
+	}
+	bool Post(const std::string&, const std::string&, std::string& body, std::string*, const std::atomic<bool>*,
+		const std::vector<std::string>&) override { ++posts; body = "posted"; return true; }
+	bool Request(const std::string&, const std::vector<std::string>&, const std::string&, std::string&, long& status,
+		std::string*, const std::atomic<bool>*) override { status = 200; return true; }
+};
+
+static void CachingChecks()
+{
+	double now = 0.0;
+	CountingHttp origin;
+	CachingHttpClient::Limits limits;
+	limits.lifetimeSeconds = 60.0;
+	limits.maxEntryBytes = 64;
+	limits.maxTotalBytes = 200;
+	CachingHttpClient cache(origin, limits, [&now] { return now; });
+	std::string body, error;
+
+	// A repeat inside the lifetime is answered from memory; a different URL or header is a different entry.
+	Check(cache.Get("https://api.test/a", body, &error) && body == "v1:https://api.test/a" && origin.gets == 1, "The first GET should go out");
+	body.clear();
+	Check(cache.Get("https://api.test/a", body, &error) && body == "v1:https://api.test/a" && origin.gets == 1,
+		"A repeat GET should come from the cache");
+	Check(cache.Get("https://api.test/b", body) && cache.Get("https://api.test/a", body, nullptr, nullptr, { "x-api-key: k" }) && origin.gets == 3,
+		"Another URL or header set should be its own entry");
+	Check(cache.GetStats().hits == 1 && cache.GetStats().requests == 3, "The counters should match");
+
+	// Time moves on: the entry expires, and the new answer replaces it.
+	origin.reply = "v2";
+	now = 59.0;
+	cache.Get("https://api.test/a", body);
+	Check(body == "v1:https://api.test/a" && origin.gets == 3, "An entry should be served until its lifetime ends");
+	now = 61.0;
+	cache.Get("https://api.test/a", body);
+	Check(body == "v2:https://api.test/a" && origin.gets == 4, "An expired entry should be fetched again");
+
+	// Post, Request and downloads are never cached.
+	std::string posted;
+	cache.Post("https://api.test/p", "{}", posted);
+	cache.Post("https://api.test/p", "{}", posted);
+	Check(origin.posts == 2, "POSTs should always go out");
+
+	// Failures are not remembered.
+	origin.fail = true;
+	Check(!cache.Get("https://api.test/bad", body, &error) && error == "connection refused", "A failure should reach the caller");
+	origin.fail = false;
+	const int before = origin.gets;
+	Check(cache.Get("https://api.test/bad", body) && origin.gets == before + 1, "A failed GET should be retried, not cached");
+
+	// Clear() is the Refresh button.
+	const int beforeClear = origin.gets;
+	cache.Clear();
+	Check(cache.EntryCount() == 0, "Clear should empty the cache");
+	cache.Get("https://api.test/a", body);
+	Check(origin.gets == beforeClear + 1, "After Clear the data should be fetched again");
+
+	// Size limits: an oversized answer is returned but not kept; the oldest entries make room.
+	origin.reply = std::string(100, 'x');
+	cache.Clear();
+	const int bigBefore = origin.gets;
+	Check(cache.Get("https://api.test/big", body) && body.size() > 64, "A big response should still be returned");
+	cache.Get("https://api.test/big", body);
+	Check(origin.gets == bigBefore + 2, "A response over the entry limit should not be cached");
+	origin.reply = std::string(30, 'y');
+	cache.Clear();
+	for (int i = 0; i < 10; ++i) {
+		now += 1.0;
+		cache.Get("https://api.test/many" + std::to_string(i), body);
+	}
+	Check(cache.EntryCount() < 10 && cache.EntryCount() > 0, "The total size limit should evict old entries");
+	const int newestBefore = origin.gets;
+	cache.Get("https://api.test/many9", body);
+	Check(origin.gets == newestBefore, "The newest entry should survive eviction");
+
+	// Identical GETs at the same moment share one request.
+	CountingHttp slow;
+	slow.delayMs = 200;
+	CachingHttpClient shared(slow);
+	std::vector<std::thread> threads;
+	std::atomic<int> succeeded{ 0 };
+	for (int i = 0; i < 6; ++i) {
+		threads.emplace_back([&] {
+			std::string text;
+			if (shared.Get("https://api.test/same", text) && text == "v1:https://api.test/same")
+				++succeeded;
+		});
+	}
+	for (std::thread& thread : threads)
+		thread.join();
+	Check(succeeded == 6 && slow.gets == 1, "Six identical concurrent GETs should send one request, sent " + std::to_string(slow.gets.load()));
+
+	// A Clear() while a request is on its way must not let the old answer in.
+	CountingHttp racing;
+	racing.delayMs = 200;
+	CachingHttpClient raced(racing);
+	std::thread worker([&] { std::string text; raced.Get("https://api.test/race", text); });
+	std::this_thread::sleep_for(std::chrono::milliseconds(60));
+	raced.Clear();
+	worker.join();
+	Check(raced.EntryCount() == 0, "A response that was in flight during Clear should not be cached");
+
+	// A waiter can be cancelled without waiting for the other request.
+	CountingHttp waiting;
+	waiting.delayMs = 400;
+	CachingHttpClient cancelled(waiting);
+	std::thread leader([&] { std::string text; cancelled.Get("https://api.test/slow", text); });
+	std::this_thread::sleep_for(std::chrono::milliseconds(60));
+	std::atomic<bool> stop{ true };
+	std::string cancelError;
+	Check(!cancelled.Get("https://api.test/slow", body, &cancelError, &stop) && cancelError == "Cancelled", "A cancelled waiter should give up");
+	leader.join();
+}
+
+// Answers every GET with one fixed body and counts them.
+class BodyHttp final : public IHttpClient {
+public:
+	std::string reply;
+	int gets = 0;
+
+	bool DownloadToFile(const std::string&, const std::string&, std::function<void(double, double)>, std::string*,
+		const std::atomic<bool>*, const std::vector<std::string>&) override { return true; }
+	bool Get(const std::string&, std::string& body, std::string*, const std::atomic<bool>*,
+		const std::vector<std::string>&) override { ++gets; body = reply; return true; }
+	bool Post(const std::string&, const std::string&, std::string&, std::string*, const std::atomic<bool>*,
+		const std::vector<std::string>&) override { return true; }
+	bool Request(const std::string&, const std::vector<std::string>&, const std::string&, std::string&, long&, std::string*,
+		const std::atomic<bool>*) override { return true; }
+};
+
+// A .mrpack (a zip) whose modrinth.index.json is indexJson.
+static std::string MakeMrpack(const std::string& indexJson)
+{
+	mz_zip_archive zip{};
+	Check(mz_zip_writer_init_heap(&zip, 0, 0), "A zip should start in memory");
+	Check(mz_zip_writer_add_mem(&zip, "modrinth.index.json", indexJson.data(), indexJson.size(), MZ_NO_COMPRESSION), "The index should be added");
+	void* buffer = nullptr;
+	std::size_t size = 0;
+	Check(mz_zip_writer_finalize_heap_archive(&zip, &buffer, &size), "The zip should finish");
+	mz_zip_writer_end(&zip);
+	std::string bytes(static_cast<const char*>(buffer), size);
+	mz_free(buffer);
+	return bytes;
+}
+
+static void PackSizeChecks()
+{
+	BodyHttp http;
+	Modpack pack;
+	std::uint64_t bytes = 0;
+	bool partial = false;
+	std::string error;
+
+	// The download is the .mrpack plus the client files its index lists; server-only files don't count.
+	http.reply = MakeMrpack(R"({"files":[{"fileSize":1000,"env":{"client":"required"}},{"fileSize":2000},{"fileSize":5000,"env":{"client":"unsupported"}}]})");
+	pack.files.push_back(PackFile{ "p.mrpack", "https://cdn.test/p.mrpack", http.reply.size() });
+	Check(FetchModrinthPackSize(http, pack, bytes, partial, &error) && bytes == http.reply.size() + 3000 && !partial,
+		"A pack's size should be its .mrpack plus its client files: " + std::to_string(bytes));
+
+	// A file without a size makes the total a lower bound.
+	http.reply = MakeMrpack(R"({"files":[{"fileSize":1000},{"downloads":[]}]})");
+	pack.files[0].size = http.reply.size();
+	Check(FetchModrinthPackSize(http, pack, bytes, partial, &error) && bytes == http.reply.size() + 1000 && partial,
+		"A missing file size should mark the total as partial");
+
+	// A big .mrpack isn't fetched at all.
+	http.gets = 0;
+	pack.files[0].size = 50u * 1024u * 1024u;
+	Check(FetchModrinthPackSize(http, pack, bytes, partial, &error) && bytes == pack.files[0].size && partial && http.gets == 0,
+		"A big .mrpack should be reported by its own size without being downloaded");
+
+	// Not a zip, and no files at all.
+	http.reply = "not a zip";
+	pack.files[0].size = 9;
+	Check(!FetchModrinthPackSize(http, pack, bytes, partial, &error) && !error.empty(), "A broken .mrpack should fail with a message");
+	Modpack empty;
+	Check(!FetchModrinthPackSize(http, empty, bytes, partial, &error), "A pack without files can't be sized");
+}
+
 // An HTTP client that answers from memory, for the tracing checks.
 class FakeHttp final : public IHttpClient {
 public:
@@ -1129,6 +1332,8 @@ int main(int argc, char** argv)
 		LegacyForgeServerChecks(dir);
 		SharedFileChecks(dir);
 		DebugTraceChecks(dir, executable);
+		CachingChecks();
+		PackSizeChecks();
 		std::cout << "Window settings, server setup, cards and console checks passed\n";
 		return 0;
 	} catch (const std::exception& ex) {

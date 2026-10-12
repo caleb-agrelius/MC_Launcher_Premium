@@ -69,7 +69,15 @@ void DiscoverFilterBar::Draw(const DiscoverPlan& plan)
 	// View switch: list or grid, on the right of the source chips.
 	const float buttonSize = ImGui::GetFrameHeight();
 	const float spacing = ImGui::GetStyle().ItemSpacing.x;
-	ImGui::SameLine(ImGui::GetContentRegionMax().x - 2.0f * buttonSize - spacing);
+	const float refreshWidth = ImGui::CalcTextSize("Refresh").x + 2.0f * ImGui::GetStyle().FramePadding.x;
+	ImGui::SameLine(ImGui::GetContentRegionMax().x - 2.0f * buttonSize - spacing - refreshWidth - spacing);
+	ImGui::BeginDisabled(m_discover.Searching());
+	if (ImGui::Button("Refresh", ImVec2(refreshWidth, buttonSize)))
+		m_discover.Refresh();
+	ImGui::EndDisabled();
+	ImGui::SetItemTooltip("Fetch the latest data from every source. Results are otherwise remembered for a while, "
+		"so coming back to this page or changing sources doesn't ask the sites again.");
+	ImGui::SameLine();
 	if (Widgets::ViewModeButton("##view_list", false, discover.viewMode == DiscoverViewMode::List))
 		discover.viewMode = DiscoverViewMode::List;
 	ImGui::SetItemTooltip("List view");

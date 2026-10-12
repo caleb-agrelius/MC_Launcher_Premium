@@ -12,6 +12,9 @@ class IHttpClient;
 // No key is needed. The API has no search, so the first search fetches every pack's details
 // (about a hundred) and keeps them in memory; searches and filters then run locally.
 
+// Forgets the pack list fetched earlier, so the next search downloads it again (Discover > Refresh).
+void ClearFtbPackCache();
+
 bool SearchFtbModpacks(IHttpClient& http,
 					   const std::string& query,
 					   const SearchFilters& filters,

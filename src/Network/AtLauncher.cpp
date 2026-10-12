@@ -54,6 +54,12 @@ struct AtlPack {
 static std::mutex g_cacheMutex;
 static std::vector<AtlPack> g_cache;
 
+void ClearAtLauncherPackCache()
+{
+	std::lock_guard<std::mutex> lock(g_cacheMutex);
+	g_cache.clear();
+}
+
 static bool LoadPacks(IHttpClient& http, std::vector<AtlPack>& out, std::string* err, const std::atomic<bool>* cancel)
 {
 	{

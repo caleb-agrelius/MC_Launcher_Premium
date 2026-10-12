@@ -132,6 +132,7 @@ add_executable(MC_Launcher_Premium
   src/Game/ServerSetup.cpp
   src/Model/Modpack.cpp
   src/Network/AtLauncher.cpp
+  src/Network/CachingHttpClient.cpp
   src/Network/CurseForge.cpp
   src/Network/Ftb.cpp
   src/Network/HttpClient.cpp
@@ -224,7 +225,9 @@ if (BUILD_TESTING)
     src/Game/PackInstance.cpp
     src/Game/ServerSetup.cpp
     src/Model/Modpack.cpp
+    src/Network/CachingHttpClient.cpp
     src/Network/HttpClient.cpp
+    src/Network/Modrinth.cpp
     src/Network/OfflineHttpClient.cpp
     src/Network/TracingHttpClient.cpp
     src/Storage/Installer.cpp

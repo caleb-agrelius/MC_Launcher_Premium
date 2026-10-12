@@ -1,6 +1,7 @@
 #include "Modrinth.h"
 #include "HttpClient.h"
 #include "Util/Json.h"
+#include "Util/ZipArchive.h"
 #include "Util/Text.h"
 
 #include <nlohmann/json.hpp>
@@ -448,4 +449,52 @@ bool FetchModrinthChangelog(IHttpClient& http,
 		if (err) *err = std::string("Unexpected version response: ") + ex.what();
 		return false;
 	}
+}
+
+bool FetchModrinthPackSize(IHttpClient& http,
+						   const Modpack& pack,
+						   std::uint64_t& bytes,
+						   bool& partial,
+						   std::string* err,
+						   const std::atomic<bool>* cancel)
+{
+	bytes = 0;
+	partial = false;
+	if (pack.files.empty()) {
+		if (err) *err = "The pack's files haven't loaded yet";
+		return false;
+	}
+	const PackFile& file = pack.files.front();
+	constexpr std::uint64_t kMaxInspectBytes = 6u * 1024u * 1024u;
+	bytes = file.size;
+	if (file.size > kMaxInspectBytes) {
+		partial = true; // a big .mrpack isn't fetched just to read its index
+		return true;
+	}
+	std::string body;
+	if (!http.Get(file.url, body, err, cancel))
+		return false;
+	ZipReader zip;
+	std::string indexText;
+	if (!zip.OpenMemory(body.data(), body.size()) || !zip.ReadEntry("modrinth.index.json", indexText)) {
+		if (err) *err = "Couldn't read the pack file's index";
+		return false;
+	}
+	try {
+		const json index = json::parse(indexText);
+		std::uint64_t total = body.size();
+		for (const json& entry : index.value("files", json::array())) {
+			const json env = entry.value("env", json::object());
+			if (env.is_object() && StringOrEmpty(env, "client") == "unsupported")
+				continue; // server-only
+			const std::uint64_t size = entry.value("fileSize", 0ULL);
+			partial = partial || size == 0;
+			total += size;
+		}
+		bytes = total;
+	} catch (const std::exception& ex) {
+		if (err) *err = std::string("Couldn't read the pack file's index: ") + ex.what();
+		return false;
+	}
+	return true;
 }

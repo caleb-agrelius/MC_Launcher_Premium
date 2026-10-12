@@ -12,6 +12,23 @@ PackDetailsService::PackDetailsService(const Runtime& runtime)
 {
 }
 
+void PackDetailsService::Clear()
+{
+	m_filesErrors.clear();
+	m_packMods.clear();
+	m_modsErrors.clear();
+	m_sizes.clear();
+	m_sizeFailed.clear();
+	m_packDescriptions.clear();
+	m_descriptionErrors.clear();
+	for (auto it = m_versionLists.begin(); it != m_versionLists.end();) {
+		if (it->second.loading)
+			++it; // its task will fill it in
+		else
+			it = m_versionLists.erase(it);
+	}
+}
+
 const std::string* PackDetailsService::FilesError(const std::string& packId) const
 {
 	const auto it = m_filesErrors.find(packId);
@@ -127,6 +144,34 @@ void PackDetailsService::FetchMods(const Modpack& pack)
 			} else {
 				m_rt.log << "Mod list for " << packId << " failed: " << error << "\n";
 				m_modsErrors[key] = error;
+			}
+		});
+	});
+}
+
+const PackSizeEstimate* PackDetailsService::Size(const std::string& key) const
+{
+	const auto it = m_sizes.find(key);
+	return it != m_sizes.end() ? &it->second : nullptr;
+}
+
+void PackDetailsService::FetchSize(const Modpack& pack)
+{
+	const std::string key = ModsKey(pack);
+	m_sizesLoading.insert(key);
+	const std::string workDir = (fs::path(AppPaths::kDownloadsRoot) / pack.id).string();
+	m_scope.Run([this, pack, key, workDir]() {
+		PackSizeEstimate size;
+		std::string error;
+		const bool ok = FetchPackDownloadSize(m_rt.http, pack, workDir, size, &error, &m_rt.shuttingDown);
+		m_rt.ui.Post([this, key, packId = pack.id, ok, size, error]() {
+			m_sizesLoading.erase(key);
+			if (ok) {
+				m_sizes[key] = size;
+				m_rt.log << "Download size of " << key << ": " << size.bytes << " bytes" << (size.partial ? " (at least)" : "") << "\n";
+			} else {
+				m_sizeFailed.insert(key);
+				m_rt.log << "Download size of " << packId << " failed: " << error << "\n";
 			}
 		});
 	});

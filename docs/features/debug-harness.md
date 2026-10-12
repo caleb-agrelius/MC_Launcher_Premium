@@ -32,7 +32,7 @@ In the app, `OfflineHttpClient` (`src/Network/OfflineHttpClient.*`) stands in fo
 
 | Channel | Shows |
 |---|---|
-| `http` | Each request as `GET`, `POST` or `DOWNLOAD` with its URL, then `<-` the outcome (`ok`, `HTTP 403` or `FAILED: reason`), the size and the time in milliseconds |
+| `http` | Each request that goes out as `GET`, `POST` or `DOWNLOAD` with its URL, then `<-` the outcome (`ok`, `HTTP 403` or `FAILED: reason`), the size and the time in milliseconds. A GET answered from the response cache shows as `CACHE <url> (N bytes, no request)`, and a Discover refresh as `CACHE cleared` (see [request-caching.md](request-caching.md)) |
 | `body` | The first 400 characters of each GET response, on one line. Not part of `all`, because bodies are large |
 | `file` | `mkdir`, `copy`, `copy-tree`, `rename`, `remove`, `remove-all` (with the item count), `hard-link`, `write` (the files the launcher writes itself, such as `settings.json`, `library.json`, markers and pack files) and `extract` / `extracted` for a zip. A failed operation ends in `FAILED: reason`. `mkdir` shows only when a folder was created and `remove` only when something was removed |
 | `process` | `start` with the command line and working folder, then `exit <code>` (or `killed` / `left running` after a stop or cancel), for Java, installers and servers |
