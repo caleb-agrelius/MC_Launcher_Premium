@@ -35,7 +35,6 @@ unsigned ConfigureFromEnvironment(int argc, char** argv, std::vector<std::string
 void Configure(unsigned mask, std::ostream* out = nullptr);
 
 bool Enabled(Channel channel);
-unsigned Mask();
 // "http,file,..." for the channels in mask.
 std::string ChannelNames(unsigned mask);
 

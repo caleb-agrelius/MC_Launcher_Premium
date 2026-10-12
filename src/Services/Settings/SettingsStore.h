@@ -17,7 +17,6 @@ public:
 
 	// Asks for a save. It happens in SaveIfSettled, not right away.
 	void MarkDirty() { m_dirty = true; }
-	bool IsDirty() const { return m_dirty; }
 
 	// Saves pending edits unless the player is still editing (a text box or slider is active),
 	// so the file isn't rewritten on every keystroke or slider step.

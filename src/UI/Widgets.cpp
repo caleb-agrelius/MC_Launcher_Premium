@@ -629,45 +629,6 @@ bool NavItem(const char* label, bool selected, int badge)
 	return clicked;
 }
 
-bool NavGroupItem(const char* label, bool selected, bool expanded)
-{
-	const bool clicked = NavItem(label, selected);
-	const ImVec2 min = ImGui::GetItemRectMin();
-	const ImVec2 max = ImGui::GetItemRectMax();
-	const ImVec2 center(max.x - S(20.0f), (min.y + max.y) * 0.5f);
-	const float r = S(4.0f);
-	const ImU32 color = ImGui::GetColorU32(selected || ImGui::IsItemHovered() ? Theme::C().text : Theme::C().textDim);
-	if (expanded)
-		ImGui::GetWindowDrawList()->AddTriangleFilled(ImVec2(center.x - r, center.y - r * 0.5f),
-			ImVec2(center.x + r, center.y - r * 0.5f), ImVec2(center.x, center.y + r * 0.7f), color);
-	else
-		ImGui::GetWindowDrawList()->AddTriangleFilled(ImVec2(center.x - r * 0.5f, center.y - r),
-			ImVec2(center.x + r * 0.7f, center.y), ImVec2(center.x - r * 0.5f, center.y + r), color);
-	return clicked;
-}
-
-bool SubNavItem(const char* label, bool selected)
-{
-	const float height = S(34.0f);
-	ImGui::PushID(label);
-	ImGui::PushID("sub");
-	const bool clicked = RoundedSelectable("##subnav", selected, ImVec2(0.0f, height), S(8.0f));
-	ImGui::PopID();
-	ImGui::PopID();
-	const ImVec2 min = ImGui::GetItemRectMin();
-	ImDrawList* drawList = ImGui::GetWindowDrawList();
-	const float dotX = min.x + S(32.0f);
-	const float midY = min.y + height * 0.5f;
-	drawList->AddCircleFilled(ImVec2(dotX, midY), S(selected ? 3.5f : 2.5f),
-		ImGui::GetColorU32(selected ? Theme::C().accent : Theme::C().textDim));
-	const Theme::Fonts& fonts = Theme::GetFonts();
-	ImFont* font = selected ? fonts.bold : fonts.regular;
-	const float fontSize = ImGui::GetFontSize() * (Theme::kFontSmall + 1.0f) / Theme::kFontBody;
-	const ImVec4& color = selected ? Theme::C().text : (ImGui::IsItemHovered() ? Theme::C().text : Theme::C().textDim);
-	drawList->AddText(font, fontSize, ImVec2(dotX + S(12.0f), midY - fontSize * 0.5f), ImGui::GetColorU32(color), label);
-	return clicked;
-}
-
 float FadeAlpha(const LoadedImage& image)
 {
 	if (g_reduceMotion)

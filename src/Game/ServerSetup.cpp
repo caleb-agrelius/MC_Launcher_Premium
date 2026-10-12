@@ -743,18 +743,6 @@ bool RemoveServer(const fs::path& serverDir, std::string* err)
 	return true;
 }
 
-static bool EndsWith(const std::string& text, const std::string& suffix)
-{
-	return text.size() >= suffix.size() && text.compare(text.size() - suffix.size(), suffix.size(), suffix) == 0;
-}
-
-static std::string Lowercase(std::string text)
-{
-	for (char& c : text)
-		c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-	return text;
-}
-
 std::vector<ServerMod> ListServerMods(const fs::path& serverDir)
 {
 	return ListContent(serverDir, ContentKind::Mods);

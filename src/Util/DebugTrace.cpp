@@ -156,11 +156,6 @@ bool Enabled(Channel channel)
 	return (g_mask.load(std::memory_order_relaxed) & channel) != 0;
 }
 
-unsigned Mask()
-{
-	return g_mask.load(std::memory_order_relaxed);
-}
-
 std::string ChannelNames(unsigned mask)
 {
 	std::string names;
