@@ -3,19 +3,24 @@
 // CurseForge is checked only when an API key is set (MCLP_CURSEFORGE_API_KEY).
 
 #include "Game/PackCreator.h"
+#include "Game/ServerSetup.h"
 #include "Network/CurseForge.h"
 #include "Network/HttpClient.h"
 #include "Network/ModSearch.h"
 #include "Network/Modrinth.h"
 #include "Network/PackSources.h"
+#include "Util/Process.h"
 
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <set>
 #include <string>
+#include <thread>
 
 namespace fs = std::filesystem;
 
@@ -182,6 +187,64 @@ static void CheckPaging(HttpClient& http, PackSource source, const std::string& 
 		(second.packs.empty() ? std::string("-") : second.packs.front().name));
 }
 
+// An old Forge server built from the Forge universal jar a pack ships, then started until it
+// reports "Done". jarPath is where the pack keeps it: Technic's bin/modpack.jar, or an
+// ATLauncher jar mod in jarmods/. forge is the Forge maven version, e.g. "1.7.10-10.13.4.1614-1.7.10".
+static void CheckLegacyForgeServer(HttpClient& http, const fs::path& workRoot, const std::string& minecraft,
+	const std::string& forgeVersion, const std::string& source, const fs::path& jarPath)
+{
+	const std::string what = "Old Forge server (" + minecraft + ", " + source + ")";
+	const fs::path root = workRoot / ("legacy-forge-" + minecraft);
+	const fs::path install = root / "install";
+	ServerSetupRequest request;
+	request.gameRoot = root / "game";
+	request.extractedDir = install;
+	request.serverDir = root / "server";
+	std::error_code ec;
+	fs::remove_all(install, ec);
+	fs::remove_all(request.serverDir, ec);
+	fs::create_directories(install / "minecraft" / "mods", ec);
+	std::ofstream(install / "pack.json") << nlohmann::json{ { "source", source }, { "minecraft", minecraft },
+		{ "version", "live-check" } }.dump();
+	DownloadJob forge;
+	forge.url = "https://maven.minecraftforge.net/net/minecraftforge/forge/" + forgeVersion + "/forge-" + forgeVersion +
+		"-universal.jar";
+	forge.path = install / "minecraft" / jarPath;
+	std::string error;
+	if (!DownloadAll(http, { forge }, "Downloading Forge", nullptr, &error, nullptr)) {
+		Report(what, false, "couldn't download the Forge jar: " + error);
+		return;
+	}
+	ServerInfo info;
+	if (!SetupServer(http, request, info, nullptr, &error, nullptr)) {
+		Report(what, false, "setup failed: " + error);
+		return;
+	}
+	std::ofstream(request.serverDir / "eula.txt") << "eula=true\n";
+	ServerProcess server;
+	if (!server.Start(ServerCommand(info, 1024), request.serverDir, request.serverDir / "logs" / "live-check.log", &error)) {
+		Report(what, false, "couldn't start the server: " + error);
+		return;
+	}
+	bool done = false;
+	for (int waited = 0; waited < 240 && !done && server.Running(); ++waited) {
+		std::this_thread::sleep_for(std::chrono::seconds(1));
+		for (const std::string& line : server.Lines())
+			done = done || line.find("Done (") != std::string::npos;
+	}
+	std::string last;
+	if (!done) {
+		const std::vector<std::string> lines = server.Lines();
+		for (std::size_t i = lines.size() > 8 ? lines.size() - 8 : 0; i < lines.size(); ++i)
+			last += "\n    " + lines[i];
+	}
+	server.Send("stop");
+	if (!server.WaitForExit(60000))
+		server.Kill();
+	Report(what, done, done ? info.loader + " " + info.loaderVersion + " with Java " + std::to_string(info.javaMajor) +
+		" started and stopped (" + info.launchArgs[info.launchArgs.size() - 2] + ")" : "the server didn't finish starting:" + last);
+}
+
 int main()
 {
 	HttpClient http;
@@ -199,6 +262,8 @@ int main()
 	if (!CurseForgeApiKey().empty())
 		CheckPaging(http, PackSource::CurseForge, "");
 	CheckPackCreation(http, workRoot);
+	CheckLegacyForgeServer(http, workRoot, "1.7.10", "1.7.10-10.13.4.1614-1.7.10", "technic", "bin/modpack.jar");
+	CheckLegacyForgeServer(http, workRoot, "1.6.4", "1.6.4-9.11.1.965", "atlauncher", "jarmods/minecraftforge.zip");
 	if (!CurseForgeApiKey().empty())
 		CheckSource(http, PackSource::CurseForge, "", workRoot);
 	else

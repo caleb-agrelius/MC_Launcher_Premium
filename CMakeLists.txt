@@ -154,12 +154,16 @@ if (BUILD_TESTING)
   # Checks against the real pack APIs. Not a CTest test: they need the internet.
   add_executable(live_checks
     tests/LiveChecks.cpp
+    src/Platform.cpp
     src/Game/GameFiles.cpp
+    src/Game/GameOptions.cpp
     src/Game/InstanceContent.cpp
     src/Game/JarMods.cpp
+    src/Game/JavaFinder.cpp
     src/Game/Loaders.cpp
     src/Game/PackCreator.cpp
     src/Game/PackInstance.cpp
+    src/Game/ServerSetup.cpp
     src/Model/Modpack.cpp
     src/Network/AtLauncher.cpp
     src/Network/CurseForge.cpp
