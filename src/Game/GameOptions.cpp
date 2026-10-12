@@ -147,15 +147,6 @@ const std::vector<GameOptionDef>& GameOptionDefs()
 	return defs;
 }
 
-const GameOptionDef* FindGameOption(const std::string& key)
-{
-	for (const GameOptionDef& def : GameOptionDefs()) {
-		if (key == def.key)
-			return &def;
-	}
-	return nullptr;
-}
-
 float GameOptionToDisplay(const GameOptionDef& def, const std::string& fileValue)
 {
 	char* end = nullptr;

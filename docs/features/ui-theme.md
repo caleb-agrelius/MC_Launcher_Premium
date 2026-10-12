@@ -109,8 +109,6 @@ Color themes, fonts, DPI and UI scaling, shared drawing helpers, and toast notif
 | `MenuItem` | A popup menu entry built on `ListItem`, with an optional shortcut hint and a disabled state (log view context menu, Add account) |
 | `PaneSplitter` | A draggable gap between two side-by-side panes; shows a grip and a resize cursor on hover and changes the left pane's width |
 | `NavItem` | A sidebar entry with an accent bar when selected, and an optional count badge |
-| `NavGroupItem` | A `NavItem` heading a collapsible group, with a chevron (down when expanded, right when collapsed) |
-| `SubNavItem` | A smaller, indented sidebar entry with a dot (accent-colored when selected), used for Discover's source sub-pages |
 | `ListItem` | A text row for lists and dropdowns; closes its popup when clicked (unless asked not to, like the version list's Retry). An optional hint is drawn dimmed on the right (a version's Minecraft version, an account's type), and in a popup the row asks for room for both so the popup widens to fit |
 | `WrappedText` | Colored text that wraps at the window edge (Discover's error statuses) |
 | `EmptyState` | A centered block illustration, title, hint, and optional button for empty pages |
@@ -152,7 +150,7 @@ All of this is off when **Reduce motion** is on.
   - `Widgets::BeginScrollArea(id, size, childFlags, windowFlags)` / `EndScrollArea()` make a child window that scrolls this way. Every scrolling panel uses it or `SmoothScroll` directly: the main content, Discover's pack list and details pane, the Servers list, details, mod list and console, Settings, and the launch-settings and optional-mods dialogs.
 - **Tabs** (`Widgets::TabStrip(id, labels, count, &current)`): a row of rounded pill buttons, the selected one filled with `accentDeep` in the bold font. Used by Settings and Discover's details pane.
 
-**Selection highlights:** `NavItem`, `SubNavItem`, `PackRow` and `ListItem` share `RoundedSelectable`, an `InvisibleButton` with its own highlight instead of `ImGui::Selectable`. The highlight is a rounded rectangle (`ImGuiCol_Header` when selected, `HeaderHovered` on hover, `HeaderActive` while pressed). It is drawn inside the content region, so it never reaches the panel's padding or border. The accent selection bar sits just inside the highlight's left edge.
+**Selection highlights:** `NavItem`, `PackRow` and `ListItem` share `RoundedSelectable`, an `InvisibleButton` with its own highlight instead of `ImGui::Selectable`. The highlight is a rounded rectangle (`ImGuiCol_Header` when selected, `HeaderHovered` on hover, `HeaderActive` while pressed). It is drawn inside the content region, so it never reaches the panel's padding or border. The accent selection bar sits just inside the highlight's left edge.
 
 ## Toasts (`src/UI/Toasts.{h,cpp}`)
 - `Toasts::Push(kind, title, body)` queues a notification. Kinds are `Info`, `Success`, and `Error`, and set the color of the stripe on the left. Call it on the UI thread; background threads post through `UiQueue`.

@@ -41,7 +41,6 @@ struct GameOptionDef {
 };
 
 const std::vector<GameOptionDef>& GameOptionDefs();
-const GameOptionDef* FindGameOption(const std::string& key);
 
 // Slider helpers between options.txt values and display units.
 float GameOptionToDisplay(const GameOptionDef& def, const std::string& fileValue);

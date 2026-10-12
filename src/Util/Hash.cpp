@@ -192,14 +192,6 @@ struct Md5 {
 };
 
 template <typename Algorithm>
-std::string HashString(const std::string& data)
-{
-	BlockHasher<Algorithm> hasher;
-	hasher.Update(reinterpret_cast<const std::uint8_t*>(data.data()), data.size());
-	return hasher.Finish();
-}
-
-template <typename Algorithm>
 std::string HashFile(const std::string& path)
 {
 	std::ifstream file(LongPath(std::filesystem::path(path)), std::ios::binary);
@@ -220,7 +212,5 @@ std::string HashFile(const std::string& path)
 
 }
 
-std::string Sha1Hex(const std::string& data) { return HashString<Sha1>(data); }
-std::string Md5Hex(const std::string& data) { return HashString<Md5>(data); }
 std::string Sha1HexOfFile(const std::string& path) { return HashFile<Sha1>(path); }
 std::string Md5HexOfFile(const std::string& path) { return HashFile<Md5>(path); }

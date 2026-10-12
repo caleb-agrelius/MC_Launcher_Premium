@@ -110,11 +110,6 @@ float ButtonWidth(const char* label);
 // Sidebar navigation entry with an accent bar when selected, and an optional count
 // badge (shown when badge > 0). Returns true when clicked.
 bool NavItem(const char* label, bool selected, int badge = 0);
-// A NavItem that heads a collapsible group of SubNavItems, with a chevron pointing
-// down when expanded and right when collapsed. Returns true when clicked.
-bool NavGroupItem(const char* label, bool selected, bool expanded);
-// Smaller, indented entry under a NavItem (e.g. each Discover source). Returns true when clicked.
-bool SubNavItem(const char* label, bool selected);
 
 // Opacity for an image that just finished loading (fades in over a quarter second).
 float FadeAlpha(const LoadedImage& image);
