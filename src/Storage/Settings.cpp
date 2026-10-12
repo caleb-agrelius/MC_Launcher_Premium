@@ -18,6 +18,8 @@ Settings LoadSettings(const std::string& path)
 		json j;
 		ifs >> j;
 		settings.uiScale = std::clamp(j.value("uiScale", settings.uiScale), kMinUiScale, kMaxUiScale);
+		settings.microsoftClientId = j.value("microsoftClientId", settings.microsoftClientId);
+		settings.maxMemoryMb = std::clamp(j.value("maxMemoryMb", settings.maxMemoryMb), kMinMemoryMb, kMaxMemoryMb);
 	}
 	catch (...) {
 		// corrupt file: keep defaults
@@ -32,6 +34,8 @@ bool SaveSettings(const std::string& path, const Settings& settings)
 		return false;
 	json j;
 	j["uiScale"] = std::round(settings.uiScale * 100.0) / 100.0; // 1.1, not 1.100000023841858
+	j["microsoftClientId"] = settings.microsoftClientId;
+	j["maxMemoryMb"] = settings.maxMemoryMb;
 	ofs << j.dump(2) << "\n";
 	return ofs.good();
 }

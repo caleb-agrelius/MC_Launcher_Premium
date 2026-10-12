@@ -144,6 +144,51 @@ bool HttpClient::Get(const std::string& url,
 	return true;
 }
 
+bool HttpClient::Request(const std::string& url,
+						 const std::vector<std::string>& headers,
+						 const std::string& requestBody,
+						 std::string& responseBody,
+						 long& status,
+						 std::string* err,
+						 const std::atomic<bool>* cancel)
+{
+	responseBody.clear();
+	status = 0;
+	CURL* curl = curl_easy_init();
+	if (!curl) {
+		if (err) *err = "Failed to initialize curl";
+		return false;
+	}
+
+	ProgressData pd{nullptr, cancel};
+	ApplyCommonOptions(curl, url, &pd);
+	curl_easy_setopt(curl, CURLOPT_FAILONERROR, 0L);
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_string);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &responseBody);
+	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 60L);
+	if (!requestBody.empty()) {
+		curl_easy_setopt(curl, CURLOPT_POSTFIELDS, requestBody.c_str());
+		curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(requestBody.size()));
+	}
+	curl_slist* headerList = nullptr;
+	for (const std::string& header : headers)
+		headerList = curl_slist_append(headerList, header.c_str());
+	if (headerList)
+		curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headerList);
+
+	CURLcode res = curl_easy_perform(curl);
+	if (res == CURLE_OK)
+		curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+	curl_slist_free_all(headerList);
+	curl_easy_cleanup(curl);
+	if (res != CURLE_OK) {
+		if (err) *err = (cancel && cancel->load()) ? "Cancelled" : curl_easy_strerror(res);
+		responseBody.clear();
+		return false;
+	}
+	return true;
+}
+
 std::string HttpClient::UrlEncode(const std::string& text)
 {
 	char* escaped = curl_easy_escape(nullptr, text.c_str(), static_cast<int>(text.size()));
