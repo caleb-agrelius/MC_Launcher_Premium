@@ -6,8 +6,10 @@
 #include <cstdio>
 #include <utility>
 
-DiscoverService::DiscoverService(const Runtime& runtime, SettingsStore& settings, std::vector<Modpack> localPacks, Clock now)
-	: m_rt(runtime), m_settings(settings), m_localPacks(std::move(localPacks)), m_now(std::move(now)), m_scope(runtime.tasks)
+DiscoverService::DiscoverService(const Runtime& runtime, SettingsStore& settings, std::vector<Modpack> localPacks, Clock now,
+	ICacheControl& cache, PackDetailsService& details)
+	: m_rt(runtime), m_settings(settings), m_localPacks(std::move(localPacks)), m_now(std::move(now)), m_cache(cache),
+	  m_details(details), m_scope(runtime.tasks)
 {
 	for (PackSource source : OnlineSources()) {
 		SourceView& view = m_views[source];
@@ -63,6 +65,32 @@ void DiscoverService::LoadCategories()
 			m_state.categoriesError = ok ? std::string() : error;
 		});
 	});
+}
+
+void DiscoverService::Refresh()
+{
+	m_cache.Clear();
+	ClearSourceCaches(); // FTB and ATLauncher also keep their whole pack list for the run
+	m_details.Clear();
+	const bool hadCategories = !m_state.categories.empty();
+	m_state.categories.clear();
+	m_state.categoriesError.clear();
+	if (hadCategories)
+		LoadCategories();
+	m_state.searchPending = true; // SendIfDue sends the current search on the next frame
+	m_state.lastSearchEdit = -1.0;
+	m_rt.log << "Discover refresh: cache cleared, searching again\n";
+}
+
+bool DiscoverService::Searching() const
+{
+	if (m_state.searchPending)
+		return true;
+	for (const auto& entry : m_views) {
+		if (entry.second.searching)
+			return true;
+	}
+	return false;
 }
 
 bool DiscoverService::AllSourcesSelected() const

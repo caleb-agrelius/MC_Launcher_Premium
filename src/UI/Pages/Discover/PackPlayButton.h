@@ -14,7 +14,8 @@ public:
 		: m_library(library), m_plays(plays), m_navigator(navigator) {}
 
 	// compact: a shorter, accent-filled button, for the details modal's side column.
-	void Draw(const Modpack& pack, bool compact = false);
+	// height: the button's height, when it should match something beside it (0 = the usual height).
+	void Draw(const Modpack& pack, bool compact = false, float height = 0.0f);
 
 private:
 	PackLibrary& m_library;

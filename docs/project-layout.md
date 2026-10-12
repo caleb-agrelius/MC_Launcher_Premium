@@ -23,6 +23,7 @@
 | `src/Services/Discover/` | `DiscoverService`, `PackDetailsService`, `OptionalModsService` and the Discover state structs |
 | `src/Model/Modpack.*` | `Modpack` / `PackFile` structs, `resources/index.json` loader |
 | `src/Network/IHttpClient.h` | The network as an interface (`Get`, `Post`, `DownloadToFile`) that everything else depends on |
+| `src/Network/CachingHttpClient.*` | An `IHttpClient` that remembers successful GETs for 15 minutes and shares identical in-flight requests; `ICacheControl::Clear` is Discover's Refresh (see [features/request-caching.md](features/request-caching.md)) |
 | `src/Network/TracingHttpClient.*` | An `IHttpClient` that traces each request on the debug harness, then calls the real client |
 | `src/Network/HttpClient.*` | The libcurl implementation: downloads, GET/POST, headers, cancellation |
 | `src/Network/PackSources.*` | Single entry point for search, versions, and installs across sources |

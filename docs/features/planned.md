@@ -5,6 +5,8 @@ Features that don't exist yet:
 - **Microsoft sign-in approval:** the sign-in flow is built (see [accounts.md](accounts.md)), but it needs an Azure app client ID that Mojang has approved for the Minecraft API. Until one is set (Settings > Account, saved as `microsoftClientId`), only offline mode works.
 - **Other platforms:** launching is Windows x64 only. See [Linux and Windows builds](#linux-and-windows-builds) below.
 - **CurseForge in Browse:** Manage > Content > **Browse Modrinth** searches Modrinth only. CurseForge mods, resource packs and shaders (`/v1/mods/search` with class ids 6, 12 and 6552, files from `/v1/mods/{id}/files`, dependencies with `relationType` 3, installed mods found by CurseForge fingerprint) could be a second source when an API key is set. It needs a key to build and check against the real API.
+- **Request cache on disk and in Manage:** the response cache ([request-caching.md](request-caching.md)) is in memory and starts empty on each launch, so the first Discover load of a session still asks every source (FTB, Technic and ATLauncher download their whole pack lists). Saving entries under the data folder with their age would carry them across launches. Manage > Content > Browse (`ModSearch`) is not on the cache yet and has no refresh button.
+- **CurseForge download size:** Discover shows a version's download size for every source except CurseForge, which would have to download the pack zip and look up each file. Its API gives the pack zip's own size only.
 - **Modpack source follow-ups:** a live CurseForge test with a real API key. The original spec is [plans/modpack-sources.md](../plans/modpack-sources.md).
 
 When one of these features is built, move it into the matching feature doc (or add a new one) and remove it here.

@@ -13,6 +13,9 @@ class IHttpClient;
 // file, fetched once per run and searched locally. A pack's folder name ("safe name") is
 // its name with everything but letters and digits removed.
 
+// Forgets the pack list fetched earlier, so the next search downloads it again (Discover > Refresh).
+void ClearAtLauncherPackCache();
+
 bool SearchAtLauncherModpacks(IHttpClient& http,
 							  const std::string& query,
 							  const SearchFilters& filters,

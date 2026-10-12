@@ -84,6 +84,13 @@ static std::mutex g_cacheMutex;
 static std::vector<FtbPack> g_cache;
 static bool g_cacheLoaded = false;
 
+void ClearFtbPackCache()
+{
+	std::lock_guard<std::mutex> lock(g_cacheMutex);
+	g_cache.clear();
+	g_cacheLoaded = false;
+}
+
 static bool LoadAllPacks(IHttpClient& http, std::vector<FtbPack>& out, std::string* err, const std::atomic<bool>* cancel)
 {
 	{

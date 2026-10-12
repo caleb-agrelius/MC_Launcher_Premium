@@ -30,7 +30,8 @@ Everything a service or page needs from "the rest of the app" is an abstract cla
 |---|---|---|
 | `ITaskRunner` | run this off the UI thread | `WorkerPool` |
 | `IUiPoster` | run this on the UI thread next frame | `UiQueue` |
-| `IHttpClient` | the network | `HttpClient` (libcurl), wrapped by `TracingHttpClient` for the debug harness |
+| `IHttpClient` | the network | `HttpClient` (libcurl), wrapped by `TracingHttpClient` for the debug harness, and for browsing services also by `CachingHttpClient` |
+| `ICacheControl` | empty the response cache (Refresh) | `CachingHttpClient` |
 | `INotifier` | a message for the player | `ToastNotifier` (toasts) |
 | `IWindowControl` | minimize, restore, close the launcher | `GlfwWindow` |
 | `IDisplayMetrics` | the monitor's DPI scale | `ThemeController` |
@@ -39,7 +40,7 @@ Everything a service or page needs from "the rest of the app" is an abstract cla
 | `IInstallRequester` | install this pack (maybe after asking about optional mods) | `OptionalModsService` |
 | `IPage`, `IPackPage` | a screen the sidebar leads to | each page |
 
-`Runtime` (`Core/Runtime.h`) bundles the first five plus the log and the shutdown flag. Every service takes one.
+`Runtime` (`Core/Runtime.h`) bundles the first five plus the log and the shutdown flag. Every service takes one. `AppRoot` has two: the normal one, and `m_browseRt` whose `http` is the caching client, for `DiscoverService` and `PackDetailsService` (see [request-caching.md](features/request-caching.md)).
 
 ## Threads and lifetimes
 

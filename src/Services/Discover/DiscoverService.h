@@ -2,7 +2,9 @@
 
 #include "Core/Runtime.h"
 #include "Core/TaskScope.h"
+#include "Network/CachingHttpClient.h"
 #include "Services/Discover/DiscoverModel.h"
+#include "Services/Discover/PackDetailsService.h"
 #include "Services/Settings/SettingsStore.h"
 
 #include <functional>
@@ -16,8 +18,10 @@ public:
 	// now() is the UI clock, in seconds, for debounce and result timestamps.
 	using Clock = std::function<double()>;
 
-	// localPacks is the offline fallback list shown when Modrinth can't be reached.
-	DiscoverService(const Runtime& runtime, SettingsStore& settings, std::vector<Modpack> localPacks, Clock now);
+	// localPacks is the offline fallback list shown when Modrinth can't be reached. runtime.http is
+	// the caching client; cache is that same client, which Refresh() empties.
+	DiscoverService(const Runtime& runtime, SettingsStore& settings, std::vector<Modpack> localPacks, Clock now,
+		ICacheControl& cache, PackDetailsService& details);
 
 	// One view per online source. std::map keeps references stable, so background tasks can hold a SourceView&.
 	std::map<PackSource, SourceView>& Views() { return m_views; }
@@ -51,6 +55,12 @@ public:
 	// results already loaded) and adds it to them, for infinite scroll.
 	void StartSearch(SourceView& view, bool append = false);
 
+	// Refresh: forgets the cached API answers and everything the details pane fetched, then runs the
+	// current search again, so every source is asked for its latest data. The only way to bypass the cache.
+	void Refresh();
+	// True while a search is waiting to be sent or running on any source (Refresh waits for it so clicks can't pile up requests).
+	bool Searching() const;
+
 	// The selected pack (kept across re-merges, else the first result) and the source it came from.
 	Modpack* Selected(PackSource& source);
 
@@ -59,6 +69,8 @@ private:
 	SettingsStore& m_settings;
 	std::vector<Modpack> m_localPacks;
 	Clock m_now;
+	ICacheControl& m_cache;
+	PackDetailsService& m_details;
 	std::map<PackSource, SourceView> m_views;
 	DiscoverState m_state;
 	TaskScope m_scope; // last, so its tasks finish before the members above go away

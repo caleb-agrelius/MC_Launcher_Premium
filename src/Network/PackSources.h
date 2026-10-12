@@ -50,6 +50,10 @@ struct SourceSearchResult {
 	std::uint64_t totalHits = 0;
 };
 
+// Drops the pack lists the FTB and ATLauncher clients keep for the whole run, so the next search asks those
+// sources again. Pairs with emptying the HTTP cache for a full refresh.
+void ClearSourceCaches();
+
 bool SearchPacks(IHttpClient& http,
 				 PackSource source,
 				 const std::string& query,
@@ -129,6 +133,26 @@ bool FetchPackChangelog(IHttpClient& http,
 						std::string& out,
 						std::string* err = nullptr,
 						const std::atomic<bool>* cancel = nullptr);
+
+// How much disk a pack version's files need, for showing before it is downloaded. bytes is 0 when unknown.
+// partial: the real total is larger (a file's size, or the overrides, isn't known).
+struct PackSizeEstimate {
+	std::uint64_t bytes = 0;
+	bool partial = false;
+};
+
+// Whether FetchPackDownloadSize works for this pack's source: Modrinth, FTB, Technic and ATLauncher. CurseForge
+// would have to download the pack zip and look up every file, so it is left out.
+bool CanEstimatePackSize(const Modpack& pack);
+
+// The files of pack's version (pack.sourceVersionId): Modrinth reads the .mrpack's index, the other sources
+// add up their install plan's file sizes. workDir is where an install plan may keep what it downloads.
+bool FetchPackDownloadSize(IHttpClient& http,
+						   const Modpack& pack,
+						   const std::string& workDir,
+						   PackSizeEstimate& out,
+						   std::string* err = nullptr,
+						   const std::atomic<bool>* cancel = nullptr);
 
 // One mod (or resource pack, shader pack...) a pack version includes, for Discover's Mods tab.
 struct PackMod {

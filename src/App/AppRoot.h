@@ -3,6 +3,7 @@
 #include "Core/Runtime.h"
 #include "Core/UiQueue.h"
 #include "Core/WorkerPool.h"
+#include "Network/CachingHttpClient.h"
 #include "Network/HttpClient.h"
 #include "Network/OfflineHttpClient.h"
 #include "Network/TracingHttpClient.h"
@@ -98,8 +99,10 @@ private:
 	HttpClient m_http;
 	OfflineHttpClient m_offlineHttp; // stands in for m_http in offline mode
 	TracingHttpClient m_tracedHttp; // what the services use: traces requests when the debug harness is on
+	CachingHttpClient m_cachedHttp; // remembers browsing GETs (Discover); installs, updates and sign-in stay on m_tracedHttp
 	ToastNotifier m_notifier;
 	Runtime m_rt;
+	Runtime m_browseRt; // m_rt with the caching client, for services that only read pack data to show it
 
 	// Services.
 	PackLibrary m_library;
@@ -114,8 +117,8 @@ private:
 	SharedFilesService m_sharedFiles;
 	CustomPackService m_customPacks;
 	PackContentService m_content;
-	DiscoverService m_discover;
 	PackDetailsService m_details;
+	DiscoverService m_discover;
 	OptionalModsService m_optional;
 
 	// Screens.

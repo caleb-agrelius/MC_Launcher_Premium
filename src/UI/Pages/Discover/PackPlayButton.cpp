@@ -8,7 +8,7 @@
 
 using Theme::S;
 
-void PackPlayButton::Draw(const Modpack& pack, bool compact)
+void PackPlayButton::Draw(const Modpack& pack, bool compact, float height)
 {
 	if (compact) {
 		ImGui::PushStyleColor(ImGuiCol_Button, Theme::C().accentDeep);
@@ -25,13 +25,14 @@ void PackPlayButton::Draw(const Modpack& pack, bool compact)
 	const InstalledVersion* toPlay = shownInstalled ? shownInstalled
 		: libraryPack ? ActiveInstalledVersion(*libraryPack) : nullptr;
 	const bool playBusy = toPlay && m_plays.VersionBusy(pack.id, toPlay->key);
-	ImGui::BeginDisabled(!libraryPack || playBusy);
+	// Greyed out until a version of the pack is installed.
+	ImGui::BeginDisabled(!libraryPack || !toPlay || playBusy);
 	// Spans the column, like the install card above it. The label names the version it launches.
 	std::string label = playBusy ? "PLAYING" : "PLAY";
 	if (toPlay && !toPlay->version.empty())
 		label += " (" + toPlay->version + ")";
 	label += "##play";
-	if (ImGui::Button(label.c_str(), ImVec2(-1.0f, S(compact ? 40.0f : 52.0f)))) {
+	if (ImGui::Button(label.c_str(), ImVec2(-1.0f, height > 0.0f ? height : S(compact ? 40.0f : 52.0f)))) {
 		if (shownInstalled && shownInstalled->key != libraryPack->activeVersion) {
 			const std::string key = shownInstalled->key;
 			SelectInstalledVersion(*libraryPack, key);

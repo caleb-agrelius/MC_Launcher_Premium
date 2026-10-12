@@ -106,6 +106,17 @@ bool ListModrinthVersions(IHttpClient& http,
 						  std::string* err = nullptr,
 						  const std::atomic<bool>* cancel = nullptr);
 
+// How much a Modrinth pack version downloads: the .mrpack plus every file its modrinth.index.json lists
+// for the client. Reads the .mrpack (through the HTTP client, so a caching client keeps it) unless it is too
+// big to be worth fetching just for this; then bytes is the .mrpack's size and partial is set. partial is
+// also set when the index leaves a file's size out. Needs pack.files (the version's .mrpack) loaded.
+bool FetchModrinthPackSize(IHttpClient& http,
+						   const Modpack& pack,
+						   std::uint64_t& bytes,
+						   bool& partial,
+						   std::string* err = nullptr,
+						   const std::atomic<bool>* cancel = nullptr);
+
 // Looks up a full-size gallery image for a project's banner (the featured image,
 // else the first one). Succeeds with an empty outUrl if the project has no gallery.
 bool FetchModrinthBanner(IHttpClient& http,
