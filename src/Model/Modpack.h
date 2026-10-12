@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -12,6 +13,7 @@ enum class PackSource {
 	FTB,
 	Technic,
 	ATLauncher,
+	Custom, // made by the player (My Library > New pack...); a whole-pack install with no online source
 };
 
 // Display name ("CurseForge") and the key used in saved JSON ("curseforge").
@@ -38,6 +40,10 @@ struct InstalledVersion {
 	std::vector<std::string> optionalMods; // ATLauncher choices for this version
 	std::string installDir;      // the unzipped .mrpack, or pack.json + minecraft/ for whole-pack installs
 	std::string gameDir;         // the game folder Minecraft runs in
+	// What the player added, removed or switched on/off in mods, resource and shader packs,
+	// by path in the game folder (see ContentChanges in Game/InstanceContent.h). Not empty
+	// means the version is modified.
+	std::map<std::string, std::string> contentChanges;
 };
 
 struct Modpack {

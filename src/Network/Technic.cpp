@@ -1,6 +1,8 @@
 #include "Technic.h"
 
 #include "HttpClient.h"
+#include "Util/Json.h"
+#include "Util/Text.h"
 
 #include <nlohmann/json.hpp>
 
@@ -16,12 +18,6 @@ static const char* kApiBase = "https://api.technicpack.net/";
 // Technic rejects requests without a "build" parameter. Prism sends MultiMC's "multimc";
 // any non-numeric identifier of our own is accepted.
 static const char* kBuild = "mclauncherpremium";
-
-static std::string StringOrEmpty(const json& object, const char* key)
-{
-	const auto it = object.find(key);
-	return (it != object.end() && it->is_string()) ? it->get<std::string>() : std::string();
-}
 
 // An image field shaped like {"url": "..."}.
 static std::string ImageUrl(const json& object, const char* key)
@@ -307,9 +303,7 @@ bool BuildTechnicPlan(HttpClient& http,
 			PlannedFile file;
 			file.name = StringOrEmpty(mod, "name") + " " + StringOrEmpty(mod, "version");
 			file.url = StringOrEmpty(mod, "url");
-			std::string md5 = StringOrEmpty(mod, "md5");
-			std::transform(md5.begin(), md5.end(), md5.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-			file.md5 = md5;
+			file.md5 = ToLower(StringOrEmpty(mod, "md5"));
 			file.size = mod.value("filesize", 0ULL);
 			file.extract = true;
 			if (file.url.empty())

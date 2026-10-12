@@ -12,6 +12,7 @@ const char* PackSourceName(PackSource source)
 	case PackSource::FTB: return "FTB";
 	case PackSource::Technic: return "Technic";
 	case PackSource::ATLauncher: return "ATLauncher";
+	case PackSource::Custom: return "Custom";
 	case PackSource::LocalIndex: break;
 	}
 	return "Local";
@@ -25,6 +26,7 @@ const char* PackSourceKey(PackSource source)
 	case PackSource::FTB: return "ftb";
 	case PackSource::Technic: return "technic";
 	case PackSource::ATLauncher: return "atlauncher";
+	case PackSource::Custom: return "custom";
 	case PackSource::LocalIndex: break;
 	}
 	return "local";
@@ -33,7 +35,7 @@ const char* PackSourceKey(PackSource source)
 PackSource PackSourceFromKey(const std::string& key)
 {
 	for (PackSource source : { PackSource::Modrinth, PackSource::CurseForge, PackSource::FTB,
-			 PackSource::Technic, PackSource::ATLauncher }) {
+			 PackSource::Technic, PackSource::ATLauncher, PackSource::Custom }) {
 		if (key == PackSourceKey(source))
 			return source;
 	}

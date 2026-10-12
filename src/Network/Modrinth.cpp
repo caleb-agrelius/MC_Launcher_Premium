@@ -1,5 +1,6 @@
 #include "Modrinth.h"
 #include "HttpClient.h"
+#include "Util/Json.h"
 
 #include <nlohmann/json.hpp>
 
@@ -26,12 +27,6 @@ static std::string JoinStrings(const json& array, const std::string& separator)
 }
 
 // Search hits use null for missing icons/gallery images, which json::value() would throw on.
-static std::string StringOrEmpty(const json& object, const char* key)
-{
-	const auto it = object.find(key);
-	return (it != object.end() && it->is_string()) ? it->get<std::string>() : std::string();
-}
-
 bool SearchModrinthModpacks(HttpClient& http,
 							const std::string& query,
 							const ModrinthSearchOptions& options,
@@ -367,4 +362,40 @@ bool FetchModrinthBanner(HttpClient& http,
 		return false;
 	}
 	return true;
+}
+
+bool FetchModrinthChangelog(HttpClient& http,
+							const std::string& projectIdOrSlug,
+							const std::string& versionId,
+							const std::string& versionNumber,
+							std::string& out,
+							std::string* err,
+							const std::atomic<bool>* cancel)
+{
+	out.clear();
+	std::string body;
+	const std::string url = versionId.empty()
+		? std::string(kApiBase) + "/project/" + HttpClient::UrlEncode(projectIdOrSlug) + "/version"
+		: std::string(kApiBase) + "/version/" + HttpClient::UrlEncode(versionId);
+	if (!http.Get(url, body, err, cancel))
+		return false;
+	try {
+		const json j = json::parse(body);
+		if (!versionId.empty()) {
+			out = StringOrEmpty(j, "changelog");
+			return true;
+		}
+		for (const auto& version : j) {
+			if (version.value("version_number", "") == versionNumber) {
+				out = StringOrEmpty(version, "changelog");
+				return true;
+			}
+		}
+		if (err) *err = "Version " + versionNumber + " wasn't found on Modrinth";
+		return false;
+	}
+	catch (const std::exception& ex) {
+		if (err) *err = std::string("Unexpected version response: ") + ex.what();
+		return false;
+	}
 }

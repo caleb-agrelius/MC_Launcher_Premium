@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Game/GameFiles.h"
+#include "Game/InstanceContent.h"
 
 #include <atomic>
 #include <cstdint>
@@ -25,6 +26,11 @@ struct ServerSetupRequest {
 	// Whole-pack installs: given mod jars' SHA-1s, adds the client-only ones to clientOnly
 	// (the launcher asks Modrinth). Optional. Returning false notes that the check failed.
 	std::function<bool(const std::vector<std::string>& sha1s, std::set<std::string>& clientOnly)> findClientOnly;
+	// The player's edits to the pack version (see ContentChanges): mod jars they added, copied
+	// into the server's mods/ when it doesn't have them, and pack files they removed, which
+	// the server doesn't download either.
+	std::vector<std::filesystem::path> addedMods;
+	std::set<std::string> removedFiles;
 };
 
 // What SetupServer installed, saved as serverDir/.mclp-server.json.
@@ -61,13 +67,9 @@ bool RemoveServer(const std::filesystem::path& serverDir, std::string* err);
 // True when serverDir holds a server that SetupServer finished (.mclp-server.json).
 bool HasServerFiles(const std::filesystem::path& serverDir);
 
-// A mod in serverDir/mods/. Disabled mods are renamed "<name>.disabled"; SetupServer
-// doesn't download or copy a file again while its .disabled copy exists.
-struct ServerMod {
-	std::string fileName; // e.g. "sodium-fabric-0.5.8.jar", without ".disabled"
-	bool enabled = true;
-	std::uint64_t size = 0;
-};
+// A mod in serverDir/mods/ (see InstanceContent.h). Disabled mods are renamed
+// "<name>.disabled"; SetupServer doesn't download or copy a file again while its .disabled copy exists.
+using ServerMod = ContentFile;
 
 // The server's mods (.jar and .jar.disabled files), sorted by name ignoring case.
 std::vector<ServerMod> ListServerMods(const std::filesystem::path& serverDir);
@@ -93,8 +95,11 @@ struct ServerProperties {
 	bool whitelist = false;
 };
 
-// True for an empty host IP (listen everywhere) or a plain IPv4 address like "192.168.1.20".
+// True for an empty host IP (listen everywhere), a plain IPv4 address like "192.168.1.20",
+// or "localhost" (Minecraft resolves it to this PC's loopback address).
 bool IsValidServerIp(const std::string& address);
+// True for an address only this PC can reach: "localhost" or 127.x.x.x.
+bool IsLoopbackServerIp(const std::string& address);
 
 ServerProperties ReadServerProperties(const std::filesystem::path& serverDir);
 bool WriteServerProperties(const std::filesystem::path& serverDir, const ServerProperties& properties, std::string* err);
@@ -119,3 +124,8 @@ bool WriteDockerCompose(const std::filesystem::path& serverDir, const std::strin
 // eula.txt: the server won't start until eula=true. Only written when the player agrees.
 bool EulaAccepted(const std::filesystem::path& serverDir);
 bool AcceptEula(const std::filesystem::path& serverDir, std::string* err);
+
+// Whether the server runs in Docker (docker-minecraft-server) instead of directly with Java.
+// Kept as the marker file .mclp-docker in the server folder.
+bool ServerUsesDocker(const std::filesystem::path& serverDir);
+bool SetServerUsesDocker(const std::filesystem::path& serverDir, bool docker, std::string* err);

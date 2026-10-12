@@ -1,6 +1,8 @@
 #include "Text.h"
 
+#include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <regex>
 #include <sstream>
@@ -207,4 +209,36 @@ std::string ShortenText(const std::string& text, std::size_t maxLength)
 	while (!flat.empty() && (flat.back() == ' ' || flat.back() == ',' || flat.back() == '.'))
 		flat.pop_back();
 	return flat + "...";
+}
+
+std::string FormatCount(std::uint64_t count)
+{
+	char formatted[32];
+	if (count >= 1000000)
+		std::snprintf(formatted, sizeof(formatted), "%.1fM", count / 1000000.0);
+	else if (count >= 1000)
+		std::snprintf(formatted, sizeof(formatted), "%.1fK", count / 1000.0);
+	else
+		std::snprintf(formatted, sizeof(formatted), "%llu", static_cast<unsigned long long>(count));
+	return formatted;
+}
+
+std::string ToLower(std::string text)
+{
+	std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+	return text;
+}
+
+std::string FormatFileSize(std::uint64_t bytes)
+{
+	const char* units[] = { "B", "KB", "MB", "GB" };
+	double size = static_cast<double>(bytes);
+	int unit = 0;
+	while (size >= 1024.0 && unit < 3) {
+		size /= 1024.0;
+		++unit;
+	}
+	char formatted[32];
+	std::snprintf(formatted, sizeof(formatted), unit == 0 ? "%.0f %s" : "%.1f %s", size, units[unit]);
+	return formatted;
 }

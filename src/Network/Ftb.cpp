@@ -2,6 +2,8 @@
 
 #include "CurseForge.h"
 #include "HttpClient.h"
+#include "Util/Json.h"
+#include "Util/Text.h"
 #include "Storage/Installer.h"
 
 #include <nlohmann/json.hpp>
@@ -19,19 +21,6 @@ using json = nlohmann::json;
 
 static const char* kApiBase = "https://api.feed-the-beast.com/v1/modpacks/public";
 static constexpr int kDetailThreads = 4;
-
-static std::string StringOrEmpty(const json& object, const char* key)
-{
-	const auto it = object.find(key);
-	return (it != object.end() && it->is_string()) ? it->get<std::string>() : std::string();
-}
-
-static std::string ToLower(std::string text)
-{
-	std::transform(text.begin(), text.end(), text.begin(),
-		[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-	return text;
-}
 
 static bool GetJson(HttpClient& http, const std::string& path, json& out, std::string* err, const std::atomic<bool>* cancel)
 {
@@ -499,5 +488,20 @@ bool FetchFtbDescription(HttpClient& http,
 	if (!GetJson(http, "/modpack/" + HttpClient::UrlEncode(pack.sourceId), detail, err, cancel))
 		return false;
 	out = StringOrEmpty(detail, "description");
+	return true;
+}
+
+bool FetchFtbChangelog(HttpClient& http,
+					   const Modpack& pack,
+					   std::string& out,
+					   std::string* err,
+					   const std::atomic<bool>* cancel)
+{
+	out.clear();
+	json changelog;
+	if (!GetJson(http, "/modpack/" + HttpClient::UrlEncode(pack.sourceId) + "/" + HttpClient::UrlEncode(pack.sourceVersionId) +
+			"/changelog", changelog, err, cancel))
+		return false;
+	out = StringOrEmpty(changelog, "content");
 	return true;
 }

@@ -29,8 +29,11 @@ add_executable(MC_Launcher_Premium
   src/Platform.cpp
   src/Game/GameFiles.cpp
   src/Game/GameOptions.cpp
+  src/Game/InstanceContent.cpp
+  src/Game/JavaFinder.cpp
   src/Game/Launcher.cpp
   src/Game/Loaders.cpp
+  src/Game/PackCreator.cpp
   src/Game/PackInstance.cpp
   src/Game/ServerSetup.cpp
   src/Model/Modpack.cpp
@@ -40,6 +43,7 @@ add_executable(MC_Launcher_Premium
   src/Network/HttpClient.cpp
   src/Network/MicrosoftAuth.cpp
   src/Network/Modrinth.cpp
+  src/Network/ModSearch.cpp
   src/Network/PackSources.cpp
   src/Network/Technic.cpp
   src/Storage/Account.cpp
@@ -50,6 +54,10 @@ add_executable(MC_Launcher_Premium
   src/UI/MobModel.cpp
   src/UI/Mobs.cpp
   src/UI/ImageCache.cpp
+  src/UI/LogView.cpp
+  src/UI/Logo.cpp
+  src/UI/ManagePage.cpp
+  src/UI/NewPackDialog.cpp
   src/UI/SettingsPage.cpp
   src/UI/Theme.cpp
   src/UI/Toasts.cpp
@@ -85,6 +93,8 @@ else()
 endif()
 
 if (WIN32)
+  # The executable's icon (resources/logo.ico, written by logo_export).
+  target_sources(MC_Launcher_Premium PRIVATE resources/app.rc)
   target_compile_definitions(MC_Launcher_Premium PRIVATE "_CRT_SECURE_NO_WARNINGS" "GLFW_INCLUDE_NONE")
   target_link_libraries(MC_Launcher_Premium PRIVATE bcrypt shell32 ws2_32)
 endif()
@@ -92,6 +102,10 @@ endif()
 # Visual Studio: make F5 launch the app (not ALL_BUILD), running from the repo root.
 set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT MC_Launcher_Premium)
 set_target_properties(MC_Launcher_Premium PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+# Writes resources/logo.ico and resources/logo.png from src/UI/Logo.cpp. Run it from the repository root.
+add_executable(logo_export tools/LogoExport.cpp src/UI/Logo.cpp)
+target_include_directories(logo_export PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${Stb_INCLUDE_DIR})
 
 message(STATUS "Configured MC_Launcher_Premium project (vcpkg mode)")
 
@@ -102,14 +116,19 @@ if (BUILD_TESTING)
     src/Platform.cpp
     src/Game/GameFiles.cpp
     src/Game/GameOptions.cpp
+    src/Game/InstanceContent.cpp
+    src/Game/JavaFinder.cpp
     src/Game/Loaders.cpp
+    src/Game/PackCreator.cpp
     src/Game/PackInstance.cpp
     src/Game/ServerSetup.cpp
     src/Model/Modpack.cpp
     src/Network/HttpClient.cpp
     src/Storage/Installer.cpp
+    src/Storage/Library.cpp
     src/Storage/Settings.cpp
     src/UI/ImageCache.cpp
+    src/UI/Logo.cpp
     src/UI/Theme.cpp
     src/UI/Widgets.cpp
     src/Util/Paths.cpp
@@ -131,7 +150,9 @@ if (BUILD_TESTING)
   add_executable(live_checks
     tests/LiveChecks.cpp
     src/Game/GameFiles.cpp
+    src/Game/InstanceContent.cpp
     src/Game/Loaders.cpp
+    src/Game/PackCreator.cpp
     src/Game/PackInstance.cpp
     src/Model/Modpack.cpp
     src/Network/AtLauncher.cpp
@@ -139,6 +160,7 @@ if (BUILD_TESTING)
     src/Network/Ftb.cpp
     src/Network/HttpClient.cpp
     src/Network/Modrinth.cpp
+    src/Network/ModSearch.cpp
     src/Network/PackSources.cpp
     src/Network/Technic.cpp
     src/Storage/InstallPlan.cpp

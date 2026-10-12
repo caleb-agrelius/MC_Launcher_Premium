@@ -1,5 +1,7 @@
 #include "CurseForge.h"
 #include "HttpClient.h"
+#include "Util/Json.h"
+#include "Util/Text.h"
 
 #include "Storage/Installer.h"
 #include "Util/Hash.h"
@@ -102,12 +104,6 @@ static bool ApiPost(HttpClient& http, const std::string& path, const json& reque
 	return true;
 }
 
-static std::string StringOrEmpty(const json& object, const char* key)
-{
-	const auto it = object.find(key);
-	return (it != object.end() && it->is_string()) ? it->get<std::string>() : std::string();
-}
-
 // CurseForge's modLoaderType numbers.
 static int LoaderType(const std::string& loader)
 {
@@ -127,13 +123,6 @@ static const char* LoaderName(int type)
 	case 6: return "neoforge";
 	default: return "";
 	}
-}
-
-static std::string ToLower(std::string text)
-{
-	std::transform(text.begin(), text.end(), text.begin(),
-		[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-	return text;
 }
 
 // A file's gameVersions mixes Minecraft versions ("1.20.1") with loaders ("Forge") and
@@ -654,6 +643,21 @@ bool FetchCurseForgeDescription(HttpClient& http,
 	out.clear();
 	json response;
 	if (!ApiGet(http, "/mods/" + HttpClient::UrlEncode(pack.sourceId) + "/description", response, err, cancel))
+		return false;
+	out = StringOrEmpty(response, "data");
+	return true;
+}
+
+bool FetchCurseForgeChangelog(HttpClient& http,
+							  const Modpack& pack,
+							  std::string& out,
+							  std::string* err,
+							  const std::atomic<bool>* cancel)
+{
+	out.clear();
+	json response;
+	if (!ApiGet(http, "/mods/" + HttpClient::UrlEncode(pack.sourceId) + "/files/" + HttpClient::UrlEncode(pack.sourceVersionId) +
+			"/changelog", response, err, cancel))
 		return false;
 	out = StringOrEmpty(response, "data");
 	return true;

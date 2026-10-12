@@ -67,6 +67,13 @@ bool FetchCurseForgePackMods(HttpClient& http,
 							 const std::atomic<bool>* cancel = nullptr);
 
 // The project's full description (HTML), from /mods/{id}/description.
+// The changelog (HTML) of the pack's file (pack.sourceVersionId).
+bool FetchCurseForgeChangelog(HttpClient& http,
+							  const Modpack& pack,
+							  std::string& out,
+							  std::string* err = nullptr,
+							  const std::atomic<bool>* cancel = nullptr);
+
 bool FetchCurseForgeDescription(HttpClient& http,
 								const Modpack& pack,
 								std::string& out,

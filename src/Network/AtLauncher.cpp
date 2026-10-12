@@ -1,6 +1,8 @@
 #include "AtLauncher.h"
 
 #include "HttpClient.h"
+#include "Util/Json.h"
+#include "Util/Text.h"
 #include "Storage/Installer.h"
 #include "Util/Hash.h"
 
@@ -16,19 +18,6 @@ namespace fs = std::filesystem;
 using json = nlohmann::json;
 
 static const char* kServer = "https://download.nodecdn.net/containers/atl/";
-
-static std::string StringOrEmpty(const json& object, const char* key)
-{
-	const auto it = object.find(key);
-	return (it != object.end() && it->is_string()) ? it->get<std::string>() : std::string();
-}
-
-static std::string ToLower(std::string text)
-{
-	std::transform(text.begin(), text.end(), text.begin(),
-		[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-	return text;
-}
 
 static std::string SafeName(const std::string& name)
 {

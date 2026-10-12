@@ -6,6 +6,7 @@
 
 #include <atomic>
 #include <filesystem>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -19,6 +20,9 @@ struct PlayRequest {
 	LaunchSettings launch;              // memory, Java, JVM arguments, window size
 	GameOptionsSettings gameOptions;    // vanilla options.txt values applied to the instance
 	const std::atomic<bool>* stopGame = nullptr; // set to force-close the running game
+	// The player's edits to the pack version (InstalledVersion::contentChanges): removed
+	// files aren't downloaded again, and the edits are re-applied after the pack's files.
+	std::map<std::string, std::string> contentChanges;
 };
 
 // Splits a JVM argument string on spaces; double quotes group words ("-Dname=a b").

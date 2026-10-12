@@ -1,6 +1,7 @@
 #include "SettingsPage.h"
 
 #include "Game/GameOptions.h"
+#include "Game/JavaFinder.h"
 #include "Platform.h"
 #include "Storage/Settings.h"
 #include "Theme.h"
@@ -13,6 +14,7 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <iterator>
 
 using Theme::S;
 
@@ -42,35 +44,116 @@ int g_cardIndex = 0; // cards drawn so far this frame, for the stagger
 void TabStrip()
 {
 	const Tab tabs[] = { Tab::Appearance, Tab::Minecraft, Tab::GameOptions, Tab::Account, Tab::Downloads, Tab::About };
-	ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, S(18.0f));
-	ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(S(18.0f), S(8.0f)));
-	for (Tab tab : tabs) {
-		const bool selected = g_tab == tab;
-		ImGui::PushStyleColor(ImGuiCol_Button, selected ? Theme::C().accentDeep : Theme::C().frameBg);
-		ImGui::PushFont(selected ? Theme::GetFonts().bold : Theme::GetFonts().regular, 0.0f);
-		if (ImGui::Button(TabName(tab)) && g_tab != tab) {
-			g_tab = tab;
-			g_cardsShownAt = ImGui::GetTime();
-		}
-		ImGui::PopFont();
-		ImGui::PopStyleColor();
-		ImGui::SameLine();
+	const char* labels[std::size(tabs)];
+	int current = 0;
+	for (std::size_t i = 0; i < std::size(tabs); ++i) {
+		labels[i] = TabName(tabs[i]);
+		if (tabs[i] == g_tab)
+			current = static_cast<int>(i);
 	}
-	ImGui::NewLine();
-	ImGui::PopStyleVar(2);
+	if (Widgets::TabStrip("settings_tabs", labels, static_cast<int>(std::size(tabs)), &current)) {
+		g_tab = tabs[current];
+		g_cardsShownAt = ImGui::GetTime();
+	}
 }
 
-void BeginCard(const char* id)
+// Cards flow into columns on wide windows: each card goes to the shortest column (using
+// the height BeginCard remembers), so the page needs less scrolling. Content drawn between
+// cards starts a new section below every column.
+struct CardFlow {
+	bool active = false;
+	int columns = 1;
+	float columnWidth = 0.0f;
+	float gap = 0.0f;
+	float x = 0.0f;           // left edge, in screen space
+	float columnY[3] = {};    // where each column's next card goes
+	float afterCardY = -1.0f; // where EndCard left the cursor; anything lower means content came between
+	int column = 0;           // the open card's column
+	bool fullWidth = false;   // the open card spans every column
+};
+CardFlow g_flow;
+constexpr float kMinColumnWidth = 520.0f; // unscaled
+
+// Lays the cards drawn until EndCardFlow() out in as many columns as fit (up to three).
+void BeginCardFlow()
 {
+	g_flow = CardFlow{};
+	const float available = ImGui::GetContentRegionAvail().x;
+	g_flow.gap = S(14.0f);
+	g_flow.columns = std::clamp(static_cast<int>((available + g_flow.gap) / (S(kMinColumnWidth) + g_flow.gap)), 1, 3);
+	if (g_flow.columns < 2)
+		return;
+	g_flow.active = true;
+	g_flow.columnWidth = std::floor((available - g_flow.gap * static_cast<float>(g_flow.columns - 1)) / static_cast<float>(g_flow.columns));
+	g_flow.x = ImGui::GetCursorScreenPos().x;
+}
+
+void EndCardFlow()
+{
+	g_flow.active = false;
+}
+
+// The bottom of the tallest column.
+float FlowBottom()
+{
+	float bottom = g_flow.columnY[0];
+	for (int i = 1; i < g_flow.columns; ++i)
+		bottom = std::max(bottom, g_flow.columnY[i]);
+	return bottom;
+}
+
+// fullWidth spans every column (wide content such as the theme grid).
+void BeginCard(const char* id, bool fullWidth = false)
+{
+	float width = 0.0f;
+	if (g_flow.active) {
+		const float cursorY = ImGui::GetCursorScreenPos().y;
+		if (g_flow.afterCardY < 0.0f || cursorY > g_flow.afterCardY + 0.5f) {
+			// First card, or content was drawn after the last one: a new section starts here.
+			for (float& y : g_flow.columnY)
+				y = cursorY;
+		}
+		g_flow.fullWidth = fullWidth;
+		g_flow.column = 0;
+		float y = g_flow.columnY[0];
+		if (fullWidth) {
+			y = FlowBottom();
+			width = g_flow.columnWidth * static_cast<float>(g_flow.columns) + g_flow.gap * static_cast<float>(g_flow.columns - 1);
+		} else {
+			for (int i = 1; i < g_flow.columns; ++i) {
+				if (g_flow.columnY[i] < g_flow.columnY[g_flow.column] - 0.5f)
+					g_flow.column = i;
+			}
+			y = g_flow.columnY[g_flow.column];
+			width = g_flow.columnWidth;
+		}
+		ImGui::SetCursorScreenPos(ImVec2(g_flow.x + (fullWidth ? 0.0f : (g_flow.columnWidth + g_flow.gap) * static_cast<float>(g_flow.column)), y));
+	}
 	Widgets::BeginEntrance(g_cardsShownAt, g_cardIndex++);
-	Widgets::BeginCard(id, ImVec2(S(22.0f), S(18.0f)));
+	Widgets::BeginCard(id, ImVec2(S(22.0f), S(18.0f)), width);
 }
 
 void EndCard()
 {
 	Widgets::EndCard();
 	Widgets::EndEntrance();
-	ImGui::Dummy(ImVec2(0.0f, S(6.0f)));
+	if (!g_flow.active) {
+		ImGui::Dummy(ImVec2(0.0f, S(6.0f)));
+		return;
+	}
+	// The card's own height, not its (animated) position: cards rise into place.
+	const float top = g_flow.fullWidth ? FlowBottom() : g_flow.columnY[g_flow.column];
+	const float bottom = top + ImGui::GetItemRectSize().y + g_flow.gap;
+	if (g_flow.fullWidth) {
+		for (float& y : g_flow.columnY)
+			y = bottom;
+	} else {
+		g_flow.columnY[g_flow.column] = bottom;
+	}
+	// Leave the cursor under every column, so whatever comes next starts below them.
+	ImGui::SetCursorScreenPos(ImVec2(g_flow.x, FlowBottom()));
+	ImGui::Dummy(ImVec2(0.0f, 0.0f));
+	g_flow.afterCardY = ImGui::GetCursorScreenPos().y;
 }
 
 void CardTitle(const char* title, const char* subtitle = nullptr)
@@ -84,6 +167,8 @@ void CardTitle(const char* title, const char* subtitle = nullptr)
 	ImGui::Dummy(ImVec2(0.0f, S(4.0f)));
 }
 
+float g_labelWidth = 0.0f; // the open rows' label column
+
 // Two-column label/control rows inside a card.
 bool BeginRows(const char* id)
 {
@@ -92,7 +177,8 @@ bool BeginRows(const char* id)
 		ImGui::PopStyleVar();
 		return false;
 	}
-	ImGui::TableSetupColumn("label", ImGuiTableColumnFlags_WidthFixed, S(240.0f));
+	g_labelWidth = std::min(S(240.0f), std::floor(ImGui::GetContentRegionAvail().x * 0.4f));
+	ImGui::TableSetupColumn("label", ImGuiTableColumnFlags_WidthFixed, g_labelWidth);
 	ImGui::TableSetupColumn("control", ImGuiTableColumnFlags_WidthStretch);
 	return true;
 }
@@ -108,7 +194,7 @@ void Row(const char* label, const char* hint = nullptr)
 	ImGui::TextUnformatted(label);
 	ImGui::PopFont();
 	if (hint) {
-		ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + S(220.0f));
+		ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + g_labelWidth - S(20.0f));
 		ImGui::PushFont(nullptr, Theme::kFontSmall);
 		ImGui::TextDisabled("%s", hint);
 		ImGui::PopFont();
@@ -198,7 +284,7 @@ bool DrawThemeEditor(Settings& settings)
 	CustomTheme& theme = *it;
 	bool changed = false;
 
-	BeginCard("theme_editor");
+	BeginCard("theme_editor", true);
 	CardTitle("Edit your theme", "Changes apply as you make them and are saved automatically.");
 	if (BeginRows("theme_editor_rows")) {
 		Row("Name");
@@ -211,7 +297,7 @@ bool DrawThemeEditor(Settings& settings)
 			names.push_back(Theme::Themes()[i].name.c_str());
 		const float applyWidth = ImGui::CalcTextSize("Copy colors").x + ImGui::GetStyle().FramePadding.x * 2.0f;
 		ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - applyWidth - ImGui::GetStyle().ItemSpacing.x);
-		ImGui::Combo("##start_from", &startFrom, names.data(), static_cast<int>(names.size()));
+		Widgets::Select("##start_from", &startFrom, names.data(), static_cast<int>(names.size()));
 		ImGui::SameLine();
 		if (ImGui::Button("Copy colors")) {
 			Theme::PaletteToCustom(Theme::Themes()[static_cast<std::size_t>(startFrom)].palette, theme);
@@ -242,13 +328,11 @@ bool DrawThemeEditor(Settings& settings)
 		return true;
 	}
 	ImGui::SameLine();
-	ImGui::PushStyleColor(ImGuiCol_Button, Theme::Mix(Theme::C().cardBg, Theme::C().error, 0.45f));
-	if (ImGui::Button("Delete theme")) {
+	if (Widgets::DangerButton("Delete theme")) {
 		settings.customThemes.erase(it);
 		settings.theme = Theme::Themes()[0].id;
 		changed = true;
 	}
-	ImGui::PopStyleColor();
 	EndCard();
 	return changed;
 }
@@ -268,7 +352,7 @@ bool DrawGameOptions(Settings& settings)
 		Row("Apply", "Every launch keeps all packs in sync but undoes in-game changes to these options.");
 		int mode = options.everyLaunch ? 0 : 1;
 		const char* modes[] = { "Every time a pack starts", "Only the first time each pack starts" };
-		if (ImGui::Combo("##apply_mode", &mode, modes, 2)) {
+		if (Widgets::Select("##apply_mode", &mode, modes, 2)) {
 			options.everyLaunch = mode == 0;
 			changed = true;
 		}
@@ -339,7 +423,7 @@ bool DrawGameOptions(Settings& settings)
 						if (value == def.choices[i].value)
 							index = static_cast<int>(i);
 					}
-					if (ImGui::Combo("##value", &index, labels.data(), static_cast<int>(labels.size()))) {
+					if (Widgets::Select("##value", &index, labels.data(), static_cast<int>(labels.size()))) {
 						value = def.choices[static_cast<std::size_t>(index)].value;
 						edited = true;
 					}
@@ -371,7 +455,7 @@ bool DrawAppearance(Settings& settings)
 {
 	bool changed = false;
 
-	BeginCard("theme_card");
+	BeginCard("theme_card", true);
 	CardTitle("Theme", "Pick a color theme, or create your own. It applies right away.");
 	const float spacing = ImGui::GetStyle().ItemSpacing.x * 1.5f;
 	const float available = ImGui::GetContentRegionAvail().x;
@@ -435,6 +519,96 @@ bool DrawAppearance(Settings& settings)
 	return changed;
 }
 
+// The Java choice: Automatic, one of the Javas found on this PC, or a custom path.
+static bool DrawJavaChoice(LaunchSettings& launch, const SettingsPageContext& context)
+{
+	if (!context.javasScanned && !context.javasScanning && context.scanJavas)
+		context.scanJavas();
+	static const std::vector<JavaInstall> kNone;
+	const std::vector<JavaInstall>& javas = context.javas ? *context.javas : kNone;
+	// The detected Java the setting names, if any.
+	const JavaInstall* chosen = nullptr;
+	if (!launch.javaPath.empty()) {
+		const std::filesystem::path path(launch.javaPath);
+		for (const JavaInstall& java : javas) {
+			if (path == java.javaw || path == java.java || path == java.home)
+				chosen = &java;
+		}
+	}
+	// "Custom path" stays open while typing, even before the path names a file.
+	ImGuiStorage* storage = ImGui::GetStateStorage();
+	const ImGuiID customKey = ImGui::GetID("java_custom");
+	bool custom = !launch.javaPath.empty() && !chosen;
+	custom = custom || storage->GetBool(customKey, false);
+
+	bool changed = false;
+	const std::string preview = custom ? "Custom path" : chosen ? JavaLabel(*chosen) : "Automatic";
+	const float rescanWidth = Widgets::ButtonWidth("Rescan");
+	ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - rescanWidth - ImGui::GetStyle().ItemSpacing.x);
+	if (Widgets::BeginSelect("##java", preview.c_str(), ImGuiComboFlags_HeightLarge)) {
+		if (Widgets::ListItem("Automatic", !custom && !chosen, true, "matches each Minecraft version")) {
+			launch.javaPath.clear();
+			storage->SetBool(customKey, false);
+			changed = true;
+		}
+		for (std::size_t i = 0; i < javas.size(); ++i) {
+			const JavaInstall& java = javas[i];
+			ImGui::PushID(static_cast<int>(i));
+			const std::string folder = java.home.filename().string();
+			if (Widgets::ListItem(JavaLabel(java).c_str(), &java == chosen && !custom, true, folder.c_str())) {
+				launch.javaPath = java.javaw.string();
+				storage->SetBool(customKey, false);
+				changed = true;
+			}
+			ImGui::SetItemTooltip("%s", java.home.string().c_str());
+			ImGui::PopID();
+		}
+		if (Widgets::ListItem("Custom path...", custom)) {
+			storage->SetBool(customKey, true);
+			if (chosen) {
+				launch.javaPath.clear();
+				changed = true;
+			}
+		}
+		Widgets::EndSelect();
+	}
+	ImGui::SameLine();
+	ImGui::BeginDisabled(context.javasScanning);
+	if (ImGui::Button("Rescan") && context.scanJavas)
+		context.scanJavas();
+	ImGui::EndDisabled();
+	ImGui::SetItemTooltip("Look for newly installed Javas");
+
+	ImGui::PushFont(nullptr, Theme::kFontSmall);
+	ImGui::PushTextWrapPos(0.0f);
+	if (custom) {
+		changed |= ImGui::InputTextWithHint("##java_path", "Path to java.exe, javaw.exe, or a Java folder", &launch.javaPath);
+		std::error_code ec;
+		if (!launch.javaPath.empty() && !std::filesystem::exists(std::filesystem::path(launch.javaPath), ec))
+			ImGui::TextColored(Theme::C().error, "Not found. Play will fail until this is fixed or cleared.");
+	} else if (context.javasScanning) {
+		ImGui::TextDisabled("Looking for Java on this PC...");
+	} else if (!chosen) {
+		std::string found;
+		std::vector<int> majors;
+		for (const JavaInstall& java : javas) {
+			if (std::find(majors.begin(), majors.end(), java.major) == majors.end())
+				majors.push_back(java.major);
+		}
+		for (int major : majors)
+			found += (found.empty() ? "" : ", ") + std::to_string(major);
+		if (found.empty())
+			ImGui::TextDisabled("No Java found on this PC; Mojang's is downloaded for each Minecraft version.");
+		else
+			ImGui::TextDisabled("Found Java %s on this PC. Other versions are downloaded from Mojang when needed.", found.c_str());
+	} else {
+		ImGui::TextDisabled("%s", chosen->home.string().c_str());
+	}
+	ImGui::PopTextWrapPos();
+	ImGui::PopFont();
+	return changed;
+}
+
 // The Memory, Java and Game window cards. global adds the launcher-wide "When the game
 // starts" choice; per-pack settings leave it out.
 static bool DrawLaunchCards(LaunchSettings& launch, const SettingsPageContext& context, bool global)
@@ -475,18 +649,9 @@ static bool DrawLaunchCards(LaunchSettings& launch, const SettingsPageContext& c
 	BeginCard("java_card");
 	CardTitle("Java");
 	if (BeginRows("java_rows")) {
-		Row("Java executable", "Leave empty to use Mojang's Java for each Minecraft version (downloaded automatically). "
-			"Otherwise, the path to java.exe, javaw.exe, or a Java folder.");
-		changed |= ImGui::InputTextWithHint("##java_path", "Automatic (Mojang's Java)", &launch.javaPath);
-		if (!launch.javaPath.empty()) {
-			std::error_code ec;
-			const std::filesystem::path java(launch.javaPath);
-			if (!std::filesystem::exists(java, ec)) {
-				ImGui::PushFont(nullptr, Theme::kFontSmall);
-				ImGui::TextColored(Theme::C().error, "Not found. Play will fail until this is fixed or cleared.");
-				ImGui::PopFont();
-			}
-		}
+		Row("Java", "Automatic uses an installed Java with the version each Minecraft version asks for "
+			"(for example 8 for 1.16, 17 for 1.18, 21 for 1.21), and downloads Mojang's when none matches.");
+		changed |= DrawJavaChoice(launch, context);
 
 		Row("JVM arguments", "Extra arguments for Java, separated by spaces. Use quotes for values with spaces.");
 		changed |= ImGui::InputTextWithHint("##jvm_args", "e.g. -XX:+UseG1GC -XX:MaxGCPauseMillis=50", &launch.jvmArgs);
@@ -533,7 +698,7 @@ static bool DrawLaunchCards(LaunchSettings& launch, const SettingsPageContext& c
 			Row("When the game starts");
 			const char* options[] = { "Keep the launcher open", "Minimize the launcher", "Close the launcher" };
 			int afterLaunch = static_cast<int>(launch.afterLaunch);
-			if (ImGui::Combo("##after_launch", &afterLaunch, options, 3)) {
+			if (Widgets::Select("##after_launch", &afterLaunch, options, 3)) {
 				launch.afterLaunch = static_cast<AfterLaunch>(afterLaunch);
 				changed = true;
 			}
@@ -685,7 +850,15 @@ bool DrawDownloads(Settings& settings, const SettingsPageContext& context)
 void DrawAbout(const SettingsPageContext& context)
 {
 	BeginCard("about_card");
-	CardTitle("MC Launcher Premium");
+	Widgets::LogoBlock(S(64.0f));
+	ImGui::SameLine(0.0f, S(16.0f));
+	ImGui::BeginGroup();
+	ImGui::Dummy(ImVec2(0.0f, S(10.0f)));
+	Widgets::Wordmark("MC LAUNCHER", std::floor(S(3.0f)), Theme::Mix(Theme::C().text, Theme::C().accent, 0.1f),
+		Theme::Mix(Theme::C().accentDeep, Theme::C().windowBg, 0.15f));
+	ImGui::TextDisabled("Premium edition");
+	ImGui::EndGroup();
+	ImGui::Dummy(ImVec2(0.0f, S(4.0f)));
 	if (BeginRows("about_rows")) {
 		Row("Version");
 		ImGui::AlignTextToFramePadding();
@@ -739,7 +912,8 @@ bool DrawSettingsPage(Settings& settings, const SettingsPageContext& context)
 	ImGui::Spacing();
 
 	bool changed = false;
-	ImGui::BeginChild("settings_scroll", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollWithMouse);
+	Widgets::BeginScrollArea("settings_scroll");
+	BeginCardFlow();
 	switch (g_tab) {
 	case Tab::Appearance: changed = DrawAppearance(settings); break;
 	case Tab::Minecraft: changed = DrawMinecraft(settings, context); break;
@@ -748,7 +922,7 @@ bool DrawSettingsPage(Settings& settings, const SettingsPageContext& context)
 	case Tab::Downloads: changed = DrawDownloads(settings, context); break;
 	case Tab::About: DrawAbout(context); break;
 	}
-	Widgets::SmoothScroll();
-	ImGui::EndChild();
+	EndCardFlow();
+	Widgets::EndScrollArea();
 	return changed;
 }

@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -43,6 +44,7 @@ struct InstallPlan {
 	std::vector<OverrideZip> overrides;
 	std::vector<std::string> notes; // things the install skipped, shown to the user and saved in pack.json
 	std::vector<std::string> clientOnlyFiles; // relPaths the source marks client-only; servers copy them turned off
+	std::set<std::string> skipFiles;          // relPaths the player removed; not downloaded again
 	int maxConcurrent = 4;
 };
 
@@ -56,6 +58,7 @@ struct InstallProgress {
 //   installDir/minecraft/  the game folder (mods/, config/, ...)
 //   installDir/pack.json   source, version, Minecraft version, loader, blocked files, notes,
 //                          client-only files
+// Files in skipFiles, or with a "<name>.disabled" copy (turned off by the player), are left alone.
 // Files already on disk with a matching hash (or size, when there's no hash) are kept,
 // so retrying a failed install only downloads what's missing. Blocked files are listed
 // in blocked and in pack.json and don't fail the install. Any other failure stops it.

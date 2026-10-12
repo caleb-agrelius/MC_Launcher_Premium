@@ -1,0 +1,2 @@
+// The executable's icon. GLFW also uses a resource named GLFW_ICON for its windows.
+GLFW_ICON ICON "logo.ico"

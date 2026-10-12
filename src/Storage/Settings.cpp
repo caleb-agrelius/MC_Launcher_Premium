@@ -68,6 +68,11 @@ Settings LoadSettings(const std::string& path)
 		settings.searchLimit = std::clamp(j.value("searchLimit", settings.searchLimit), kMinSearchLimit, kMaxSearchLimit);
 		settings.microsoftClientId = j.value("microsoftClientId", settings.microsoftClientId);
 		settings.curseForgeApiKey = j.value("curseForgeApiKey", settings.curseForgeApiKey);
+		const json paneWidths = j.value("paneWidths", json::object()); // items() must not outlive it
+		for (const auto& [pane, width] : paneWidths.items()) {
+			if (width.is_number())
+				settings.paneWidths[pane] = std::clamp(width.get<float>(), kMinPaneWidth, kMaxPaneWidth);
+		}
 
 		LaunchSettings& l = settings.launch;
 		// Before the Settings page, memory was a top-level key.
@@ -130,6 +135,10 @@ bool SaveSettings(const std::string& path, const Settings& settings)
 	j["searchLimit"] = settings.searchLimit;
 	j["microsoftClientId"] = settings.microsoftClientId;
 	j["curseForgeApiKey"] = settings.curseForgeApiKey;
+	json paneWidths = json::object();
+	for (const auto& [pane, width] : settings.paneWidths)
+		paneWidths[pane] = std::round(width);
+	j["paneWidths"] = paneWidths;
 	j["launch"] = LaunchToJson(settings.launch);
 	json packLaunch = json::object();
 	for (const auto& [packId, launch] : settings.packLaunch) {

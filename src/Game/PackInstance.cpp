@@ -10,6 +10,8 @@
 #include <iterator>
 #include <set>
 
+#include "Util/Paths.h"
+#include "Util/Text.h"
 #include "Util/Sha1.h"
 
 namespace fs = std::filesystem;
@@ -34,8 +36,7 @@ bool IsWholePackInstall(const fs::path& installDir)
 
 bool ParseLoaderName(const std::string& name, LoaderKind& out)
 {
-	std::string lower = name;
-	std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+	const std::string lower = ToLower(name);
 	if (lower.empty() || lower == "vanilla" || lower == "none")
 		out = LoaderKind::Vanilla;
 	else if (lower == "forge")
@@ -253,13 +254,14 @@ bool ReadMrpackIndex(const fs::path& extractedDir, MrpackIndex& out, std::string
 	return true;
 }
 
-// Copies a folder's contents into target, replacing files that exist.
+// Copies a folder's contents into target, replacing files that exist. Pack configs nest
+// deeply, so both sides use long paths.
 static bool CopyTree(const fs::path& source, const fs::path& target, std::string* err)
 {
 	std::error_code ec;
-	if (!fs::is_directory(source, ec))
+	if (!fs::is_directory(LongPath(source), ec))
 		return true;
-	fs::copy(source, target, fs::copy_options::recursive | fs::copy_options::overwrite_existing, ec);
+	fs::copy(ExtendedPath(source), ExtendedPath(target), fs::copy_options::recursive | fs::copy_options::overwrite_existing, ec);
 	if (ec) {
 		if (err) *err = "Couldn't copy " + source.filename().string() + ": " + ec.message();
 		return false;
@@ -273,9 +275,16 @@ bool PrepareInstance(HttpClient& http, const fs::path& extractedDir, const fs::p
 	std::error_code ec;
 	fs::create_directories(instanceDir, ec);
 
-	std::vector<DownloadJob> jobs = index.files;
-	for (DownloadJob& job : jobs)
-		job.path = instanceDir / job.path;
+	// A file the player turned off (a "<name>.disabled" copy) isn't downloaded again.
+	std::vector<DownloadJob> jobs;
+	for (const DownloadJob& file : index.files) {
+		fs::path disabled = instanceDir / file.path;
+		disabled += ".disabled";
+		if (fs::exists(LongPath(disabled), ec))
+			continue;
+		jobs.push_back(file);
+		jobs.back().path = instanceDir / file.path;
+	}
 	if (!DownloadAll(http, jobs, "Downloading mods", progress, err, cancel))
 		return false;
 
@@ -303,7 +312,7 @@ bool PrepareInstance(HttpClient& http, const fs::path& extractedDir, const fs::p
 	for (const std::string& old : previousFiles) {
 		const fs::path relative = fs::u8path(old);
 		if (currentFiles.count(old) == 0 && IsSafeRelativePath(relative))
-			fs::remove(instanceDir / relative, ec);
+			fs::remove(LongPath(instanceDir / relative), ec);
 	}
 
 	if (progress)

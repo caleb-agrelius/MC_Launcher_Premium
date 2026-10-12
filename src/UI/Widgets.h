@@ -18,8 +18,8 @@ namespace Widgets {
 // The height is measured each frame and remembered (per id, in the parent window), so
 // cards don't collapse and re-grow when a page is shown again. Cards never take the
 // mouse wheel: scrolling over one scrolls the page around it.
-// padding < 0 uses the style's window padding.
-void BeginCard(const char* id, ImVec2 padding = ImVec2(-1.0f, -1.0f));
+// padding < 0 uses the style's window padding. width <= 0 fills the available width.
+void BeginCard(const char* id, ImVec2 padding = ImVec2(-1.0f, -1.0f), float width = 0.0f);
 void EndCard();
 
 // When true, images appear without fading in.
@@ -34,9 +34,20 @@ void EndEntrance();
 
 // Mouse-wheel scrolling that eases toward its target instead of jumping. Call just
 // before EndChild() of a child created with ImGuiWindowFlags_NoScrollWithMouse. The
-// innermost scrollable window under the mouse takes the wheel. Scrollbar drags and
-// keyboard navigation keep working.
+// innermost scrollable window under the mouse takes the wheel, wherever the mouse is
+// inside it (over cards, text or empty space); a popup under the mouse (a combo's list)
+// keeps the wheel for itself. Scrollbar drags and keyboard navigation keep working.
 void SmoothScroll();
+// A child window that scrolls with SmoothScroll. Always pair with EndScrollArea(), whatever
+// BeginScrollArea returns (like BeginChild/EndChild).
+bool BeginScrollArea(const char* id, ImVec2 size = ImVec2(0.0f, 0.0f), ImGuiChildFlags childFlags = 0,
+	ImGuiWindowFlags windowFlags = 0);
+void EndScrollArea();
+
+// A draggable divider between two side-by-side panes; put it between them with
+// SameLine(0, 0) on both sides. Dragging changes *width (the left pane's width, in
+// unscaled pixels), kept within [minWidth, maxWidth]. Returns true while it changes.
+bool PaneSplitter(const char* id, float* width, float minWidth, float maxWidth);
 
 // Text in a given font, size (unscaled, see Theme::kFont*) and color.
 void Text(ImFont* font, float size, const ImVec4& color, const char* text);
@@ -48,14 +59,46 @@ void SectionLabel(const char* text);
 void Spinner(const ImVec4& color);
 // A rounded "pill" tag, laid out like a normal item (use SameLine() between chips).
 void Chip(const char* text, const ImVec4& tint);
+// The amber "Modified" chip for a pack version the player changed, with what changed
+// (e.g. "2 added, 1 turned off") in its tooltip. Used wherever an installed version shows.
+void ModifiedChip(const std::string& changes);
+// The color of ModifiedChip, for text that says a pack is modified.
+ImVec4 ModifiedColor();
 // On/off switch in the theme's colors. Returns true when toggled.
 bool Toggle(const char* id, bool* value);
+// A row of pill-shaped tabs; the selected one is filled. Sets *current and returns true
+// when another tab is clicked.
+bool TabStrip(const char* id, const char* const* labels, int count, int* current);
 // Thin accent progress bar spanning the available width.
 void ThinProgressBar(float fraction);
 
-// A text row for lists and combo popups, with a rounded hover/selection highlight.
-// Returns true when clicked.
-bool ListItem(const char* label, bool selected);
+// A text row for lists and dropdowns, with a rounded hover/selection highlight. Returns
+// true when clicked; in a popup the click also closes it unless closePopup is false.
+// hint (optional) is dimmed text on the right, e.g. "Minecraft 1.20.1" or a shortcut.
+// In a popup the row asks for room for both, so the popup widens to fit them.
+bool ListItem(const char* label, bool selected, bool closePopup = true, const char* hint = nullptr);
+// A popup menu entry (context menus, the account menu): a ListItem with an optional
+// shortcut hint on the right, dimmed and unclickable when disabled.
+bool MenuItem(const char* label, const char* shortcut = nullptr, bool enabled = true);
+
+// A dropdown in the theme's soft style: one rounded frame with the choice (shortened with
+// "..." if needed) and a chevron, instead of ImGui's square arrow box. Fill it with
+// ListItem rows and call EndSelect() only when it returns true. Width is the next item width.
+bool BeginSelect(const char* id, const char* preview, ImGuiComboFlags flags = 0);
+void EndSelect();
+// A whole dropdown over fixed labels. Returns true when *current changed.
+bool Select(const char* id, int* current, const char* const* labels, int count);
+
+// An on/off switch with a label after it, like a checkbox ("Label##id" hides nothing
+// after ##). Returns true when toggled.
+bool ToggleRow(const char* label, bool* value);
+
+// Buttons for a page's main action (filled with the accent, e.g. PLAY) and for destructive
+// or force actions (red-tinted, e.g. Stop game, Uninstall).
+bool PrimaryButton(const char* label, ImVec2 size = ImVec2(0.0f, 0.0f));
+bool DangerButton(const char* label, ImVec2 size = ImVec2(0.0f, 0.0f));
+// The width ImGui::Button gives a label with the current font, for right-aligning rows.
+float ButtonWidth(const char* label);
 // Sidebar navigation entry with an accent bar when selected, and an optional count
 // badge (shown when badge > 0). Returns true when clicked.
 bool NavItem(const char* label, bool selected, int badge = 0);
@@ -88,6 +131,12 @@ void HeroBanner(const Modpack& pack, ImageCache& images, float height, bool show
 // Centered placeholder for empty pages: a block illustration, a title, a hint, and an
 // optional button. Returns true when the button is clicked.
 bool EmptyState(const char* title, const char* body, const char* buttonLabel = nullptr);
+
+// The launcher logo (the pixel grass block from Logo.h), size x size at the cursor.
+void LogoBlock(float size);
+// Blocky pixel-font text in the Minecraft title style: each font pixel is pixel x pixel,
+// in the face color with a darker extruded edge below and to the right.
+void Wordmark(const char* text, float pixel, const ImVec4& face, const ImVec4& depth);
 
 // Clickable theme swatch: a miniature launcher in the theme's colors plus its name.
 // Returns true when clicked.

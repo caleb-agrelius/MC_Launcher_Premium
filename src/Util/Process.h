@@ -52,6 +52,8 @@ public:
 	// The most recent output lines (up to kMaxLines) and a counter that grows with every
 	// new line, so the UI can tell when to scroll.
 	std::vector<std::string> Lines(std::uint64_t* total = nullptr) const;
+	// Lines received so far, including dropped ones; cheap, for noticing new output.
+	std::uint64_t TotalLines() const;
 
 	static constexpr std::size_t kMaxLines = 2000;
 
@@ -63,6 +65,7 @@ private:
 	void* m_output = nullptr;    // HANDLE, read end of the program's stdout/stderr
 	std::filesystem::path m_logFile;
 	std::thread m_reader;
+	std::atomic<bool> m_readerDone{ false };
 	mutable std::mutex m_mutex;
 	std::deque<std::string> m_lines;
 	std::uint64_t m_totalLines = 0;

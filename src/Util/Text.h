@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 
 // Turns a pack description written in Markdown (Modrinth, FTB) or HTML (CurseForge,
@@ -14,3 +15,12 @@ std::string MarkupToPlainText(const std::string& text);
 // The first maxLength bytes of text, cut at a word boundary and ending in "...", or text
 // itself when it's short enough. Newlines become spaces.
 std::string ShortenText(const std::string& text, std::size_t maxLength);
+
+// Formats large counts compactly: 950, 12.3K, 18.4M.
+std::string FormatCount(std::uint64_t count);
+
+// The text in lowercase (ASCII letters only, so UTF-8 stays intact).
+std::string ToLower(std::string text);
+
+// A byte count as "512 B", "1.4 KB", "23.0 MB" or "1.2 GB".
+std::string FormatFileSize(std::uint64_t bytes);

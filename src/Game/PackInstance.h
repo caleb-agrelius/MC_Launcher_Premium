@@ -61,7 +61,8 @@ bool RepairInstance(HttpClient& http,
 					const std::atomic<bool>* cancel);
 
 // Fills instanceDir (the game directory) with the pack's mods and overrides.
-// Files listed in the index are downloaded if missing. overrides/ and
+// Files listed in the index are downloaded if missing, unless a "<name>.disabled" copy
+// (the player turned it off) is there. overrides/ and
 // client-overrides/ are copied only the first time each pack version is
 // prepared, so later changes the player makes (options, configs) are kept.
 bool PrepareInstance(HttpClient& http,

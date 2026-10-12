@@ -1,14 +1,17 @@
 #include "ServerSetup.h"
 
+#include "Game/JavaFinder.h"
 #include "Game/Loaders.h"
 #include "Game/PackInstance.h"
 #include "Network/HttpClient.h"
 #include "Util/Paths.h"
+#include "Util/Text.h"
 #include "Util/Process.h"
 #include "Util/Sha1.h"
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <cstring>
@@ -327,6 +330,8 @@ bool SetupServer(HttpClient& http, const ServerSetupRequest& request, ServerInfo
 	}
 	std::vector<DownloadJob> jobs;
 	for (DownloadJob job : index.files) {
+		if (request.removedFiles.count(job.path.generic_u8string()) > 0)
+			continue; // the player removed it from the pack
 		job.path = dir / job.path;
 		// A file renamed to "<name>.disabled" was turned off by the player (e.g. a mod that
 		// breaks the server); don't download it again.
@@ -351,6 +356,32 @@ bool SetupServer(HttpClient& http, const ServerSetupRequest& request, ServerInfo
 	}
 	if (wholePack && !CopyWholePackFiles(request, installed, prepared != current, out.notes, progress, err, cancel))
 		return false;
+	// Mods the player added to the pack. Whole-pack servers usually have them already (copied
+	// with the game folder above).
+	std::vector<std::string> addedNames;
+	for (const fs::path& mod : request.addedMods) {
+		const fs::path target = dir / "mods" / mod.filename();
+		fs::path disabled = target;
+		disabled += ".disabled";
+		if (!fs::is_regular_file(mod, ec) || fs::exists(target, ec) || fs::exists(disabled, ec))
+			continue;
+		fs::create_directories(target.parent_path(), ec);
+		fs::copy_file(mod, target, ec);
+		if (ec) {
+			if (err) *err = "Couldn't copy " + mod.filename().u8string() + " to the server: " + ec.message();
+			return false;
+		}
+		addedNames.push_back(mod.filename().u8string());
+	}
+	if (!addedNames.empty()) {
+		std::string note = "Copied " + std::to_string(addedNames.size()) + " mod(s) you added to the pack: ";
+		for (std::size_t i = 0; i < addedNames.size() && i < 5; ++i)
+			note += (i ? ", " : "") + addedNames[i];
+		if (addedNames.size() > 5)
+			note += ", ...";
+		note += ". Turn off any that only work on the client.";
+		out.notes.push_back(note);
+	}
 	std::set<std::string> currentFiles;
 	for (const DownloadJob& job : index.files)
 		currentFiles.insert(job.path.generic_string());
@@ -396,9 +427,12 @@ bool SetupServer(HttpClient& http, const ServerSetupRequest& request, ServerInfo
 		if (java.filename() == "javaw.exe" && fs::is_regular_file(java.parent_path() / "java.exe", ec))
 			java = java.parent_path() / "java.exe";
 		if (!fs::is_regular_file(java, ec)) {
-			if (err) *err = "The Java set in Settings > Minecraft wasn't found: " + request.javaPath;
+			if (err) *err = "The Java chosen in Settings > Minecraft wasn't found: " + request.javaPath;
 			return false;
 		}
+	} else if (const std::vector<JavaInstall> installs = FindJavaInstalls(request.gameRoot);
+			const JavaInstall* installed = PickJava(installs, vanilla.javaMajor)) {
+		java = installed->java; // automatic: an installed Java with the major version Minecraft needs
 	} else if (!InstallJavaRuntime(http, request.gameRoot, vanilla.javaComponent, false, java, progress, err, cancel)) {
 		return false;
 	}
@@ -584,62 +618,12 @@ static std::string Lowercase(std::string text)
 
 std::vector<ServerMod> ListServerMods(const fs::path& serverDir)
 {
-	std::map<std::string, ServerMod> mods; // by lowercase name, so the list is sorted ignoring case
-	std::error_code ec;
-	for (const auto& entry : fs::directory_iterator(serverDir / "mods", ec)) {
-		if (!entry.is_regular_file(ec))
-			continue;
-		std::string name = entry.path().filename().string();
-		bool enabled = true;
-		if (EndsWith(Lowercase(name), ".disabled")) {
-			name.erase(name.size() - std::strlen(".disabled"));
-			enabled = false;
-		}
-		if (!EndsWith(Lowercase(name), ".jar"))
-			continue;
-		ServerMod& mod = mods[Lowercase(name)];
-		// A mod with both copies counts as enabled: the .jar is what the server loads.
-		if (mod.fileName.empty() || enabled) {
-			mod.fileName = name;
-			mod.enabled = enabled;
-			mod.size = entry.file_size(ec);
-		}
-	}
-	std::vector<ServerMod> out;
-	for (auto& [key, mod] : mods)
-		out.push_back(std::move(mod));
-	return out;
+	return ListContent(serverDir, ContentKind::Mods);
 }
 
 bool SetServerModEnabled(const fs::path& serverDir, const std::string& fileName, bool enabled, std::string* err)
 {
-	if (fileName.empty() || fileName == "." || fileName == ".." || fileName.find_first_of("/\\:") != std::string::npos) {
-		if (err) *err = "Not a mod file name: " + fileName;
-		return false;
-	}
-	const fs::path jar = serverDir / "mods" / fileName;
-	fs::path disabled = jar;
-	disabled += ".disabled";
-	const fs::path& from = enabled ? disabled : jar;
-	const fs::path& to = enabled ? jar : disabled;
-	std::error_code ec;
-	if (!fs::exists(from, ec)) {
-		if (fs::exists(to, ec))
-			return true; // already in that state
-		if (err) *err = fileName + " isn't in the server's mods folder";
-		return false;
-	}
-	// Both copies (e.g. the pack re-added a disabled mod): keep the one being switched to.
-	if (fs::exists(to, ec)) {
-		fs::remove(from, ec);
-	} else {
-		fs::rename(from, to, ec);
-	}
-	if (ec) {
-		if (err) *err = "Couldn't rename " + fileName + ": " + ec.message() + ". Stop the server first.";
-		return false;
-	}
-	return true;
+	return SetContentEnabled(serverDir / "mods", fileName, enabled, err);
 }
 
 bool HasServerFiles(const fs::path& serverDir)
@@ -674,12 +658,22 @@ static std::map<std::string, std::string> ReadPropertiesFile(const fs::path& pat
 	return values;
 }
 
+static bool IsLocalhost(const std::string& address)
+{
+	return ToLower(address) == "localhost";
+}
+
 bool IsValidServerIp(const std::string& address)
 {
-	if (address.empty())
+	if (address.empty() || IsLocalhost(address))
 		return true;
 	return std::regex_match(address, std::regex(
 		R"(((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d))"));
+}
+
+bool IsLoopbackServerIp(const std::string& address)
+{
+	return IsLocalhost(address) || (IsValidServerIp(address) && address.rfind("127.", 0) == 0);
 }
 
 ServerProperties ReadServerProperties(const fs::path& serverDir)
@@ -867,6 +861,31 @@ bool EulaAccepted(const fs::path& serverDir)
 	const auto values = ReadPropertiesFile(serverDir / "eula.txt");
 	const auto eula = values.find("eula");
 	return eula != values.end() && eula->second == "true";
+}
+
+bool ServerUsesDocker(const fs::path& serverDir)
+{
+	std::error_code ec;
+	return fs::is_regular_file(serverDir / ".mclp-docker", ec);
+}
+
+bool SetServerUsesDocker(const fs::path& serverDir, bool docker, std::string* err)
+{
+	std::error_code ec;
+	const fs::path marker = serverDir / ".mclp-docker";
+	if (!docker) {
+		fs::remove(marker, ec);
+		if (ec && err) *err = "Couldn't remove " + marker.string() + ": " + ec.message();
+		return !ec;
+	}
+	fs::create_directories(serverDir, ec);
+	std::ofstream out(marker, std::ios::trunc);
+	out << "This server runs in Docker (docker-minecraft-server). Delete this file to run it with Java again.\n";
+	if (!out.good()) {
+		if (err) *err = "Couldn't write " + marker.string();
+		return false;
+	}
+	return true;
 }
 
 bool AcceptEula(const fs::path& serverDir, std::string* err)

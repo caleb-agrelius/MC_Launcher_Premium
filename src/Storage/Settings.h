@@ -71,6 +71,9 @@ struct Settings {
 	GameOptionsSettings gameOptions;
 	std::vector<CustomTheme> customThemes;
 	WindowPlacement window;
+	// Widths of resizable list panes (e.g. "discover", "servers"), in unscaled pixels.
+	// Missing entries use each page's default.
+	std::map<std::string, float> paneWidths;
 };
 
 static constexpr float kMinUiScale = 0.75f;
@@ -80,6 +83,8 @@ static constexpr int kMaxSearchLimit = 100; // Modrinth's maximum
 static constexpr int kMinMemoryMb = 1024;   // smallest -Xmx
 static constexpr int kMaxMemoryMb = 32768;
 static constexpr int kMinWindowSide = 320;
+static constexpr float kMinPaneWidth = 160.0f;
+static constexpr float kMaxPaneWidth = 1600.0f;
 static constexpr std::size_t kCustomThemeFloats = 11 * 3; // 11 palette colors, RGB
 
 // The launch options for a pack: its own from packLaunch if it has them, else the

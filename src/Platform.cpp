@@ -10,6 +10,7 @@
 #include <windows.h>
 #include <iphlpapi.h>
 #include <shellapi.h>
+#include <shobjidl.h>
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "iphlpapi.lib")
 #else
@@ -46,6 +47,50 @@ bool OpenFile(const std::string& path)
 	const std::string command = "xdg-open \"" + absolute.string() + "\" &";
 	return std::system(command.c_str()) == 0;
 #endif
+}
+
+std::vector<std::string> PickFiles(const std::string& title, const std::string& filterName, const std::string& patterns)
+{
+	std::vector<std::string> picked;
+#ifdef _WIN32
+	const HRESULT init = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+	IFileOpenDialog* dialog = nullptr;
+	if (SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog)))) {
+		const std::wstring wideTitle = std::filesystem::u8path(title).wstring();
+		const std::wstring wideName = std::filesystem::u8path(filterName).wstring();
+		const std::wstring widePatterns = std::filesystem::u8path(patterns).wstring();
+		const COMDLG_FILTERSPEC filters[] = { { wideName.c_str(), widePatterns.c_str() }, { L"All files", L"*.*" } };
+		dialog->SetFileTypes(2, filters);
+		dialog->SetTitle(wideTitle.c_str());
+		FILEOPENDIALOGOPTIONS options = 0;
+		dialog->GetOptions(&options);
+		dialog->SetOptions(options | FOS_ALLOWMULTISELECT | FOS_FILEMUSTEXIST | FOS_FORCEFILESYSTEM);
+		IShellItemArray* items = nullptr;
+		if (SUCCEEDED(dialog->Show(GetActiveWindow())) && SUCCEEDED(dialog->GetResults(&items))) {
+			DWORD count = 0;
+			items->GetCount(&count);
+			for (DWORD i = 0; i < count; ++i) {
+				IShellItem* item = nullptr;
+				PWSTR path = nullptr;
+				if (SUCCEEDED(items->GetItemAt(i, &item)) && SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path))) {
+					picked.push_back(std::filesystem::path(path).u8string());
+					CoTaskMemFree(path);
+				}
+				if (item)
+					item->Release();
+			}
+			items->Release();
+		}
+		dialog->Release();
+	}
+	if (SUCCEEDED(init))
+		CoUninitialize();
+#else
+	(void)title;
+	(void)filterName;
+	(void)patterns;
+#endif
+	return picked;
 }
 
 std::uint64_t SystemMemoryMb()
