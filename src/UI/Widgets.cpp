@@ -28,6 +28,18 @@ void SetReduceMotion(bool reduce)
 	g_reduceMotion = reduce;
 }
 
+static float g_animationSpeed = 1.0f;
+
+void SetAnimationSpeed(float speed)
+{
+	g_animationSpeed = std::clamp(speed, 0.05f, 10.0f);
+}
+
+float AnimationSpeed()
+{
+	return g_animationSpeed;
+}
+
 static constexpr double kEntranceSeconds = 0.32;
 static constexpr double kEntranceStagger = 0.045; // per list item
 static constexpr int kEntranceMaxStagger = 10;    // later items don't wait any longer
@@ -37,8 +49,9 @@ void BeginEntrance(double start, int index)
 {
 	float progress = 1.0f;
 	if (!g_reduceMotion) {
-		const double delay = kEntranceStagger * std::min(index, kEntranceMaxStagger);
-		const double t = std::clamp((ImGui::GetTime() - start - delay) / kEntranceSeconds, 0.0, 1.0);
+		const double speed = g_animationSpeed;
+		const double delay = kEntranceStagger * std::min(index, kEntranceMaxStagger) / speed;
+		const double t = std::clamp((ImGui::GetTime() - start - delay) * speed / kEntranceSeconds, 0.0, 1.0);
 		progress = 1.0f - static_cast<float>(std::pow(1.0 - t, 3.0)); // ease-out cubic
 	}
 	const float offset = (1.0f - progress) * S(14.0f);
@@ -120,7 +133,7 @@ void SmoothScroll()
 
 	float next = *target;
 	if (!g_reduceMotion) {
-		const float follow = 1.0f - std::exp(-io.DeltaTime * 14.0f); // ~70 ms time constant
+		const float follow = 1.0f - std::exp(-io.DeltaTime * 14.0f * g_animationSpeed); // ~70 ms time constant at normal speed
 		next = scroll + (*target - scroll) * follow;
 		if (std::fabs(*target - next) < 0.5f)
 			next = *target;
@@ -504,18 +517,59 @@ void SectionLabel(const char* text)
 	Text(Theme::GetFonts().bold, Theme::kFontSmall, Theme::C().textDim, text);
 }
 
+static void DrawSpinnerAt(ImDrawList* drawList, ImVec2 pos, float size, const ImVec4& color)
+{
+	const float thickness = std::max(1.5f, size * 0.14f);
+	const float radius = size * 0.5f - thickness;
+	const ImVec2 center(pos.x + size * 0.5f, pos.y + size * 0.5f);
+	const float start = static_cast<float>(ImGui::GetTime()) * 6.0f * g_animationSpeed;
+	drawList->PathArcTo(center, radius, start, start + 3.14159265f * 1.4f, 24);
+	drawList->PathStroke(ImGui::GetColorU32(color), 0, thickness);
+}
+
 void Spinner(const ImVec4& color)
 {
 	const float size = ImGui::GetTextLineHeight();
 	const ImVec2 pos = ImGui::GetCursorScreenPos();
 	ImGui::Dummy(ImVec2(size, size));
-	const float thickness = std::max(1.5f, size * 0.14f);
-	const float radius = size * 0.5f - thickness;
-	const ImVec2 center(pos.x + size * 0.5f, pos.y + size * 0.5f);
-	const float start = static_cast<float>(ImGui::GetTime()) * 6.0f;
+	DrawSpinnerAt(ImGui::GetWindowDrawList(), pos, size, color);
+}
+
+void Skeleton(ImVec2 size, float rounding, float barHeight)
+{
+	const ImVec2 pos = ImGui::GetCursorScreenPos();
+	ImGui::Dummy(size);
+	float pulse = 0.5f;
+	if (!g_reduceMotion)
+		pulse = 0.5f + 0.5f * std::sin(static_cast<float>(ImGui::GetTime()) * 3.0f * g_animationSpeed);
+	const ImVec4 color = Theme::WithAlpha(Theme::Mix(Theme::C().cardBg, Theme::C().textDim, 0.35f), 0.35f + 0.35f * pulse);
+	const float bar = barHeight > 0.0f ? std::min(barHeight, size.y) : size.y;
+	const float top = pos.y + (size.y - bar) * 0.5f;
+	ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(pos.x, top), ImVec2(pos.x + size.x, top + bar), ImGui::GetColorU32(color), S(rounding));
+}
+
+void PadToHeight(float startCursorY, float minHeight)
+{
+	const float missing = startCursorY + minHeight - ImGui::GetCursorPosY();
+	const float spacing = ImGui::GetStyle().ItemSpacing.y;
+	if (missing > spacing)
+		ImGui::Dummy(ImVec2(0.0f, missing - spacing));
+}
+
+void LoadingField(const char* label, float width)
+{
+	const float fieldWidth = width > 0.0f ? width : ImGui::CalcItemWidth();
+	const float height = ImGui::GetFrameHeight();
+	const ImVec2 pos = ImGui::GetCursorScreenPos();
+	ImGui::Dummy(ImVec2(fieldWidth, height));
 	ImDrawList* drawList = ImGui::GetWindowDrawList();
-	drawList->PathArcTo(center, radius, start, start + 3.14159265f * 1.4f, 24);
-	drawList->PathStroke(ImGui::GetColorU32(color), 0, thickness);
+	drawList->AddRectFilled(pos, ImVec2(pos.x + fieldWidth, pos.y + height), ImGui::GetColorU32(ImGuiCol_FrameBg),
+		ImGui::GetStyle().FrameRounding);
+	const float spinner = ImGui::GetTextLineHeight();
+	const float padding = ImGui::GetStyle().FramePadding.x;
+	DrawSpinnerAt(drawList, ImVec2(pos.x + padding, pos.y + (height - spinner) * 0.5f), spinner, Theme::C().accent);
+	DrawClippedText(drawList, ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(pos.x + padding * 2.0f + spinner, pos.y + ImGui::GetStyle().FramePadding.y),
+		pos.x + fieldWidth - padding, ImGui::GetColorU32(Theme::C().textDim), label);
 }
 
 void Chip(const char* text, const ImVec4& tint)
@@ -633,7 +687,7 @@ float FadeAlpha(const LoadedImage& image)
 {
 	if (g_reduceMotion)
 		return 1.0f;
-	return std::clamp(static_cast<float>((ImGui::GetTime() - image.readyTime) / 0.25), 0.0f, 1.0f);
+	return std::clamp(static_cast<float>((ImGui::GetTime() - image.readyTime) * g_animationSpeed / 0.25), 0.0f, 1.0f);
 }
 
 void DrawPackIcon(ImDrawList* drawList, const LoadedImage* image, const Modpack& pack,

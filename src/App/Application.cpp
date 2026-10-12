@@ -30,7 +30,7 @@ int Application::Run()
 		return -1;
 	}
 	{
-		AppRoot root(m_dataRoot, m_log, *window, settings, theme);
+		AppRoot root(m_dataRoot, m_log, *window, settings, theme, m_offline);
 		while (!window->ShouldClose()) {
 			window->PollEvents();
 			root.Frame(window->TakeDroppedPaths());

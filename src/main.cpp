@@ -44,6 +44,8 @@ int main(int argc, char** argv)
 	const unsigned debugChannels = Debug::ConfigureFromEnvironment(argc, argv, debugWarnings);
 	for (const std::string& warning : debugWarnings)
 		std::cerr << warning << "\n";
+	// --offline or MCLP_OFFLINE=1: no network requests at all, for launches that don't need the APIs.
+	const bool offline = Debug::OfflineRequested(argc, argv);
 	// Run from the folder that holds resources/, so the index, app.log, downloads/ and installs/
 	// all resolve the same way however the app is launched.
 	const fs::path dataRoot = FindDataRoot();
@@ -59,11 +61,13 @@ int main(int argc, char** argv)
 		if (debugChannels)
 			Debug::Write(Debug::kLog, "Debug harness on: " + Debug::ChannelNames(debugChannels));
 		log << "Starting app\n";
+		if (offline)
+			log << "Offline mode: network requests are disabled\n";
 		if (dataRoot.empty())
 			log << "Could not find " << kIndexRelativePath.string() << " near the working directory or executable\n";
 		else
 			log << "Data folder: " << dataRoot.string() << "\n";
-		return Application(dataRoot, log).Run();
+		return Application(dataRoot, log, offline).Run();
 	}
 	catch (const std::exception& ex) {
 		log << "Unhandled exception: " << ex.what() << "\n";

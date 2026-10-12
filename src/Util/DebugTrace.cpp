@@ -142,6 +142,22 @@ unsigned ConfigureFromEnvironment(int argc, char** argv, std::vector<std::string
 	return mask;
 }
 
+bool OfflineRequested(int argc, char** argv)
+{
+	for (int i = 1; i < argc; ++i) {
+		if (std::string(argv[i]) == "--offline")
+			return true;
+	}
+#ifdef _MSC_VER
+#pragma warning(suppress : 4996)
+#endif
+	const char* env = std::getenv("MCLP_OFFLINE");
+	if (!env)
+		return false;
+	const std::string value = env;
+	return !(value.empty() || value == "0" || value == "false");
+}
+
 void Configure(unsigned mask, std::ostream* out)
 {
 	{

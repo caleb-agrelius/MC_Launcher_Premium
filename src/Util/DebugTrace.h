@@ -30,6 +30,11 @@ bool ParseChannels(const std::string& text, unsigned& mask, std::string* unknown
 // Problems with the list are described in warnings.
 unsigned ConfigureFromEnvironment(int argc, char** argv, std::vector<std::string>& warnings);
 
+// True when `--offline` is on the command line or MCLP_OFFLINE is set to anything but "", "0" or "false".
+// Offline mode makes every network request fail at once (Network/OfflineHttpClient.h), so a launch
+// that doesn't need the pack APIs or sign-in doesn't call them.
+bool OfflineRequested(int argc, char** argv);
+
 // Turns the channels in mask on and sends the trace to out (the console, std::cerr, if null).
 // Call before starting threads.
 void Configure(unsigned mask, std::ostream* out = nullptr);

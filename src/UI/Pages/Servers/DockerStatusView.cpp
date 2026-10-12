@@ -16,6 +16,7 @@ void DrawDockerStatus(const ServerTabContext& ctx, ServerService& servers)
 	if (!blocked.empty())
 		Widgets::WrappedText(Theme::C().error, blocked.c_str());
 	if (ctx.docker == DockerStatus::Checking || ctx.docker == DockerStatus::Unknown) {
+		ImGui::AlignTextToFramePadding(); // as tall as the "Check again" button that may replace it
 		Widgets::Spinner(Theme::C().accent);
 		ImGui::SameLine();
 		ImGui::TextDisabled("Looking for Docker...");

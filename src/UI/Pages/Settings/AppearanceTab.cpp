@@ -72,6 +72,24 @@ bool AppearanceTab::Draw(Settings& settings, const SettingsPageContext&, Setting
 		ui.Row("Reduce motion", "No page transitions, fade-ins, sliding notifications or smooth scrolling.");
 		changed |= Widgets::Toggle("##reduce_motion", &settings.reduceMotion);
 
+		ui.Row("Animation speed", "How fast transitions, fade-ins and scrolling ease play. Off while Reduce motion is on.");
+		int speedPercent = static_cast<int>(std::lround(settings.animationSpeed * 100.0f));
+		const float speedReset = ImGui::CalcTextSize("Reset").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+		ImGui::BeginDisabled(settings.reduceMotion);
+		ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - speedReset - ImGui::GetStyle().ItemSpacing.x);
+		if (ImGui::SliderInt("##animation_speed", &speedPercent, static_cast<int>(kMinAnimationSpeed * 100), static_cast<int>(kMaxAnimationSpeed * 100), "%d%%")) {
+			settings.animationSpeed = std::clamp(static_cast<float>((speedPercent + 2) / 5 * 5) / 100.0f, kMinAnimationSpeed, kMaxAnimationSpeed);
+			changed = true;
+		}
+		ImGui::SameLine();
+		ImGui::BeginDisabled(settings.animationSpeed == 1.0f);
+		if (ImGui::Button("Reset##animation_speed")) {
+			settings.animationSpeed = 1.0f;
+			changed = true;
+		}
+		ImGui::EndDisabled();
+		ImGui::EndDisabled();
+
 		ui.Row("Gallery banners", "Show screenshots behind the selected pack. Turn off to save bandwidth.");
 		changed |= Widgets::Toggle("##gallery", &settings.showGalleryBanners);
 	});

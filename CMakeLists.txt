@@ -130,6 +130,7 @@ add_executable(MC_Launcher_Premium
   src/Network/CurseForge.cpp
   src/Network/Ftb.cpp
   src/Network/HttpClient.cpp
+  src/Network/OfflineHttpClient.cpp
   src/Network/TracingHttpClient.cpp
   src/Network/MicrosoftAuth.cpp
   src/Network/Modrinth.cpp
@@ -216,6 +217,7 @@ if (BUILD_TESTING)
     src/Game/ServerSetup.cpp
     src/Model/Modpack.cpp
     src/Network/HttpClient.cpp
+    src/Network/OfflineHttpClient.cpp
     src/Network/TracingHttpClient.cpp
     src/Storage/Installer.cpp
     src/Storage/Library.cpp

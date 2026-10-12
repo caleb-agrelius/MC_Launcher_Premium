@@ -31,7 +31,8 @@ void PackInstallSection::DrawPlanInstallCard(SourceView& view, Modpack& pack, bo
 	const std::string key = "pack:" + pack.id + "@" + VersionKey(pack);
 	DownloadState state;
 	const bool hasState = m_downloads.Find(key, state);
-	const bool loadingFiles = m_details.FilesLoading(pack.id);
+	// Also while the fetch is about to start, so the card never shows up empty first.
+	const bool loadingFiles = m_details.FilesLoading(pack.id) || (!pack.filesLoaded && !m_details.FilesError(pack.id));
 	const std::string* filesError = m_details.FilesError(pack.id);
 	const Modpack* libraryEntry = m_library.Find(pack.id);
 	const InstalledVersion* installedHere = libraryEntry ? FindInstalledVersion(*libraryEntry, VersionKey(pack)) : nullptr;
@@ -42,9 +43,13 @@ void PackInstallSection::DrawPlanInstallCard(SourceView& view, Modpack& pack, bo
 	BeginCard("install_card");
 	ImGui::AlignTextToFramePadding();
 	if (loadingFiles) {
-		Widgets::Spinner(Theme::C().accent);
+		// The same row as the loaded card: version picker, its details and the Install button.
+		const float rowHeight = ImGui::GetFrameHeight();
+		Widgets::LoadingField("Loading versions...", S(200.0f));
 		ImGui::SameLine();
-		ImGui::TextDisabled("Loading latest version...");
+		Widgets::Skeleton(ImVec2(S(150.0f), rowHeight), 4.0f, S(12.0f));
+		AlignRightForButton("Install pack");
+		Widgets::Skeleton(ImVec2(Widgets::ButtonWidth("Install pack"), rowHeight));
 	} else if (filesError) {
 		ImGui::TextColored(Theme::C().error, "Couldn't load versions: %s", filesError->c_str());
 		AlignRightForButton("Retry");
@@ -120,6 +125,26 @@ void PackInstallSection::DrawPlanInstallCard(SourceView& view, Modpack& pack, bo
 	EndCard();
 }
 
+void PackInstallSection::DrawVersionRowPlaceholder(float comboWidth)
+{
+	ImGui::AlignTextToFramePadding();
+	ImGui::TextDisabled("Version");
+	ImGui::SameLine();
+	Widgets::LoadingField("Loading...", S(comboWidth));
+	ImGui::SameLine();
+	Widgets::Skeleton(ImVec2(S(130.0f), ImGui::GetFrameHeight()), 4.0f, S(12.0f));
+}
+
+void PackInstallSection::DrawFileRowPlaceholder()
+{
+	const float rowHeight = ImGui::GetFrameHeight();
+	Widgets::Skeleton(ImVec2(S(210.0f), rowHeight), 4.0f, S(14.0f));
+	ImGui::SameLine();
+	Widgets::Skeleton(ImVec2(S(50.0f), rowHeight), 4.0f, S(12.0f));
+	AlignRightForButton("Install");
+	Widgets::Skeleton(ImVec2(Widgets::ButtonWidth("Install"), rowHeight));
+}
+
 void PackInstallSection::DrawVersionRow(Modpack& pack, float comboWidth)
 {
 	// Which version's .mrpack to download; the newest release is chosen at first.
@@ -141,7 +166,7 @@ void PackInstallSection::DrawVersionRow(Modpack& pack, float comboWidth)
 void PackInstallSection::DrawFileCards(SourceView& view, Modpack& pack, bool compact)
 {
 	const bool online = pack.source != PackSource::LocalIndex;
-	const bool loadingFiles = m_details.FilesLoading(pack.id);
+	const bool loadingFiles = m_details.FilesLoading(pack.id) || (online && !pack.filesLoaded && !m_details.FilesError(pack.id));
 	const std::string* filesError = m_details.FilesError(pack.id);
 	// Compact with a single file: the version picker moves into that file's card.
 	const bool merged = compact && online && pack.filesLoaded && pack.files.size() == 1;
@@ -150,11 +175,18 @@ void PackInstallSection::DrawFileCards(SourceView& view, Modpack& pack, bool com
 		std::snprintf(filesLabel, sizeof(filesLabel), "PACK FILES  (%llu)", static_cast<unsigned long long>(pack.files.size()));
 		Widgets::SectionLabel(filesLabel);
 	}
-	if (loadingFiles) {
-		Widgets::Spinner(Theme::C().accent);
-		ImGui::SameLine();
-		ImGui::TextDisabled("Loading latest version...");
-	} else if (filesError) {
+	if (loadingFiles && online) {
+		// What the loaded section will hold: one file, with its version picker (in the card when compact).
+		if (!compact)
+			DrawVersionRowPlaceholder(220.0f);
+		BeginCard("file_card");
+		if (compact)
+			DrawVersionRowPlaceholder(150.0f);
+		DrawFileRowPlaceholder();
+		EndCard();
+		return;
+	}
+	if (filesError) {
 		ImGui::TextColored(Theme::C().error, "Couldn't load versions: %s", filesError->c_str());
 		if (ImGui::Button("Retry"))
 			m_details.FetchFiles(view, pack);

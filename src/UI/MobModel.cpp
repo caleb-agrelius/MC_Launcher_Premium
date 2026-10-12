@@ -1,6 +1,7 @@
 #include "MobModel.h"
 
 #include "Theme.h"
+#include "Widgets.h"
 
 #include <glad/glad.h>
 #include <nlohmann/json.hpp>
@@ -825,20 +826,21 @@ bool MobModel::Render(std::string* error)
 	if (!m_loaded || !m_framebuffer)
 		return false;
 	const float delta = std::clamp(ImGui::GetIO().DeltaTime, 0.0f, 0.1f);
-	const float easing = m_reduceMotion ? 1.0f : 1.0f - std::exp(-delta * 12.0f);
+	const float speed = Widgets::AnimationSpeed();
+	const float easing = m_reduceMotion ? 1.0f : 1.0f - std::exp(-delta * 12.0f * speed);
 	m_headYaw += (m_targetHeadYaw - m_headYaw) * easing;
 	m_headPitch += (m_targetHeadPitch - m_headPitch) * easing;
 	m_bodyYaw += (m_targetBodyYaw - m_bodyYaw) * easing;
 	m_bodyPitch += (m_targetBodyPitch - m_bodyPitch) * easing;
 	if (m_hopTime >= 0.0f) {
-		m_hopTime += delta;
+		m_hopTime += delta * speed;
 		if (m_hopTime >= 0.48f)
 			m_hopTime = -1.0f;
 	}
 	float hop = m_hopTime < 0.0f ? 0.0f
 		: std::sin(m_hopTime / 0.48f * kPi) * 0.3f;
 	if (!m_reduceMotion && m_idleBob > 0.0f)
-		hop += std::sin(static_cast<float>(ImGui::GetTime()) * 3.0f) * m_idleBob / std::max(m_scale, 0.0001f);
+		hop += std::sin(static_cast<float>(ImGui::GetTime()) * 3.0f * speed) * m_idleBob / std::max(m_scale, 0.0001f);
 
 	GLint previousFramebuffer = 0, previousProgram = 0, previousVertexArray = 0;
 	GLint previousArrayBuffer = 0, previousRenderbuffer = 0, previousActiveTexture = 0;

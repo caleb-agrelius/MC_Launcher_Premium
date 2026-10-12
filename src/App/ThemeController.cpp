@@ -24,6 +24,7 @@ void ThemeController::Initialize()
 	Theme::LoadFonts();
 	ApplyAll(true);
 	Widgets::SetReduceMotion(settings.reduceMotion);
+	Widgets::SetAnimationSpeed(settings.animationSpeed);
 }
 
 void ThemeController::Update()
@@ -41,4 +42,5 @@ void ThemeController::Update()
 		ApplyAll(themeChanged);
 	}
 	Widgets::SetReduceMotion(settings.reduceMotion);
+	Widgets::SetAnimationSpeed(settings.animationSpeed);
 }

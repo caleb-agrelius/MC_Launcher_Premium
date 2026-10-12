@@ -59,7 +59,14 @@ void ChangelogTab::Draw(const ManagePageContext& context, ManageFrame&)
 	Widgets::Text(Theme::GetFonts().bold, Theme::kFontHeading, Theme::C().text, ("What's new in " + pack.version).c_str());
 	ImGui::Spacing();
 	if (m_changelogsLoading.count(key)) {
+		// A card with placeholder lines, so the link below it doesn't jump when the text arrives.
+		Widgets::BeginCard("changelog_loading");
 		UiHelpers::BusyLabel("Loading the changelog...");
+		ImGui::Spacing();
+		const float width = ImGui::GetContentRegionAvail().x;
+		for (int line = 0; line < 6; ++line)
+			Widgets::Skeleton(ImVec2(line % 3 == 2 ? width * 0.55f : width, ImGui::GetTextLineHeightWithSpacing()), 4.0f, Theme::S(10.0f));
+		Widgets::EndCard();
 	} else if (error != m_changelogErrors.end()) {
 		Widgets::WrappedText(Theme::C().error, ("Couldn't load the changelog: " + error->second).c_str());
 		if (ImGui::Button("Retry"))

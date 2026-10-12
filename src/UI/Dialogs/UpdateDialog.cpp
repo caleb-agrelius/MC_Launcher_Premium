@@ -37,6 +37,16 @@ void UpdateDialog::Draw()
 		Widgets::Spinner(Theme::C().accent);
 		ImGui::SameLine();
 		ImGui::TextDisabled("Checking %s for the newest version...", PackSourceName(pack.source));
+		// The answer is a couple of paragraphs and a checkbox; hold the room so the dialog doesn't grow.
+		ImGui::Spacing();
+		const float width = ImGui::GetContentRegionAvail().x;
+		for (int line = 0; line < 2; ++line)
+			Widgets::Skeleton(ImVec2(line == 1 ? width * 0.6f : width, ImGui::GetTextLineHeightWithSpacing()), 4.0f, S(10.0f));
+		ImGui::Spacing();
+		for (int line = 0; line < 4; ++line)
+			Widgets::Skeleton(ImVec2(line == 3 ? width * 0.4f : width, ImGui::GetTextLineHeightWithSpacing()), 4.0f, S(10.0f));
+		ImGui::Spacing();
+		Widgets::Skeleton(ImVec2(width * 0.5f, ImGui::GetFrameHeight()), 4.0f, S(14.0f));
 	} else if (!check.error.empty()) {
 		ImGui::PushStyleColor(ImGuiCol_Text, Theme::C().error);
 		ImGui::TextWrapped("Couldn't check for updates: %s", check.error.c_str());

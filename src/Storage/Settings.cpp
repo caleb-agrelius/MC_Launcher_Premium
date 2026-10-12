@@ -65,6 +65,7 @@ Settings LoadSettings(const std::string& path)
 		settings.discoverSources = j.value("discoverSources", settings.discoverSources);
 		settings.theme = j.value("theme", settings.theme);
 		settings.reduceMotion = j.value("reduceMotion", settings.reduceMotion);
+		settings.animationSpeed = std::clamp(j.value("animationSpeed", settings.animationSpeed), kMinAnimationSpeed, kMaxAnimationSpeed);
 		settings.showGalleryBanners = j.value("showGalleryBanners", settings.showGalleryBanners);
 		settings.dismissedNotices = j.value("dismissedNotices", settings.dismissedNotices);
 		settings.searchLimit = std::clamp(j.value("searchLimit", settings.searchLimit), kMinSearchLimit, kMaxSearchLimit);
@@ -134,6 +135,7 @@ bool SaveSettings(const std::string& path, const Settings& settings)
 	j["discoverSources"] = settings.discoverSources;
 	j["theme"] = settings.theme;
 	j["reduceMotion"] = settings.reduceMotion;
+	j["animationSpeed"] = std::round(settings.animationSpeed * 100.0) / 100.0;
 	j["showGalleryBanners"] = settings.showGalleryBanners;
 	j["dismissedNotices"] = settings.dismissedNotices;
 	j["searchLimit"] = settings.searchLimit;

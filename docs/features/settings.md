@@ -9,7 +9,7 @@ Each tab is a set of cards with a label (and hint) on the left and the control o
 
 | Tab | Contents |
 |---|---|
-| **Appearance** | Theme picker (a grid of `ThemeCard`s, applied on click, plus **Create your own**); the custom theme editor when a custom theme is selected (see [ui-theme.md](ui-theme.md)); UI scale slider (75–200%) with **Reset** (the only place to change it besides the keyboard shortcuts); **Reduce motion** and **Gallery banners** toggles |
+| **Appearance** | Theme picker (a grid of `ThemeCard`s, applied on click, plus **Create your own**); the custom theme editor when a custom theme is selected (see [ui-theme.md](ui-theme.md)); UI scale slider (75–200%) with **Reset** (the only place to change it besides the keyboard shortcuts); **Reduce motion** toggle, an **Animation speed** slider and the **Gallery banners** toggle |
 | **Minecraft** | Defaults used for every pack when Play is pressed (see [launching.md](launching.md)). **Memory:** maximum (`-Xmx`, 1 GB up to the PC's RAM, warning above 75% of it) and starting (`-Xms`, Automatic or a fixed amount) sliders in 0.5 GB steps. **Java:** a dropdown with **Automatic** (an installed Java with the major version each Minecraft version needs, else Mojang's runtime; see [launching.md](launching.md)), every Java found on this PC (version, vendor, folder; the full path as a tooltip), and **Custom path...**, which shows a path field (a red note appears if the path doesn't exist). The list is found on a worker the first time the card is shown, and again with **Rescan**. Under Automatic, a line lists the Java versions found. Then extra JVM arguments. **Game window:** fullscreen, custom window size (off = Minecraft's 854 x 480), and what the launcher does when the game starts. **Reset Minecraft settings to defaults** |
 | **Game options** | Vanilla Minecraft options applied to every pack (see below): how they're applied (every launch, or only a pack's first launch), how many are on, **Turn all off**, then cards for Video, Controls, Sound, Chat & accessibility, and First launch |
 | **Account** | The current account (name and type, or "Not signed in") with a pointer to the sidebar's ACCOUNT section, and the **Azure client ID** used for Microsoft sign-in (`microsoftClientId`, see [accounts.md](accounts.md)) |
@@ -26,6 +26,7 @@ Saved in the data folder (gitignored). A missing or invalid file gives the defau
 | `uiScale` | 1.0 | 0.75–2.0, saved rounded to 2 decimals |
 | `theme` | `"grass"` | A theme id from [ui-theme.md](ui-theme.md). Unknown ids fall back to Grass Block |
 | `reduceMotion` | false | No page transitions, bubbling lists, image fade-ins, toast animations or smooth scrolling |
+| `animationSpeed` | 1.0 | How fast animations play, 0.25 to 3 (the **Animation speed** slider, 25% to 300% in 5% steps, with **Reset**). Applies immediately. Greyed out while `reduceMotion` is on |
 | `showGalleryBanners` | true | When false, pack banners don't load gallery images |
 | `dismissedNotices` | [] | Ids of Settings tips closed with "Don't show again" |
 | `searchLimit` | 30 | Results per search, 10–100 (CurseForge caps it at 50) |

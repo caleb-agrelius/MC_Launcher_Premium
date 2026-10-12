@@ -61,6 +61,10 @@ public static class UiDriverNative {
 }
 '@
 [UiDriverNative]::SetThreadDpiAwarenessContext([IntPtr](-4)) | Out-Null
+# Set $script:AppOnline = $true before Start-App to let the app use the network, and $script:AppTrace to a
+# debug channel list (e.g. 'http') to trace into the console of the PowerShell host.
+$script:AppOnline = $false
+$script:AppTrace = ''
 $script:WindowX = 100; $script:WindowY = 100; $script:WindowWidth = 1800; $script:WindowHeight = 1100
 
 # Starts the launcher with $fixture as its working (data) folder and puts it at the window rectangle.
@@ -68,6 +72,9 @@ function Start-App($fixture, $exe) {
     $info = New-Object System.Diagnostics.ProcessStartInfo
     $info.FileName = $exe; $info.WorkingDirectory = $fixture; $info.UseShellExecute = $false
     $info.EnvironmentVariables['MCLP_CURSEFORGE_API_KEY'] = ''
+    # Offline unless a test needs the network ($script:AppOnline = $true): no requests to the pack APIs.
+    if (-not $script:AppOnline) { $info.EnvironmentVariables['MCLP_OFFLINE'] = '1' }
+    if ($script:AppTrace) { $info.EnvironmentVariables['MCLP_DEBUG'] = $script:AppTrace }
     $script:app = [System.Diagnostics.Process]::Start($info)
     $script:appWindow = [IntPtr]::Zero
     for ($i = 0; $i -lt 100 -and $script:appWindow -eq [IntPtr]::Zero; $i++) {

@@ -1,6 +1,7 @@
 #include "Toasts.h"
 
 #include "Theme.h"
+#include "Widgets.h"
 
 #include "imgui.h"
 
@@ -60,8 +61,9 @@ void Draw(bool reduceMotion)
 		const double age = now - toast.start;
 		float visibility = 1.0f;
 		if (!reduceMotion) {
-			const double fadeIn = std::min(1.0, age / kFadeTime);
-			const double fadeOut = std::min(1.0, (kLifetime - age) / kFadeTime);
+			const double fade = kFadeTime / Widgets::AnimationSpeed();
+			const double fadeIn = std::min(1.0, age / fade);
+			const double fadeOut = std::min(1.0, (kLifetime - age) / fade);
 			visibility = static_cast<float>(std::clamp(std::min(fadeIn, fadeOut), 0.0, 1.0));
 		}
 		const float slide = (1.0f - visibility) * S(24.0f);

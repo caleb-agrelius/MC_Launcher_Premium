@@ -6,6 +6,7 @@
 #include "Game/PackInstance.h"
 #include "Game/ServerSetup.h"
 #include "Network/HttpClient.h"
+#include "Network/OfflineHttpClient.h"
 #include "Network/TracingHttpClient.h"
 #include "Platform/Platform.h"
 #include "Storage/Library.h"
@@ -69,6 +70,13 @@ static void SettingsChecks(const fs::path& dir)
 		restored.window.width == 1280 && restored.window.height == 760 && restored.window.maximized,
 		"Window placement did not round-trip");
 	Check(restored.discoverSources == settings.discoverSources, "Discover filters did not round-trip");
+	Check(restored.animationSpeed == 1.0f, "The animation speed default changed");
+	settings.animationSpeed = 1.5f;
+	Check(SaveSettings(path.string(), settings) && LoadSettings(path.string()).animationSpeed == 1.5f, "Animation speed did not round-trip");
+	settings.animationSpeed = 99.0f;
+	Check(SaveSettings(path.string(), settings) && LoadSettings(path.string()).animationSpeed == kMaxAnimationSpeed, "Animation speed was not clamped");
+	settings.animationSpeed = 1.0f;
+	Check(SaveSettings(path.string(), settings), "Settings save failed");
 	Check(restored.paneWidths.size() == 2 && restored.paneWidths.at("discover") == 412.0f &&
 		restored.paneWidths.at("servers") == kMinPaneWidth, "Pane widths did not round-trip within limits");
 	Write(path, R"({"window":{"width":0,"height":760}})");
@@ -994,6 +1002,28 @@ static void DebugTraceChecks(const fs::path& dir, const fs::path& executable)
 	Check(target.str() == "Loaded 3 pack(s)\npartial", "The log tee should pass everything on");
 	Check(Contains(sink.str(), "[LOG  ]") && Contains(sink.str(), "Loaded 3 pack(s)") && !Contains(sink.str(), "partial"),
 		"The log tee should trace each finished line:\n" + sink.str());
+
+	// Offline mode: every call fails at once with the offline message, and the trace shows it.
+	{
+		char programName[] = "app";
+		char offlineFlag[] = "--offline";
+		char* withFlag[] = { programName, offlineFlag };
+		char* withoutFlag[] = { programName };
+		Check(Debug::OfflineRequested(2, withFlag), "--offline should turn offline mode on");
+		Check(!Debug::OfflineRequested(1, withoutFlag) || std::getenv("MCLP_OFFLINE"), "Offline mode should be off by default");
+		OfflineHttpClient offline;
+		TracingHttpClient tracedOffline(offline);
+		sink.str("");
+		std::string offlineBody, offlineError;
+		long status = 123;
+		Check(!tracedOffline.Get("https://api.test/v1/x", offlineBody, &offlineError) && offlineError == OfflineHttpClient::kMessage &&
+			offlineBody.empty(), "Offline Get should fail with the offline message");
+		Check(!tracedOffline.Post("https://api.test/v1/x", "{}", offlineBody, &offlineError) &&
+			!tracedOffline.DownloadToFile("https://api.test/f.zip", (dir / "never.zip").string(), nullptr, &offlineError) &&
+			!tracedOffline.Request("https://api.test/v1/x", {}, "", offlineBody, status, &offlineError) && status == 0 &&
+			!fs::exists(dir / "never.zip"), "Offline Post, DownloadToFile and Request should fail without writing anything");
+		Check(Contains(sink.str(), "FAILED") && Contains(sink.str(), "Offline mode"), "The trace should show the blocked request:\n" + sink.str());
+	}
 
 	// HTTP.
 	FakeHttp fake;

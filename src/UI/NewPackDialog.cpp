@@ -122,9 +122,7 @@ bool NewPackDialog::Draw(const NewPackDialogContext& context, NewPackRequest& re
 
 		label("Minecraft");
 		if (m_releasesLoading) {
-			Widgets::Spinner(Theme::C().accent);
-			ImGui::SameLine();
-			ImGui::TextDisabled("Reading Minecraft versions...");
+			Widgets::LoadingField("Reading Minecraft versions...");
 		} else if (!m_releasesError.empty()) {
 			ImGui::TextColored(Theme::C().error, "%s", m_releasesError.c_str());
 			ImGui::SameLine();
@@ -150,9 +148,7 @@ bool NewPackDialog::Draw(const NewPackDialogContext& context, NewPackRequest& re
 		if (!vanilla) {
 			label("Loader version");
 			if (m_releases.empty() || m_loaderLoading) {
-				Widgets::Spinner(Theme::C().accent);
-				ImGui::SameLine();
-				ImGui::TextDisabled("Reading %s versions...", kLoaders[m_loader].label);
+				Widgets::LoadingField((std::string("Reading ") + kLoaders[m_loader].label + " versions...").c_str());
 			} else if (!m_loaderError.empty()) {
 				ImGui::TextColored(Theme::C().error, "%s", m_loaderError.c_str());
 				ImGui::SameLine();

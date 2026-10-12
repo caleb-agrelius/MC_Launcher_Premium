@@ -58,6 +58,7 @@ struct Settings {
 	std::vector<std::string> discoverSources;
 	std::string theme = "grass"; // Theme::ThemeInfo::id
 	bool reduceMotion = false;   // no image fade-ins or toast slide-ins
+	float animationSpeed = 1.0f; // multiplies how fast animations play (2 = twice as fast); unused while reduceMotion is on
 	bool showGalleryBanners = true;
 	// Ids of the Settings page tips the player closed with "Don't show again".
 	std::vector<std::string> dismissedNotices;
@@ -88,6 +89,8 @@ struct Settings {
 
 static constexpr float kMinUiScale = 0.75f;
 static constexpr float kMaxUiScale = 2.0f;
+static constexpr float kMinAnimationSpeed = 0.25f;
+static constexpr float kMaxAnimationSpeed = 3.0f;
 static constexpr int kMinSearchLimit = 10;
 static constexpr int kMaxSearchLimit = 100; // Modrinth's maximum
 static constexpr int kMinMemoryMb = 1024;   // smallest -Xmx

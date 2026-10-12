@@ -14,6 +14,20 @@ Prints what the launcher is doing to the console as it happens: API requests, fi
 
 An unknown channel name prints a warning to the console and is ignored. `mcdebug run` still starts the app in its own window with the harness off.
 
+## Offline mode
+
+Debug launches that don't need the network shouldn't call the pack APIs on every start (Discover searches four sources at once the moment it opens). Offline mode makes every request fail at once and never reaches the network, so there is nothing to rate-limit or to mistake for a bug in the app.
+
+| How | Effect |
+|---|---|
+| `mcdebug offline` | Builds, then runs the Debug build in this console, offline, with the `http` and `log` channels (blocked requests show as `FAILED: Offline mode...`). `mcdebug offline file` picks other channels |
+| `MC_Launcher_Premium.exe --offline` | Offline, harness as configured |
+| `MCLP_OFFLINE=1` (environment) | Same; `0`, `false` or empty mean online |
+
+**Use offline for any launch or test that isn't about something from the network or a third-party API:** layout and UI work, settings, Library, Manage, installed packs, dialogs, the UI test harness. Launch online only when the change touches an API client, search, version lists, image downloads, sign-in or downloads, and then prefer `mcdebug debug http` so the requests are visible.
+
+In the app, `OfflineHttpClient` (`src/Network/OfflineHttpClient.*`) stands in for the real client in `AppRoot`, under the same `TracingHttpClient`, so callers just see a failed request with the message "Offline mode: network requests are disabled (started with --offline)". `Debug::OfflineRequested` reads the flag and the variable, and `app.log` notes "Offline mode" at startup. `MCLP_OFFLINE_DELAY_MS=n` makes each refusal wait `n` ms first (a cancel ends the wait), which holds the app in its loading states so the placeholders and spinners can be looked at or screenshotted. The UI test harness (`tests/UiDriver.ps1`) starts the app offline unless a test sets `$script:AppOnline = $true`.
+
 ## Channels
 
 | Channel | Shows |
