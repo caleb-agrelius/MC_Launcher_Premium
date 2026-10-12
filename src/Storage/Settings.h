@@ -64,6 +64,9 @@ struct Settings {
 	std::string microsoftClientId = "838edcea-b214-4030-b620-4e436525b305";
 	// CurseForge API key. Empty = use the MCLP_CURSEFORGE_API_KEY environment variable.
 	std::string curseForgeApiKey;
+	// Keep mods and resource/shader packs that several packs use once on disk (hard links
+	// to minecraft/shared-files/). See SharedFiles.
+	bool shareModFiles = true;
 	LaunchSettings launch;
 	// Per-pack launch options (pack id -> options) that replace launch for that pack.
 	// afterLaunch always comes from launch.

@@ -2,6 +2,7 @@
 
 #include "Game/GameOptions.h"
 #include "Game/InstanceContent.h"
+#include "Game/JarMods.h"
 #include "Game/JavaFinder.h"
 #include "Game/Loaders.h"
 #include "Game/PackInstance.h"
@@ -175,8 +176,10 @@ static void MapAssetsToResources(const fs::path& root, const ResolvedVersion& ve
 	}
 }
 
+// clientJar is the game jar to put on the classpath: the version's own, or a copy with jar
+// mods patched in.
 static bool LaunchVersion(const PlayRequest& request, const ResolvedVersion& version, const fs::path& javaExe,
-	const ProgressFn& progress, std::string* err, const std::atomic<bool>* cancel)
+	const fs::path& clientJar, const ProgressFn& progress, std::string* err, const std::atomic<bool>* cancel)
 {
 	MapAssetsToResources(request.gameRoot, version, request.instanceDir);
 	const fs::path& root = request.gameRoot;
@@ -187,7 +190,7 @@ static bool LaunchVersion(const PlayRequest& request, const ResolvedVersion& ver
 		classpath += PathString(file.path);
 		classpath += kClasspathSeparator;
 	}
-	classpath += PathString(ClientJarPath(root, version));
+	classpath += PathString(clientJar);
 
 	const std::string assetIndexId = version.assetIndex.is_null() ? std::string() : version.assetIndex.value("id", "");
 	fs::path gameAssets = root / "assets";
@@ -235,6 +238,11 @@ static bool LaunchVersion(const PlayRequest& request, const ResolvedVersion& ver
 		if (fs::is_regular_file(config, ec))
 			jvmArgs.push_back(Substitute(version.logging.value("argument", ""), { { "path", PathString(config) } }));
 	}
+	// Old Forge checks Mojang's signature on the game jar, which current Java 8 no longer
+	// accepts (SHA-1 signed), and refuses to start. Prism and MultiMC always pass these;
+	// versions that don't read them ignore them.
+	jvmArgs.push_back("-Dfml.ignoreInvalidMinecraftCertificates=true");
+	jvmArgs.push_back("-Dfml.ignorePatchDiscrepancies=true");
 	// The player's own JVM arguments go last, so they win over the defaults above.
 	for (std::string& arg : SplitArguments(launch.jvmArgs))
 		jvmArgs.push_back(std::move(arg));
@@ -288,9 +296,10 @@ static bool LaunchVersion(const PlayRequest& request, const ResolvedVersion& ver
 
 // Installs vanilla Minecraft, Java and the loader into the shared game root, then
 // launches. Shared by .mrpack instances and whole-pack installs.
+// loaderJar: a Forge universal jar the pack ships (or empty); old Forge is installed from it.
 static bool InstallAndLaunch(HttpClient& http, const PlayRequest& request, const std::string& minecraftVersion,
-	LoaderKind loader, const std::string& loaderVersion, const ProgressFn& progress, std::string* err,
-	const std::atomic<bool>* cancel)
+	LoaderKind loader, const std::string& loaderVersion, const fs::path& loaderJar, const ProgressFn& progress,
+	std::string* err, const std::atomic<bool>* cancel)
 {
 	const fs::path& root = request.gameRoot;
 	// After the pack's own files, so the player's defaults from Settings win.
@@ -332,9 +341,19 @@ static bool InstallAndLaunch(HttpClient& http, const PlayRequest& request, const
 		return false;
 
 	std::string versionId;
-	if (!InstallLoader(http, root, loader, minecraftVersion, loaderVersion, javaConsole,
-			versionId, progress, err, cancel))
+	if (loader == LoaderKind::Forge && !loaderJar.empty() && IsLegacyForgeMinecraft(minecraftVersion)) {
+		// Forge before 1.13 from the pack's own copy: its old installers can't run headless.
+		if (progress)
+			progress("Installing Forge " + loaderVersion + " from the pack", -1.0);
+		if (!InstallForgeFromJar(root, loaderJar, minecraftVersion, versionId, err))
+			return false;
+		if (NeedsLegacyJavaFixer(minecraftVersion, loaderVersion) &&
+			!DownloadAll(http, { LegacyJavaFixerJob(request.instanceDir) }, "Adding LegacyJavaFixer for Java 8", progress, err, cancel))
+			return false;
+	} else if (!InstallLoader(http, root, loader, minecraftVersion, loaderVersion, javaConsole,
+			versionId, progress, err, cancel)) {
 		return false;
+	}
 	ResolvedVersion version;
 	if (!ResolveVersion(root, versionId, version, err))
 		return false;
@@ -345,9 +364,21 @@ static bool InstallAndLaunch(HttpClient& http, const PlayRequest& request, const
 		if (err) *err = "Cancelled";
 		return false;
 	}
+	// Jar mods (very old packs) are patched into a copy of the game jar in the game folder.
+	fs::path clientJar = ClientJarPath(root, version);
+	const std::vector<fs::path> jarMods = FindJarMods(request.extractedDir, request.instanceDir);
+	if (!jarMods.empty()) {
+		if (progress)
+			progress("Patching " + std::to_string(jarMods.size()) + " jar mod(s) into the game", -1.0);
+		const fs::path patched = request.instanceDir / ".mclp" / "patched-client.jar";
+		if (!BuildPatchedJar(clientJar, jarMods, patched, err))
+			return false;
+		clientJar = patched;
+	}
+
 	if (progress)
 		progress("Starting Minecraft", -1.0);
-	return LaunchVersion(request, version, javaw, progress, err, cancel);
+	return LaunchVersion(request, version, javaw, clientJar, progress, err, cancel);
 }
 
 // Drops the pack files the player removed from the index, so they aren't downloaded again.
@@ -391,7 +422,7 @@ bool PlayModpack(HttpClient& http, const PlayRequest& request, const ProgressFn&
 			if (err) *err = "The pack's game folder is missing: " + PathString(request.instanceDir) + ". Install it again.";
 			return false;
 		}
-		return InstallAndLaunch(http, request, pack.minecraftVersion, pack.loader, pack.loaderVersion, progress, err, cancel);
+		return InstallAndLaunch(http, request, pack.minecraftVersion, pack.loader, pack.loaderVersion, pack.loaderJar, progress, err, cancel);
 	}
 
 	MrpackIndex index;
@@ -402,5 +433,5 @@ bool PlayModpack(HttpClient& http, const PlayRequest& request, const ProgressFn&
 		return false;
 	// A new pack version's overrides can bring back files the player removed or switched.
 	ApplyContentChanges(request.instanceDir, request.contentChanges);
-	return InstallAndLaunch(http, request, index.minecraftVersion, index.loader, index.loaderVersion, progress, err, cancel);
+	return InstallAndLaunch(http, request, index.minecraftVersion, index.loader, index.loaderVersion, {}, progress, err, cancel);
 }

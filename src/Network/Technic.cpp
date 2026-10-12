@@ -108,8 +108,10 @@ bool SearchTechnicModpacks(HttpClient& http,
 	}
 	// Filters and sorts need each pack's details, which the search response doesn't include.
 	if (!filters.gameVersion.empty() || filters.sort == 1) {
-		if (static_cast<int>(out.packs.size()) > limit * 2)
-			out.packs.resize(static_cast<std::size_t>(limit) * 2); // bound the detail requests
+		// Bound the detail requests: enough for the pages shown so far plus this one.
+		const std::size_t bound = static_cast<std::size_t>(std::max(0, filters.offset) + limit) * 2;
+		if (out.packs.size() > bound)
+			out.packs.resize(bound);
 		std::vector<bool> keep(out.packs.size(), false);
 		std::mutex mutex;
 		std::size_t next = 0;
@@ -145,6 +147,8 @@ bool SearchTechnicModpacks(HttpClient& http,
 	}
 
 	out.totalHits = out.packs.size(); // the API returns every match at once
+	const std::size_t first = std::min(out.packs.size(), static_cast<std::size_t>(std::max(0, filters.offset)));
+	out.packs.erase(out.packs.begin(), out.packs.begin() + static_cast<std::ptrdiff_t>(first));
 	if (static_cast<int>(out.packs.size()) > limit)
 		out.packs.resize(static_cast<std::size_t>(limit));
 	return true;

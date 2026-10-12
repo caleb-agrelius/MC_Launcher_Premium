@@ -2,6 +2,7 @@
 
 #include "Network/HttpClient.h"
 #include "Util/Paths.h"
+#include "Util/SharedFiles.h"
 #include "Util/Sha1.h"
 #include "Util/Json.h"
 
@@ -238,6 +239,12 @@ bool InstallContent(HttpClient& http, const ContentSearch& search, const std::st
 		if (fs::exists(target, ec) || fs::exists(off, ec))
 			continue; // already in the pack
 		fs::create_directories(folder, ec);
+		// Another pack already has this exact file: link to the shared copy instead.
+		const std::string shareKey = SharedFiles::KeyFor(download.sha1);
+		if (!shareKey.empty() && SharedFiles::LinkTo(shareKey, 0, target)) {
+			added.push_back({ wanted.kind, fileName, wanted.id });
+			continue;
+		}
 		fs::path part = target;
 		part += ".part";
 		if (!http.DownloadToFile(download.url, part.string(), nullptr, &error, cancel)) {
@@ -257,6 +264,7 @@ bool InstallContent(HttpClient& http, const ContentSearch& search, const std::st
 			if (err) *err = "Couldn't save " + fileName + ": " + why;
 			return false;
 		}
+		SharedFiles::Add(shareKey, target);
 		added.push_back({ wanted.kind, fileName, wanted.id });
 	}
 	return true;

@@ -53,5 +53,4 @@ This applies to every source.
 - Version-lookup and banner-lookup results are applied to every pack in the sub-page's current list with a matching `id`. If the list has changed since the lookup started, the result is discarded.
 
 ## Not yet supported
-- Paging beyond the first 30 results.
 - Category filters.

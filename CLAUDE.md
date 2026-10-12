@@ -23,6 +23,7 @@ Other docs: [docs/development.md](docs/development.md) (debugging, logs, trouble
 | [modrinth-search.md](docs/features/modrinth-search.md) | Modrinth API client, `HttpClient::Get`, search/version lookup threading (`UiQueue`) |
 | [discover.md](docs/features/discover.md) | Discover page: search, pack list, details pane, per-file action buttons |
 | [downloads.md](docs/features/downloads.md) | `HttpClient`, download state map and threading, Downloads page |
+| [shared-files.md](docs/features/shared-files.md) | Sharing identical mod files between packs (hard links, `minecraft/shared-files/`, `SharedFiles`) |
 | [installation.md](docs/features/installation.md) | Zip extraction (`InstallZip`), the `installs/` layout |
 | [library.md](docs/features/library.md) | My Library page |
 | [manage.md](docs/features/manage.md) | A pack's Manage page: overview, content (mods, resource and shader packs), changelog, logs, screenshots (`src/UI/ManagePage`, `src/Game/InstanceContent`) |

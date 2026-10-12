@@ -39,7 +39,7 @@ The ATLauncher Discover sub-page: search, version lookup, and whole-pack install
     | `ic2lib`, `denlib` | `mods/ic2`, `mods/denlib` |
     | `coremods`, `plugins` | same name |
     | `texturepack`, `resourcepack`, `shaderpack` | `texturepacks`, `resourcepacks`, `shaderpacks` |
-    | `jar`, `forge` | `jarmods` (not added to the game jar at launch) |
+    | `jar`, `forge` | `jarmods`: Forge's universal jar there is detected and installed as the loader, and other jar mods are patched into the game jar at Play (see [launching.md](launching.md)) |
 
   - `extract` mods are zips unpacked into the folder for `extractTo`. Only the zip folder named by `extractFolder` is taken (ATLauncher's `%s%` means `/`).
   - `texturepackextract` and `resourcepackextract` unpack into `texturepacks/extracted` and `resourcepacks/extracted`.

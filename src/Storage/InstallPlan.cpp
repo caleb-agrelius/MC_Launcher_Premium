@@ -4,6 +4,7 @@
 #include "Storage/Installer.h"
 #include "Util/Hash.h"
 #include "Util/Paths.h"
+#include "Util/SharedFiles.h"
 #include "Util/Text.h"
 
 #include <nlohmann/json.hpp>
@@ -190,7 +191,14 @@ bool RunInstallPlan(HttpClient& http,
 			} else {
 				const fs::path dest = LongPath(gameDir / fs::path(file.relPath).lexically_normal());
 				const std::string destPath = dest.string();
-				if (!AlreadyInstalled(file, destPath)) {
+				// Mods and resource/shader packs with a known hash are shared between packs.
+				const std::string shareKey = SharedFiles::IsShareablePath(fs::u8path(file.relPath))
+					? SharedFiles::KeyFor(file.sha1, file.md5) : std::string();
+				if (AlreadyInstalled(file, destPath)) {
+					SharedFiles::Add(shareKey, dest);
+				} else if (!shareKey.empty() && SharedFiles::LinkTo(shareKey, file.size, dest)) {
+					// linked to a copy another pack already has
+				} else {
 					std::error_code dirError;
 					fs::create_directories(dest.parent_path(), dirError);
 					const std::string partPath = destPath + ".part";
@@ -204,6 +212,8 @@ bool RunInstallPlan(HttpClient& http,
 						fs::rename(partPath, dest, dirError);
 						if (dirError)
 							error = "could not save: " + dirError.message();
+						else
+							SharedFiles::Add(shareKey, dest);
 					}
 				}
 			}

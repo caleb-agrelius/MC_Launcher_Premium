@@ -141,7 +141,8 @@ bool SearchAtLauncherModpacks(HttpClient& http,
 			});
 	}
 	out.totalHits = matches.size();
-	for (std::size_t i = 0; i < matches.size() && static_cast<int>(i) < limit; ++i)
+	const std::size_t first = static_cast<std::size_t>(std::max(0, filters.offset));
+	for (std::size_t i = first; i < matches.size() && i < first + static_cast<std::size_t>(limit); ++i)
 		out.packs.push_back(matches[i]->pack);
 	return true;
 }
@@ -218,7 +219,7 @@ static const char* FolderForType(const std::string& type, const std::string& mcF
 	if (type == "texturepack") return "texturepacks";
 	if (type == "resourcepack") return "resourcepacks";
 	if (type == "shaderpack") return "shaderpacks";
-	if (type == "jar" || type == "forge") return "jarmods"; // jar mods and old Forge builds, for a future Play feature
+	if (type == "jar" || type == "forge") return "jarmods"; // jar mods and old Forge builds, patched into the game jar at Play
 	return nullptr; // mcpc, millenaire, decomp, unknown
 }
 

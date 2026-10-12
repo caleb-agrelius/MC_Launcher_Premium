@@ -20,6 +20,7 @@ struct SearchFilters {
 	std::string gameVersion; // e.g. "1.20.1"; empty = any
 	std::string loader;      // "forge" | "neoforge" | "fabric" | "quilt"; empty = any
 	int sort = 0;            // index into SourceCapabilities::sorts
+	int offset = 0;          // results to skip, for loading the next page ("Load more")
 };
 
 struct SourceCapabilities {

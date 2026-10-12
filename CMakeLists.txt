@@ -30,6 +30,7 @@ add_executable(MC_Launcher_Premium
   src/Game/GameFiles.cpp
   src/Game/GameOptions.cpp
   src/Game/InstanceContent.cpp
+  src/Game/JarMods.cpp
   src/Game/JavaFinder.cpp
   src/Game/Launcher.cpp
   src/Game/Loaders.cpp
@@ -66,6 +67,7 @@ add_executable(MC_Launcher_Premium
   src/Util/Paths.cpp
   src/Util/Process.cpp
   src/Util/Sha1.cpp
+  src/Util/SharedFiles.cpp
   src/Util/Text.cpp
   ${imgui_backend_source_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
   ${imgui_backend_source_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
@@ -117,6 +119,7 @@ if (BUILD_TESTING)
     src/Game/GameFiles.cpp
     src/Game/GameOptions.cpp
     src/Game/InstanceContent.cpp
+    src/Game/JarMods.cpp
     src/Game/JavaFinder.cpp
     src/Game/Loaders.cpp
     src/Game/PackCreator.cpp
@@ -131,9 +134,11 @@ if (BUILD_TESTING)
     src/UI/Logo.cpp
     src/UI/Theme.cpp
     src/UI/Widgets.cpp
+    src/Util/Hash.cpp
     src/Util/Paths.cpp
     src/Util/Process.cpp
     src/Util/Sha1.cpp
+    src/Util/SharedFiles.cpp
     src/Util/Text.cpp
   )
   get_target_property(launcher_includes MC_Launcher_Premium INCLUDE_DIRECTORIES)
@@ -151,6 +156,7 @@ if (BUILD_TESTING)
     tests/LiveChecks.cpp
     src/Game/GameFiles.cpp
     src/Game/InstanceContent.cpp
+    src/Game/JarMods.cpp
     src/Game/Loaders.cpp
     src/Game/PackCreator.cpp
     src/Game/PackInstance.cpp
@@ -169,6 +175,7 @@ if (BUILD_TESTING)
     src/Util/Paths.cpp
     src/Util/Process.cpp
     src/Util/Sha1.cpp
+    src/Util/SharedFiles.cpp
     src/Util/Text.cpp
   )
   target_include_directories(live_checks PRIVATE ${launcher_includes})
