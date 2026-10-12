@@ -21,6 +21,13 @@ bool SearchAtLauncherModpacks(HttpClient& http,
 							  std::string* err = nullptr,
 							  const std::atomic<bool>* cancel = nullptr);
 
+// Every version from the pack list, newest first, with its Minecraft version.
+bool ListAtLauncherVersions(HttpClient& http,
+		const Modpack& pack,
+		std::vector<PackVersionInfo>& out,
+		std::string* err = nullptr,
+		const std::atomic<bool>* cancel = nullptr);
+
 // The pack's newest version, plus its loader from the version's Configs.json.
 bool FetchAtLauncherVersion(HttpClient& http,
 							const Modpack& pack,

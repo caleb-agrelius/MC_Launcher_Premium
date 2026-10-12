@@ -242,6 +242,55 @@ bool SearchCurseForgeModpacks(HttpClient& http,
 	return true;
 }
 
+bool ListCurseForgeVersions(HttpClient& http,
+		const Modpack& pack,
+		std::vector<PackVersionInfo>& out,
+		std::string* err,
+		const std::atomic<bool>* cancel)
+{
+	out.clear();
+	constexpr int kPageSize = 50;
+	constexpr int kMaxFiles = 500;
+	try {
+		for (int index = 0; index < kMaxFiles; index += kPageSize) {
+			json response;
+			if (!ApiGet(http, "/mods/" + HttpClient::UrlEncode(pack.sourceId) + "/files?index=" + std::to_string(index) +
+					"&pageSize=" + std::to_string(kPageSize), response, err, cancel))
+				return false;
+			const json files = response.value("data", json::array());
+			for (const auto& file : files) {
+				PackVersionInfo info;
+				info.versionNumber = StringOrEmpty(file, "displayName");
+				if (info.versionNumber.empty())
+					info.versionNumber = StringOrEmpty(file, "fileName");
+				info.sourceVersionId = std::to_string(file.value("id", 0LL));
+				const int type = file.value("releaseType", 1);
+				info.versionType = type == 1 ? "release" : type == 2 ? "beta" : "alpha";
+				info.published = StringOrEmpty(file, "fileDate").substr(0, 10);
+				SplitGameVersions(file, info.gameVersion, info.loaders);
+				out.push_back(std::move(info));
+			}
+			const json pagination = response.value("pagination", json::object());
+			if (files.size() < static_cast<std::size_t>(kPageSize) ||
+				index + kPageSize >= pagination.value("totalCount", 0))
+				break;
+		}
+	}
+	catch (const std::exception& ex) {
+		if (err) *err = std::string("Unexpected CurseForge files response: ") + ex.what();
+		return false;
+	}
+	// File ids grow over time, so the biggest id is the newest file.
+	std::sort(out.begin(), out.end(), [](const PackVersionInfo& a, const PackVersionInfo& b) {
+		return std::stoll(a.sourceVersionId) > std::stoll(b.sourceVersionId);
+	});
+	if (out.empty()) {
+		if (err) *err = "This pack has no published files";
+		return false;
+	}
+	return true;
+}
+
 bool FetchCurseForgeVersion(HttpClient& http,
 							const Modpack& pack,
 							PackVersionInfo& out,

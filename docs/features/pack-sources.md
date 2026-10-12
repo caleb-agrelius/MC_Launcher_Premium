@@ -12,6 +12,7 @@ The UI calls these functions with a `PackSource`, and they call that source's cl
 | `IsSourceAvailable(source, reason)` | False with a reason when a source can't be used (CurseForge without an API key) |
 | `SearchPacks(http, source, query, filters, limit, out, err, cancel)` | Searches; results have `filesLoaded = false` |
 | `FetchPackVersion(http, pack, out, err, cancel)` | The version a pack installs by default, plus details the search didn't include |
+| `ListPackVersions(http, pack, out, err, cancel)` | Every version, newest first, for the version picker. Each `PackVersionInfo` also has `versionType` and `published` when the source gives them, and can be passed to `ApplyPackVersion` |
 | `ApplyPackVersion(pack, version)` | Copies a version result onto the pack; empty fields keep what the pack had |
 | `FetchPackDescription(http, pack, out, err, cancel)` | The pack's full description as plain text (see "Descriptions" below) |
 | `FetchPackMods(http, pack, workDir, out, err, cancel)` | The mods in the pack's loaded version (`sourceVersionId`), sorted by name, for Discover's Mods tab (see the table below) |
@@ -72,8 +73,9 @@ Sources whose capabilities set `installsPacks` (every source except Modrinth) in
      - Each file is first written as `<name>.part`, then checked against its SHA-1, MD5 or size, then renamed.
      - A file already on disk that passes the check is kept, so a retry only fetches what's missing.
      - Extract files are downloaded to `installDir/.cache/`, checked, unpacked into `relPath`, and deleted.
-  4. Extracts the override zips. They go last, so a pack's own config files win.
-  5. Removes `.cache/` and writes `installDir/pack.json` with the source, ids, version, Minecraft version, loader, blocked files, notes, and `clientOnlyFiles` (paths the source marks client-only: FTB `clientonly`, ATLauncher `server: false`; dedicated servers copy these turned off, see [servers.md](servers.md)).
+  4. Deletes files the previous install of this pack listed in its `pack.json` `files` and this plan doesn't (e.g. mods dropped when switching versions). Only files installed by name are tracked, not the contents of extracted zips.
+  5. Extracts the override zips. They go last, so a pack's own config files win.
+  6. Removes `.cache/` and writes `installDir/pack.json` with the source, ids, version, Minecraft version, loader, blocked files, notes, `files` (the plan's non-extract paths), and `clientOnlyFiles` (paths the source marks client-only: FTB `clientonly`, ATLauncher `server: false`; dedicated servers copy these turned off, see [servers.md](servers.md)).
 - **Errors:** the first failing file stops the install with `"<file>: <reason>"`. Reasons include `download failed: HTTP 404`, `SHA-1 mismatch` and `extract failed: ...`. Progress is reported as a stage name with done/total counts.
 
 ## Long paths (`src/Util/Paths.{h,cpp}`)

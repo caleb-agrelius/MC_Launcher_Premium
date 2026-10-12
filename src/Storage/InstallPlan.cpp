@@ -53,6 +53,34 @@ static bool AlreadyInstalled(const PlannedFile& file, const std::string& path)
 	return fs::is_regular_file(path, ec) && VerifyFile(file, path).empty();
 }
 
+// The files a plan puts in minecraft/ by name (not extracted zips, whose contents
+// aren't known up front), saved in pack.json so the next install can remove the ones
+// a newer or older pack version no longer has.
+static std::vector<std::string> InstalledFiles(const InstallPlan& plan)
+{
+	std::vector<std::string> files;
+	for (const PlannedFile& file : plan.files) {
+		if (!file.extract)
+			files.push_back(fs::path(fs::u8path(file.relPath)).lexically_normal().generic_string());
+	}
+	return files;
+}
+
+static std::vector<std::string> PreviousFiles(const fs::path& packJson)
+{
+	std::ifstream in(packJson);
+	if (!in.is_open())
+		return {};
+	try {
+		json j;
+		in >> j;
+		return j.value("files", std::vector<std::string>());
+	}
+	catch (...) {
+		return {};
+	}
+}
+
 static bool WritePackJson(const InstallPlan& plan, const std::string& path, const std::vector<PlannedFile>& blocked)
 {
 	json blockedJson = json::array();
@@ -73,6 +101,7 @@ static bool WritePackJson(const InstallPlan& plan, const std::string& path, cons
 		{ "loader", plan.loader },
 		{ "loaderVersion", plan.loaderVersion },
 		{ "blockedFiles", blockedJson },
+		{ "files", InstalledFiles(plan) },
 		{ "notes", plan.notes },
 		{ "clientOnlyFiles", plan.clientOnlyFiles },
 	};
@@ -202,6 +231,16 @@ bool RunInstallPlan(HttpClient& http,
 	if (failed.load()) {
 		if (err) *err = firstError;
 		return false;
+	}
+
+	// Files the previously installed version had and this one doesn't (e.g. mods dropped
+	// when switching versions). Only files a plan installed by name are listed.
+	{
+		const std::vector<std::string> current = InstalledFiles(plan);
+		for (const std::string& old : PreviousFiles(root / "pack.json")) {
+			if (std::find(current.begin(), current.end(), old) == current.end() && IsSafeRelativePath(old))
+				fs::remove(LongPath(gameDir / fs::u8path(old)), ec);
+		}
 	}
 
 	// Overrides go last so the pack's own config files win over anything a mod zip shipped.

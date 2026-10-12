@@ -60,6 +60,8 @@ bool SearchPacks(HttpClient& http,
 struct PackVersionInfo {
 	std::string versionNumber;
 	std::string sourceVersionId;
+	std::string versionType; // release, beta, alpha, recommended, latest; empty if unknown (version lists only)
+	std::string published;   // YYYY-MM-DD; empty if unknown (version lists only)
 	std::string gameVersion;
 	std::string loaders;
 	std::vector<PackFile> files; // Modrinth: the .mrpack to download
@@ -75,6 +77,15 @@ struct PackVersionInfo {
 bool FetchPackVersion(HttpClient& http,
 					  const Modpack& pack,
 					  PackVersionInfo& out,
+					  std::string* err = nullptr,
+					  const std::atomic<bool>* cancel = nullptr);
+
+// Every version a pack has, newest first, for the version picker. Each entry can be
+// passed to ApplyPackVersion. Entries may lack details the source only gives per
+// version (e.g. a Technic Solder build's Minecraft version).
+bool ListPackVersions(HttpClient& http,
+					  const Modpack& pack,
+					  std::vector<PackVersionInfo>& out,
 					  std::string* err = nullptr,
 					  const std::atomic<bool>* cancel = nullptr);
 

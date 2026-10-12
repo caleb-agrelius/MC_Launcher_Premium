@@ -24,3 +24,13 @@ Milestones are verified stages, not commits.
 | M7 | Descriptions for modpacks | Done | Checks: the Markdown and HTML converter, with exact expected output for headings, links, images, lists, tables, entities and script removal. `ShortenText`. `live_checks` fetched and converted descriptions for Modrinth, FTB, ATLauncher and Technic with no leftover tags or link syntax. CurseForge was not run (no API key). Build passes. |
 | M8 | Download and install in one step | Done | In the running app (isolated data folder), one click on **Install** for Fabulously Optimized downloaded and extracted it, added it to My Library, and enabled PLAY. Build and `launcher_checks` pass. |
 | M9 | Dialogs don't follow the selected theme (reported mid-task) | Done | Every ImGui color slot is now themed (title bars, modal dimming, tabs, links...). `ThemeColorChecks` fails if any built-in theme leaves a visible slot at ImGui's stock value. In the app, the Uninstall dialog under Nether shows a themed title bar and dimming. |
+
+## Merge with main (version picker, #8)
+
+`origin/main` (`097da89`) was merged in. It installs several pack versions side by side (`installs/<id>@<version>/`) and adds a version picker for Discover and servers. Integration changes beyond the conflict resolutions:
+- Server hosting checks (`canHostServer`, the Servers list and details) use the active version's install folder instead of `installs/<pack id>`.
+- Choosing a non-installed version of a CurseForge, FTB, Technic or ATLauncher pack for a server shows "Install <version> from Discover first" instead of quietly using the active version (only Modrinth versions can be downloaded for a server).
+- Main's dropped-mod cleanup on version change also removes a dropped mod's `.disabled` copy.
+- **Also delete its server** is offered only when an uninstall removes the whole pack, not one of several versions.
+
+Verified after the merge: build, `launcher_checks` and `live_checks` pass. The merged app starts with an older `library.json` and shows the Pack version picker next to Host IP on the Servers page.

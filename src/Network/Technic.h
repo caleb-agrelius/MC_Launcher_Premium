@@ -23,6 +23,15 @@ bool SearchTechnicModpacks(HttpClient& http,
 						   std::string* err = nullptr,
 						   const std::atomic<bool>* cancel = nullptr);
 
+// Every version: a single-zip pack's one version, or a Solder pack's builds (newest
+// first, the recommended and latest builds marked). The Minecraft version is looked up
+// for the newest 10 builds only.
+bool ListTechnicVersions(HttpClient& http,
+		const Modpack& pack,
+		std::vector<PackVersionInfo>& out,
+		std::string* err = nullptr,
+		const std::atomic<bool>* cancel = nullptr);
+
 // Pack details (author, description, Minecraft version) plus the version to install:
 // the Solder server's recommended build, or the single zip's version.
 bool FetchTechnicVersion(HttpClient& http,

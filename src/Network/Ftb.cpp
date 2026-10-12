@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <ctime>
 #include <iterator>
 #include <mutex>
 #include <thread>
@@ -279,6 +280,55 @@ bool SearchFtbModpacks(HttpClient& http,
 	out.totalHits = matches.size();
 	for (std::size_t i = 0; i < matches.size() && static_cast<int>(i) < limit; ++i)
 		out.packs.push_back(matches[i]->pack);
+	return true;
+}
+
+bool ListFtbVersions(HttpClient& http,
+		const Modpack& pack,
+		std::vector<PackVersionInfo>& out,
+		std::string* err,
+		const std::atomic<bool>* cancel)
+{
+	out.clear();
+	json detail;
+	if (!GetJson(http, "/modpack/" + HttpClient::UrlEncode(pack.sourceId), detail, err, cancel))
+		return false;
+	try {
+		std::vector<std::pair<long long, PackVersionInfo>> versions;
+		for (const auto& version : detail.value("versions", json::array())) {
+			PackVersionInfo info;
+			info.versionNumber = StringOrEmpty(version, "name");
+			const long long id = version.value("id", 0LL);
+			info.sourceVersionId = std::to_string(id);
+			info.versionType = ToLower(StringOrEmpty(version, "type"));
+			const std::time_t updated = static_cast<std::time_t>(version.value("updated", 0LL));
+			if (updated > 0) {
+				char date[16];
+				std::tm utc{};
+#ifdef _WIN32
+				gmtime_s(&utc, &updated);
+#else
+				gmtime_r(&updated, &utc);
+#endif
+				if (std::strftime(date, sizeof(date), "%Y-%m-%d", &utc) > 0)
+					info.published = date;
+			}
+			std::string loaderVersion;
+			ReadTargets(version, info.gameVersion, info.loaders, loaderVersion);
+			versions.emplace_back(id, std::move(info));
+		}
+		std::sort(versions.begin(), versions.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+		for (auto& [id, info] : versions)
+			out.push_back(std::move(info));
+	}
+	catch (const std::exception& ex) {
+		if (err) *err = std::string("Unexpected FTB pack response: ") + ex.what();
+		return false;
+	}
+	if (out.empty()) {
+		if (err) *err = "This pack has no versions";
+		return false;
+	}
 	return true;
 }
 

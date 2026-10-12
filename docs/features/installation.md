@@ -11,7 +11,7 @@ Discover's **Install** button downloads a pack file and extracts it right away (
 - `InstallZip(zipPath, targetDir, progress, err, cancel)` uses miniz. It is `ExtractZip` with no prefix.
 - `ExtractZip(zipPath, targetDir, prefix, progress, err, cancel)` only extracts entries under `prefix` (e.g. `overrides/`), with the prefix removed from their paths. Install plans use it for pack overrides and extract-type files (see [pack-sources.md](pack-sources.md)).
 - `ReadZipEntry(zipPath, name, out, err)` reads one entry, such as a manifest, into memory.
-- Target directory: `installs/<pack id>/`.
+- Target directory: the version's install folder (see [library.md](library.md#installed-versions)), e.g. `installs/<pack id>@<version>/`. `startInstall` empties it first, so files from an earlier extraction don't linger.
 - Iterates over every zip entry. Directory entries are created, and file entries get their parent folders created before extraction.
 - Reports `progress(totalEntries, extractedEntries)` after each entry.
 - Takes an optional `cancel` flag (`const std::atomic<bool>*`), checked before each entry. Cancelling stops with `err = "Cancelled"` and leaves already-extracted files in place. The app sets the flag on shutdown.

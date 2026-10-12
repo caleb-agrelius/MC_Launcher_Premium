@@ -44,6 +44,11 @@ The CurseForge Discover sub-page: search, version lookup, and whole-pack install
 - Sets the version name (`displayName`) and `sourceVersionId` (the file id).
 - Sets the Minecraft version and loaders, taken from the file's `gameVersions`, which mixes versions like `1.20.1` with loader names like `Forge`.
 
+## Version list (`ListCurseForgeVersions`)
+- Calls `GET /mods/{id}/files?index=<n>&pageSize=50` page by page until `pagination.totalCount` is reached, up to 500 files.
+- Each file becomes a version: `displayName` (else `fileName`), its id, `releaseType` 1/2/3 as release/beta/alpha, the date part of `fileDate`, and the Minecraft version and loaders from `gameVersions`. Sorted by id, newest first.
+- Not checked against the live API yet (no API key was available).
+
 ## Install (`BuildCurseForgePlan`)
 1. **Pack zip.** Calls `GET /mods/{id}/files/{fileId}` and downloads the zip into `downloads/<pack id>/`. A zip already there with a matching SHA-1 is reused. If the pack itself has no `downloadUrl`, the install fails with "This pack's author only allows downloads from the CurseForge website".
 2. **Manifest.** Reads `manifest.json` from the zip (`ParseCurseForgeManifest`).

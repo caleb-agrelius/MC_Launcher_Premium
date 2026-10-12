@@ -112,15 +112,24 @@ static bool DownloadOne(HttpClient& http, const DownloadJob& job, std::string& e
 			fs::remove(part, ec);
 			continue;
 		}
-		fs::rename(part, job.path, ec);
-		if (ec) {
-			fs::remove(part, ec);
-			if (!NeedsDownload(job))
-				return true; // another downloader put it in place first
-			error = "Couldn't save " + job.path.string() + ": " + ec.message();
-			return false;
+		// Replacing an existing file can fail briefly while Windows still has it open (an
+		// antivirus scan, or a Java process that just exited), so retry, then remove it first.
+		std::error_code renameError;
+		for (int tries = 0; tries < 10; ++tries) {
+			fs::rename(part, job.path, renameError);
+			if (!renameError)
+				return true;
+			if (tries == 5) {
+				std::error_code removeError;
+				fs::remove(job.path, removeError);
+			}
+			std::this_thread::sleep_for(std::chrono::milliseconds(200));
 		}
-		return true;
+		fs::remove(part, ec);
+		if (!NeedsDownload(job))
+			return true; // another downloader put it in place first
+		error = "Couldn't save " + job.path.string() + ": " + renameError.message();
+		return false;
 	}
 	if (!NeedsDownload(job))
 		return true;

@@ -56,6 +56,7 @@ static bool GetJson(HttpClient& http, const std::string& url, json& out, std::st
 
 struct AtlPack {
 	Modpack pack;
+	std::vector<std::pair<std::string, std::string>> versions; // version, Minecraft version; newest first
 	int position = 0;
 	bool featured = false;
 	std::string searchText;
@@ -100,6 +101,8 @@ static bool LoadPacks(HttpClient& http, std::vector<AtlPack>& out, std::string* 
 			pack.version = StringOrEmpty(versions.front(), "version");
 			pack.gameVersion = StringOrEmpty(versions.front(), "minecraft");
 			pack.filesLoaded = false;
+			for (const auto& version : versions)
+				entry.versions.emplace_back(StringOrEmpty(version, "version"), StringOrEmpty(version, "minecraft"));
 			entry.position = item.value("position", 0);
 			entry.featured = item.value("featured", false);
 			entry.searchText = ToLower(pack.name + "\n" + pack.description);
@@ -157,6 +160,37 @@ bool SearchAtLauncherModpacks(HttpClient& http,
 static std::string ConfigsUrl(const Modpack& pack, const std::string& version, const char* file)
 {
 	return std::string(kServer) + "packs/" + pack.sourceId + "/versions/" + HttpClient::UrlEncode(version) + "/" + file;
+}
+
+bool ListAtLauncherVersions(HttpClient& http,
+		const Modpack& pack,
+		std::vector<PackVersionInfo>& out,
+		std::string* err,
+		const std::atomic<bool>* cancel)
+{
+	out.clear();
+	std::vector<AtlPack> packs;
+	if (!LoadPacks(http, packs, err, cancel))
+		return false;
+	for (const AtlPack& entry : packs) {
+		if (entry.pack.sourceId != pack.sourceId)
+			continue;
+		for (const auto& [version, minecraft] : entry.versions) {
+			if (version.empty())
+				continue;
+			PackVersionInfo info;
+			info.versionNumber = version;
+			info.sourceVersionId = version;
+			info.gameVersion = minecraft;
+			out.push_back(std::move(info));
+		}
+		break;
+	}
+	if (out.empty()) {
+		if (err) *err = "This pack has no versions";
+		return false;
+	}
+	return true;
 }
 
 bool FetchAtLauncherVersion(HttpClient& http,

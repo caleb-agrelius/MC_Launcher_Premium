@@ -19,8 +19,10 @@ struct ModrinthSearchResult {
 };
 
 struct ModrinthVersion {
-	std::string id; // the version's id, e.g. "9VvhfLcA"
+	std::string id;          // Modrinth's version id
 	std::string versionNumber;
+	std::string versionType; // release, beta, alpha
+	std::string published;   // YYYY-MM-DD
 	std::string gameVersion;
 	std::string loaders;
 	std::vector<PackFile> files; // the .mrpack (primary file)
@@ -72,6 +74,12 @@ bool FetchModrinthDescription(HttpClient& http,
 							  std::string& out,
 							  std::string* err = nullptr,
 							  const std::atomic<bool>* cancel = nullptr);
+// Every version of a project that has an .mrpack, newest first.
+bool ListModrinthVersions(HttpClient& http,
+						  const std::string& projectIdOrSlug,
+						  std::vector<ModrinthVersion>& out,
+						  std::string* err = nullptr,
+						  const std::atomic<bool>* cancel = nullptr);
 
 // Looks up a full-size gallery image for a project's banner (the featured image,
 // else the first one). Succeeds with an empty outUrl if the project has no gallery.

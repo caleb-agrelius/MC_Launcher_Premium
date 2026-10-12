@@ -177,6 +177,9 @@ struct ServerState {
 	double progress = -1.0;
 	std::string error;
 	std::shared_ptr<std::atomic<bool>> cancel = std::make_shared<std::atomic<bool>>(false);
+	// The pack version Create/Update server files uses; unset = the version installed in My Library.
+	bool hasVersion = false;
+	PackVersionInfo version;
 };
 
 // True when id can name a folder under installs/ or servers/ that is safe to delete.
@@ -649,17 +652,45 @@ int main(int argc, char** argv)
 		settingsContext.dpiScale = dpiScale;
 		settingsContext.curseForgeEnvKeySet = !CurseForgeEnvApiKey().empty();
 		SetCurseForgeApiKey(settings.curseForgeApiKey);
-		// Packs whose files were extracted (UI thread only). Saved to library.json so
-		// My Library survives restarts; packs whose installs/ folder is gone are dropped.
+		// Installed packs and their versions (UI thread only). Saved to library.json so My
+		// Library survives restarts. Versions whose install folder is gone are dropped, and so
+		// are packs left with none.
 		Library libraryPacks = LoadPackLibrary(kLibraryFile);
 		for (auto it = libraryPacks.begin(); it != libraryPacks.end();) {
-			std::error_code existsError;
-			if (fs::is_directory(fs::path("installs") / it->first, existsError))
+			Modpack& pack = it->second;
+			std::vector<std::string> missing;
+			for (const InstalledVersion& v : pack.installedVersions) {
+				std::error_code existsError;
+				if (!fs::is_directory(v.installDir, existsError))
+					missing.push_back(v.key);
+			}
+			bool keep = !pack.installedVersions.empty();
+			for (const std::string& key : missing)
+				keep = RemoveInstalledVersion(pack, key);
+			if (keep)
 				++it;
 			else
 				it = libraryPacks.erase(it);
 		}
 		log << "Loaded " << libraryPacks.size() << " library pack(s)\n";
+
+		// A library pack's active version: its install folder (the unzipped .mrpack, or
+		// pack.json + minecraft/) and its game folder. Packs not in the library fall back to
+		// the original single-version layout.
+		auto activeVersionOf = [&](const Modpack& pack) -> const InstalledVersion* {
+			const auto it = libraryPacks.find(pack.id);
+			return it != libraryPacks.end() ? ActiveInstalledVersion(it->second) : nullptr;
+		};
+		auto installDir = [&](const Modpack& pack) -> fs::path {
+			const InstalledVersion* v = activeVersionOf(pack);
+			return v ? fs::u8path(v->installDir) : fs::path("installs") / pack.id;
+		};
+		auto gameDir = [&](const Modpack& pack) -> fs::path {
+			if (const InstalledVersion* v = activeVersionOf(pack))
+				return fs::u8path(v->gameDir);
+			return GetSourceCapabilities(pack.source).installsPacks ? fs::path("installs") / pack.id / "minecraft"
+				: fs::path(kInstancesRoot) / pack.id;
+		};
 
 		// Finished downloads from earlier sessions, so Discover offers "Install files" again.
 		// Entries whose file was deleted are skipped. Workers aren't running yet, so no lock.
@@ -670,7 +701,10 @@ int main(int argc, char** argv)
 			DownloadState state;
 			state.fileName = std::move(saved.fileName);
 			state.outPath = std::move(saved.outPath);
-			state.installed = libraryPacks.count(saved.pack.id) > 0;
+			{
+				const auto entry = libraryPacks.find(saved.pack.id);
+				state.installed = entry != libraryPacks.end() && FindInstalledVersion(entry->second, VersionKey(saved.pack));
+			}
 			state.pack = std::move(saved.pack);
 			downloads[saved.url] = std::move(state);
 		}
@@ -700,10 +734,15 @@ int main(int argc, char** argv)
 				current.installProgress = 0.0;
 				current.installError.clear();
 			}
-			const std::string targetDir = (fs::path("installs") / pack.id).string();
+			// Each version gets its own folder, so versions can be installed side by side.
+			const InstalledVersion version = PlanInstalledVersion(libraryPacks, pack, false);
+			const std::string targetDir = version.installDir;
 			StartWorker(workers, [zipPath, targetDir, &downloads, &downloadsMutex, &shuttingDown, &uiQueue,
-				&libraryPacks, &log, url, pack]() {
+				&libraryPacks, &log, url, pack, version]() {
 				std::string error;
+				// Start from an empty folder, so another version's overrides don't linger.
+				std::error_code clearError;
+				fs::remove_all(targetDir, clearError);
 				auto progress = [&](int total, int now) {
 					std::lock_guard<std::mutex> lock(downloadsMutex);
 					DownloadState& current = downloads[url];
@@ -721,11 +760,11 @@ int main(int argc, char** argv)
 						current.installError = error;
 				}
 				if (ok) {
-					uiQueue.Post([&libraryPacks, &log, pack]() {
-						libraryPacks[pack.id] = pack;
+					uiQueue.Post([&libraryPacks, &log, pack, version]() {
+						AddInstalledVersion(libraryPacks, pack, version);
 						if (!SavePackLibrary(kLibraryFile, libraryPacks))
 							log << "Could not save " << kLibraryFile << "\n";
-						Toasts::Push(Toasts::Kind::Success, "Files extracted", pack.name + " is in your library.");
+						Toasts::Push(Toasts::Kind::Success, "Files extracted", pack.name + " " + pack.version + " is in your library.");
 					});
 				} else if (!shuttingDown.load()) {
 					uiQueue.Post([name = pack.name, error]() {
@@ -813,9 +852,32 @@ int main(int argc, char** argv)
 
 		auto startServerSetup = [&](const Modpack& pack) {
 			auto cancel = std::make_shared<std::atomic<bool>>(false);
+			// A version other than the installed one: setup downloads that version's .mrpack.
+			PackFile otherVersion;
+			fs::path otherInstalledDir; // another installed version's folder
 			{
 				std::lock_guard<std::mutex> lock(serversMutex);
 				ServerState& state = servers[pack.id];
+				if (state.hasVersion) {
+					// Another installed version is used as it is; any other one is downloaded.
+					Modpack wanted = pack;
+					wanted.version = state.version.versionNumber;
+					wanted.sourceVersionId = state.version.sourceVersionId;
+					const auto entry = libraryPacks.find(pack.id);
+					const InstalledVersion* installed = entry != libraryPacks.end()
+						? FindInstalledVersion(entry->second, VersionKey(wanted)) : nullptr;
+					if (installed)
+						otherInstalledDir = fs::absolute(fs::u8path(installed->installDir));
+					else if (!state.version.files.empty())
+						otherVersion = state.version.files.front();
+					else {
+						// Whole-pack sources have no single file to download; their servers are built
+						// from an installed version, so don't quietly fall back to the active one.
+						state.error = "Install " + state.version.versionNumber + " from Discover first. " +
+							PackSourceName(pack.source) + " servers are built from an installed version.";
+						return;
+					}
+				}
 				state.busy = true;
 				state.step = "Starting";
 				state.progress = -1.0;
@@ -824,7 +886,7 @@ int main(int argc, char** argv)
 			}
 			ServerSetupRequest request;
 			request.gameRoot = fs::absolute(kGameRoot);
-			request.extractedDir = fs::absolute(fs::path("installs") / pack.id);
+			request.extractedDir = otherInstalledDir.empty() ? fs::absolute(installDir(pack)) : otherInstalledDir;
 			request.serverDir = fs::absolute(fs::path(kServersRoot) / pack.id);
 			request.javaPath = settings.launch.javaPath;
 			// Whole-pack installs: Modrinth knows which mods don't run on servers.
@@ -834,7 +896,8 @@ int main(int argc, char** argv)
 			const std::string packId = pack.id;
 			const std::string packName = pack.name;
 			log << "Setting up server for " << packId << "\n";
-			StartWorker(workers, [&http, &uiQueue, &servers, &serversMutex, &log, request, packId, packName, cancel]() {
+			StartWorker(workers, [&http, &uiQueue, &servers, &serversMutex, &log, request, packId, packName, cancel,
+				otherVersion]() mutable {
 				auto progress = [&](const std::string& step, double fraction) {
 					std::lock_guard<std::mutex> lock(serversMutex);
 					ServerState& state = servers.at(packId);
@@ -843,9 +906,28 @@ int main(int argc, char** argv)
 				};
 				ServerInfo info;
 				std::string error;
-				bool ok = false;
+				bool ok = true;
 				try {
-					ok = SetupServer(http, request, info, progress, &error, cancel.get());
+					if (!otherVersion.url.empty()) {
+						// The chosen version's .mrpack, unpacked into servers/<id>/.mclp-pack/ (fresh each time).
+						const fs::path zip = fs::absolute(fs::path("downloads") / packId / "server" / otherVersion.name);
+						const fs::path unpacked = request.serverDir / ".mclp-pack";
+						std::error_code ec;
+						fs::create_directories(zip.parent_path(), ec);
+						progress("Downloading " + otherVersion.name, -1.0);
+						ok = http.DownloadToFile(otherVersion.url, zip.string(), [&](double total, double now) {
+							if (total > 0.0)
+								progress("Downloading " + otherVersion.name, now / total);
+						}, &error, cancel.get());
+						if (ok) {
+							progress("Unpacking " + otherVersion.name, -1.0);
+							fs::remove_all(unpacked, ec);
+							ok = InstallZip(zip.string(), unpacked.string(), nullptr, &error, cancel.get());
+						}
+						request.extractedDir = unpacked;
+					}
+					if (ok)
+						ok = SetupServer(http, request, info, progress, &error, cancel.get());
 				} catch (const std::exception& ex) {
 					error = std::string("Server setup failed: ") + ex.what();
 				}
@@ -984,14 +1066,9 @@ int main(int argc, char** argv)
 		};
 
 		// Extracted .mrpacks and whole-pack installs can both be hosted (see ServerSetup.h).
-		auto canHostServer = [](const Modpack& pack) {
-			return CanCreateServer(fs::path("installs") / pack.id);
-		};
-		// The pack's game folder: instances/<id>/ for .mrpack packs, or the folder an install
-		// plan filled, installs/<id>/minecraft/.
-		auto gameDir = [](const Modpack& pack) {
-			return GetSourceCapabilities(pack.source).installsPacks ? fs::path("installs") / pack.id / "minecraft"
-				: fs::path(kInstancesRoot) / pack.id;
+		// Checks the active version's install folder.
+		auto canHostServer = [&](const Modpack& pack) {
+			return CanCreateServer(installDir(pack));
 		};
 
 		auto startPlay = [&](const Modpack& pack) {
@@ -1013,7 +1090,7 @@ int main(int argc, char** argv)
 			}
 			PlayRequest request;
 			request.gameRoot = fs::absolute(kGameRoot);
-			request.extractedDir = fs::absolute(fs::path("installs") / pack.id);
+			request.extractedDir = fs::absolute(installDir(pack));
 			request.instanceDir = fs::absolute(gameDir(pack));
 			request.account = account;
 			request.launch = LaunchSettingsFor(settings, pack.id);
@@ -1221,9 +1298,11 @@ int main(int argc, char** argv)
 		};
 
 		// Installs a whole pack (sources whose capabilities say installsPacks): builds the
-		// source's install plan, runs it into installs/<pack id>/, then adds the pack to My Library.
+		// source's install plan, runs it into the version's own folder (installs/<id>@<version>/,
+		// or the existing one when reinstalling), then adds the version to My Library.
 		auto startPlanInstall = [&](const Modpack& pack) {
-			const std::string key = "pack:" + pack.id;
+			const std::string key = "pack:" + pack.id + "@" + VersionKey(pack);
+			const InstalledVersion version = PlanInstalledVersion(libraryPacks, pack, true);
 			{
 				std::lock_guard<std::mutex> lock(downloadsMutex);
 				DownloadState started;
@@ -1235,7 +1314,8 @@ int main(int argc, char** argv)
 				downloads[key] = std::move(started);
 			}
 			log << "Installing " << pack.id << " " << pack.version << " from " << PackSourceName(pack.source) << "\n";
-			StartWorker(workers, [&http, &downloads, &downloadsMutex, &shuttingDown, &uiQueue, &libraryPacks, &log, key, pack]() {
+			StartWorker(workers, [&http, &downloads, &downloadsMutex, &shuttingDown, &uiQueue, &libraryPacks, &log, key, pack,
+				version]() {
 				auto setStage = [&](const std::string& stage, std::uint64_t done, std::uint64_t total) {
 					std::lock_guard<std::mutex> lock(downloadsMutex);
 					DownloadState& current = downloads[key];
@@ -1252,7 +1332,7 @@ int main(int argc, char** argv)
 				bool ok = BuildInstallPlan(http, pack, workDir, plan,
 					[&](const std::string& status) { setStage(status, 0, 0); }, &error, &shuttingDown);
 				if (ok) {
-					ok = RunInstallPlan(http, plan, (fs::path("installs") / pack.id).string(),
+					ok = RunInstallPlan(http, plan, version.installDir,
 						[&](const InstallProgress& progress) { setStage(progress.stage, progress.done, progress.total); },
 						blocked, &error, &shuttingDown);
 				}
@@ -1266,7 +1346,8 @@ int main(int argc, char** argv)
 					current.notes = plan.notes;
 				}
 				const bool cancelled = shuttingDown.load();
-				uiQueue.Post([&libraryPacks, &log, pack, ok, cancelled, error, blockedCount = blocked.size(), fileCount = plan.files.size()]() {
+				uiQueue.Post([&libraryPacks, &log, pack, version, ok, cancelled, error, blockedCount = blocked.size(),
+					fileCount = plan.files.size()]() {
 					if (!ok) {
 						log << "Install of " << pack.id << " failed: " << error << "\n";
 						if (!cancelled)
@@ -1274,12 +1355,12 @@ int main(int argc, char** argv)
 						return;
 					}
 					log << "Installed " << pack.id << ": " << fileCount << " file(s), " << blockedCount << " blocked\n";
-					libraryPacks[pack.id] = pack;
+					AddInstalledVersion(libraryPacks, pack, version);
 					if (!SavePackLibrary(kLibraryFile, libraryPacks))
 						log << "Could not save " << kLibraryFile << "\n";
 					Toasts::Push(Toasts::Kind::Success, "Pack installed", blockedCount > 0
-						? pack.name + ": " + std::to_string(blockedCount) + " file(s) need a manual download."
-						: pack.name + " is in your library.");
+						? pack.name + " " + pack.version + ": " + std::to_string(blockedCount) + " file(s) need a manual download."
+						: pack.name + " " + pack.version + " is in your library.");
 				});
 			});
 		};
@@ -1303,11 +1384,11 @@ int main(int argc, char** argv)
 			}
 			PlayRequest request;
 			request.gameRoot = fs::absolute(kGameRoot);
-			request.extractedDir = fs::absolute(fs::path("installs") / pack.id);
+			request.extractedDir = fs::absolute(installDir(pack));
 			request.instanceDir = fs::absolute(gameDir(pack));
 			const std::string packId = pack.id;
 			const std::string packName = pack.name;
-			log << "Repair " << packId << "\n";
+			log << "Repair " << packId << " " << pack.version << "\n";
 			StartWorker(workers, [&http, &uiQueue, &plays, &playsMutex, &log, request, packId, packName, cancel]() {
 				auto progress = [&](const std::string& step, double fraction) {
 					std::lock_guard<std::mutex> lock(playsMutex);
@@ -1334,38 +1415,82 @@ int main(int argc, char** argv)
 			});
 		};
 
-		// Removes a pack from My Library and deletes its files: installs/<id>/, the game
-		// folder (worlds included), downloads/<id>/ and its saved downloads. Its server
-		// folder, if any, is kept. The deleting runs on a worker so big packs don't stall the UI.
-		auto uninstallPack = [&](const Modpack& pack) {
+		// Uninstalls one installed version of a library pack (versionKey), or with an empty key
+		// every version and the pack itself. Deletes the versions' install and game folders
+		// (worlds included), plus downloads/<id>/ and the pack's saved downloads when the whole
+		// pack goes. Its server folder, if any, is kept. Deleting runs on a worker so big packs
+		// don't stall the UI.
+		auto uninstallPack = [&](const Modpack& pack, const std::string& versionKey) {
 			// The id names folders that get deleted, so it must be one plain path segment.
 			if (!IsPlainFolderName(pack.id)) {
 				log << "Refusing to uninstall pack with id \"" << pack.id << "\"\n";
 				Toasts::Push(Toasts::Kind::Error, "Couldn't uninstall " + pack.name, "Its id isn't a valid folder name.");
 				return;
 			}
-			const fs::path game = gameDir(pack);
-			libraryPacks.erase(pack.id);
+			const auto entry = libraryPacks.find(pack.id);
+			if (entry == libraryPacks.end())
+				return;
+			// Folders come from library.json: only delete ones inside installs/ or instances/
+			// that belong to this pack.
+			auto ownedFolder = [&](const std::string& dir) {
+				const fs::path path = fs::u8path(dir).lexically_normal();
+				if (path.empty() || path.is_absolute() || path.has_root_name())
+					return false;
+				auto part = path.begin();
+				const std::string top = part->string();
+				if (top != "installs" && top != kInstancesRoot)
+					return false;
+				if (++part == path.end())
+					return false;
+				const std::string name = part->string();
+				return name == pack.id || name.rfind(pack.id + "@", 0) == 0;
+			};
+			std::vector<fs::path> folders;
+			const bool wholePack = versionKey.empty();
+			for (const InstalledVersion& v : entry->second.installedVersions) {
+				if (!wholePack && v.key != versionKey)
+					continue;
+				for (const std::string& dir : { v.installDir, v.gameDir }) {
+					if (ownedFolder(dir))
+						folders.push_back(fs::u8path(dir));
+					else
+						log << "Not deleting " << dir << ": outside this pack's folders\n";
+				}
+			}
+			if (wholePack)
+				folders.push_back(fs::path("downloads") / pack.id);
+
+			std::string label = pack.name;
+			if (wholePack) {
+				libraryPacks.erase(entry);
+			} else {
+				if (const InstalledVersion* v = FindInstalledVersion(entry->second, versionKey))
+					label += " " + v->version;
+				if (!RemoveInstalledVersion(entry->second, versionKey))
+					libraryPacks.erase(entry);
+			}
 			if (!SavePackLibrary(kLibraryFile, libraryPacks))
 				log << "Could not save " << kLibraryFile << "\n";
 			{
 				std::lock_guard<std::mutex> lock(downloadsMutex);
 				for (auto it = downloads.begin(); it != downloads.end();) {
-					if (it->second.pack.id == pack.id && !it->second.active)
+					const bool match = it->second.pack.id == pack.id && !it->second.active &&
+						(wholePack || VersionKey(it->second.pack) == versionKey);
+					if (match)
 						it = downloads.erase(it);
 					else
 						++it;
 				}
 			}
 			saveDownloads();
-			{
+			if (!libraryPacks.count(pack.id)) {
 				std::lock_guard<std::mutex> lock(playsMutex);
 				plays.erase(pack.id);
 			}
-			log << "Uninstall " << pack.id << "\n";
-			StartWorker(workers, [&uiQueue, &log, game, packId = pack.id, packName = pack.name]() {
+			log << "Uninstall " << pack.id << (wholePack ? std::string(" (all versions)") : " " + versionKey) << "\n";
+			StartWorker(workers, [&uiQueue, &log, folders, packId = pack.id, label]() {
 				std::string failed;
-				for (const fs::path& dir : { fs::path("installs") / packId, game, fs::path("downloads") / packId }) {
+				for (const fs::path& dir : folders) {
 					std::error_code ec;
 					fs::path target = fs::absolute(dir, ec);
 #ifdef _WIN32
@@ -1376,9 +1501,9 @@ int main(int argc, char** argv)
 					if (ec && failed.empty())
 						failed = dir.string() + ": " + ec.message();
 				}
-				uiQueue.Post([&log, packId, packName, failed]() {
+				uiQueue.Post([&log, packId, label, failed]() {
 					if (failed.empty()) {
-						Toasts::Push(Toasts::Kind::Success, "Uninstalled " + packName, "Its files were deleted.");
+						Toasts::Push(Toasts::Kind::Success, "Uninstalled " + label, "Its files were deleted.");
 					} else {
 						log << "Uninstall " << packId << ": couldn't delete " << failed << "\n";
 						Toasts::Push(Toasts::Kind::Error, "Some files couldn't be deleted",
@@ -1389,6 +1514,7 @@ int main(int argc, char** argv)
 		};
 		std::string uninstallPackId; // pack whose "Uninstall" confirmation is open
 		bool uninstallDeleteServer = false; // its "Also delete its server" checkbox
+		std::string uninstallVersionKey; // the version to uninstall; empty = the whole pack
 		std::string launchSettingsPackId; // pack whose "Launch settings" dialog is open
 
 		// The optional-mods picker shown before installing a pack that has some (ATLauncher).
@@ -1401,6 +1527,95 @@ int main(int argc, char** argv)
 			int generation = 0;
 		};
 		OptionalPicker picker;
+
+		// Every version of a pack, for the version dropdowns (UI thread only, keyed by pack id).
+		struct VersionList {
+			bool loading = false;
+			bool loaded = false;
+			std::string error;
+			std::vector<PackVersionInfo> versions;
+		};
+		std::map<std::string, VersionList> versionLists;
+		auto startListVersions = [&](const Modpack& pack) {
+			VersionList& list = versionLists[pack.id];
+			list.loading = true;
+			list.error.clear();
+			StartWorker(workers, [&http, &uiQueue, &shuttingDown, &versionLists, &log, pack]() {
+				std::vector<PackVersionInfo> versions;
+				std::string error;
+				const bool ok = ListPackVersions(http, pack, versions, &error, &shuttingDown);
+				uiQueue.Post([&versionLists, &log, id = pack.id, ok, versions, error]() {
+					VersionList& list = versionLists[id];
+					list.loading = false;
+					list.loaded = ok;
+					list.error = ok ? std::string() : error;
+					list.versions = versions;
+					log << "Versions of " << id << ": " << (ok ? std::to_string(versions.size()) : "failed: " + error) << "\n";
+				});
+			});
+		};
+		// The details after a version in a dropdown row, e.g. "Minecraft 1.20.1 - beta - 2024-05-01".
+		auto versionDetails = [](const PackVersionInfo& v) {
+			std::string details;
+			auto add = [&](const std::string& part) {
+				if (!part.empty())
+					details += (details.empty() ? "" : "  \xC2\xB7  ") + part;
+			};
+			add(v.gameVersion.empty() ? std::string() : "Minecraft " + v.gameVersion);
+			add(v.versionType == "release" ? std::string() : v.versionType);
+			add(v.published);
+			return details;
+		};
+		// A dropdown of the pack's versions; the list loads the first time it opens. currentId
+		// (a sourceVersionId) is highlighted. Returns true when the player picked one.
+		auto versionCombo = [&](const char* id, const Modpack& pack, const std::string& preview, const std::string& currentId,
+			PackVersionInfo& picked) {
+			bool chosen = false;
+			if (ImGui::BeginCombo(id, preview.c_str(), ImGuiComboFlags_HeightLarge)) {
+				VersionList& list = versionLists[pack.id];
+				if (!list.loaded && !list.loading && list.error.empty())
+					startListVersions(pack);
+				if (list.loading) {
+					Widgets::Spinner(Theme::C().accent);
+					ImGui::SameLine();
+					ImGui::TextDisabled("Loading versions...");
+				} else if (!list.error.empty()) {
+					ImGui::TextColored(Theme::C().error, "Couldn't load versions: %s", list.error.c_str());
+					if (ImGui::Selectable("Retry", false, ImGuiSelectableFlags_DontClosePopups))
+						startListVersions(pack);
+				}
+				for (std::size_t i = 0; i < list.versions.size(); ++i) {
+					const PackVersionInfo& v = list.versions[i];
+					ImGui::PushID(static_cast<int>(i));
+					const bool current = !currentId.empty() && v.sourceVersionId == currentId;
+					if (ImGui::Selectable(v.versionNumber.empty() ? v.sourceVersionId.c_str() : v.versionNumber.c_str(), current)) {
+						picked = v;
+						chosen = true;
+					}
+					if (current)
+						ImGui::SetItemDefaultFocus();
+					const std::string details = (i == 0 ? std::string("newest  \xC2\xB7  ") : std::string()) + versionDetails(v);
+					if (!details.empty()) {
+						ImGui::SameLine();
+						ImGui::TextDisabled("%s", details.c_str());
+					}
+					ImGui::PopID();
+				}
+				ImGui::EndCombo();
+			}
+			return chosen;
+		};
+		// Puts a picked version on a pack. Its Minecraft version replaces the old one even
+		// when unknown, so the pack doesn't show the previous version's.
+		auto applyPickedVersion = [](Modpack& target, const PackVersionInfo& v) {
+			target.gameVersion = v.gameVersion;
+			ApplyPackVersion(target, v);
+		};
+		// True when v is the version a library pack has installed. Modrinth packs installed
+		// before versions had ids only know their version number.
+		auto isInstalledVersion = [](const Modpack& pack, const PackVersionInfo& v) {
+			return pack.sourceVersionId.empty() ? v.versionNumber == pack.version : v.sourceVersionId == pack.sourceVersionId;
+		};
 
 		// Checks or unchecks an optional mod, keeping the choice consistent: checking adds the
 		// mods it depends on and unchecks others in its group; unchecking drops mods that need it.
@@ -1427,11 +1642,12 @@ int main(int argc, char** argv)
 				return;
 			}
 			picker = OptionalPicker{ pack, true, {}, {}, {}, picker.generation + 1 };
-			// A reinstall starts from the choices made last time.
+			// A reinstall of this version starts from the choices made for it last time.
 			const auto saved = libraryPacks.find(pack.id);
-			const std::vector<std::string> previous = saved != libraryPacks.end() ? saved->second.optionalMods
-				: std::vector<std::string>();
-			const bool hadChoice = saved != libraryPacks.end();
+			const InstalledVersion* savedVersion = saved != libraryPacks.end()
+				? FindInstalledVersion(saved->second, VersionKey(pack)) : nullptr;
+			const std::vector<std::string> previous = savedVersion ? savedVersion->optionalMods : std::vector<std::string>();
+			const bool hadChoice = savedVersion != nullptr;
 			StartWorker(workers, [&http, &uiQueue, &shuttingDown, &picker, &setOptional, &startPlanInstall, pack, previous,
 				hadChoice, generation = picker.generation]() {
 				std::vector<OptionalMod> mods;
@@ -2033,9 +2249,9 @@ int main(int argc, char** argv)
 					ImGui::Dummy(ImVec2(0.0f, S(8.0f)));
 
 					if (caps.installsPacks && online) {
-						// Whole-pack install: one card for the pack's latest version.
+						// Whole-pack install: one card for the chosen version. Versions install side by side.
 						Widgets::SectionLabel("INSTALL");
-						const std::string key = "pack:" + pack.id;
+						const std::string key = "pack:" + pack.id + "@" + VersionKey(pack);
 						DownloadState state;
 						bool hasState = false;
 						{
@@ -2047,8 +2263,11 @@ int main(int argc, char** argv)
 							}
 						}
 						const auto libraryEntry = libraryPacks.find(pack.id);
-						const bool inLibrary = libraryEntry != libraryPacks.end() &&
-							libraryEntry->second.sourceVersionId == pack.sourceVersionId;
+						const InstalledVersion* installedHere = libraryEntry != libraryPacks.end()
+							? FindInstalledVersion(libraryEntry->second, VersionKey(pack)) : nullptr;
+						const bool inLibrary = installedHere != nullptr;
+						const std::string versionFolder = installedHere ? installedHere->gameDir
+							: PlanInstalledVersion(libraryPacks, pack, true).gameDir;
 
 						BeginCard("install_card");
 						ImGui::AlignTextToFramePadding();
@@ -2062,9 +2281,15 @@ int main(int argc, char** argv)
 							if (ImGui::Button("Retry"))
 								startFetchFiles(view, pack);
 						} else if (pack.filesLoaded) {
-							ImGui::PushFont(fonts.bold, 0.0f);
-							ImGui::TextUnformatted(pack.version.empty() ? "Latest version" : pack.version.c_str());
-							ImGui::PopFont();
+							// Version to install; the newest release is chosen at first.
+							ImGui::SetNextItemWidth(S(200.0f));
+							ImGui::BeginDisabled(hasState && state.active);
+							PackVersionInfo picked;
+							if (versionCombo("##install_version", pack, pack.version.empty() ? "Latest version" : pack.version,
+									pack.sourceVersionId, picked))
+								applyPickedVersion(*selectedPack, picked);
+							ImGui::EndDisabled();
+							ImGui::SetItemTooltip("Pick which version of the pack to install");
 							ImGui::SameLine();
 							std::string details;
 							if (!pack.gameVersion.empty())
@@ -2098,12 +2323,12 @@ int main(int argc, char** argv)
 						if (!(hasState && state.active) && ((hasState && state.installed) || inLibrary)) {
 							ImGui::TextColored(Theme::C().accent, "Installed");
 							ImGui::SameLine();
-							ImGui::TextDisabled("to installs/%s/minecraft", pack.id.c_str());
+							ImGui::TextDisabled("to %s", versionFolder.c_str());
 						}
 						if (hasState && !state.blocked.empty()) {
 							ImGui::Spacing();
-							ImGui::TextColored(Theme::C().error, "%llu file(s) must be downloaded by hand into installs/%s/minecraft:",
-								static_cast<unsigned long long>(state.blocked.size()), pack.id.c_str());
+							ImGui::TextColored(Theme::C().error, "%llu file(s) must be downloaded by hand into %s:",
+								static_cast<unsigned long long>(state.blocked.size()), versionFolder.c_str());
 							for (const PlannedFile& file : state.blocked) {
 								ImGui::PushID(file.relPath.c_str());
 								ImGui::BulletText("%s  ->  %s", file.name.c_str(), file.relPath.c_str());
@@ -2131,6 +2356,22 @@ int main(int argc, char** argv)
 							ImGui::TextColored(Theme::C().error, "Couldn't load versions: %s", filesError->second.c_str());
 							if (ImGui::Button("Retry"))
 								startFetchFiles(view, pack);
+						}
+						if (online && pack.filesLoaded) {
+							// Which version's .mrpack to download; the newest release is chosen at first.
+							ImGui::AlignTextToFramePadding();
+							ImGui::TextDisabled("Version");
+							ImGui::SameLine();
+							ImGui::SetNextItemWidth(S(220.0f));
+							PackVersionInfo picked;
+							if (versionCombo("##file_version", pack, pack.version.empty() ? "Latest version" : pack.version,
+									pack.sourceVersionId, picked))
+								applyPickedVersion(*selectedPack, picked);
+							ImGui::SameLine();
+							std::string details = pack.gameVersion.empty() ? std::string() : "Minecraft " + pack.gameVersion;
+							if (!pack.loaders.empty())
+								details += (details.empty() ? "" : "  \xC2\xB7  ") + pack.loaders;
+							ImGui::TextDisabled("%s", details.c_str());
 						}
 
 						for (const PackFile& file : pack.files) {
@@ -2254,8 +2495,18 @@ int main(int argc, char** argv)
 						const auto it = plays.find(pack.id);
 						playBusy = it != plays.end() && it->second.busy;
 					}
+					// Plays the version shown here when it's installed (making it the active one),
+					// else the pack's active version.
+					const InstalledVersion* shownInstalled = libraryPack != libraryPacks.end() && pack.filesLoaded
+						? FindInstalledVersion(libraryPack->second, VersionKey(pack)) : nullptr;
 					ImGui::BeginDisabled(libraryPack == libraryPacks.end() || playBusy);
 					if (ImGui::Button(playBusy ? "PLAYING" : "PLAY", ImVec2(-1.0f, S(52.0f)))) {
+						if (shownInstalled && shownInstalled->key != libraryPack->second.activeVersion) {
+							const std::string key = shownInstalled->key;
+							SelectInstalledVersion(libraryPack->second, key);
+							if (!SavePackLibrary(kLibraryFile, libraryPacks))
+								log << "Could not save " << kLibraryFile << "\n";
+						}
 						startPlay(libraryPack->second);
 						page = Page::Library;
 					}
@@ -2265,6 +2516,9 @@ int main(int argc, char** argv)
 					if (libraryPack == libraryPacks.end())
 						ImGui::TextDisabled(GetSourceCapabilities(pack.source).installsPacks
 							? "Install the pack to play it." : "Install the pack's file to play it.");
+					else if (!shownInstalled && pack.filesLoaded)
+						ImGui::TextDisabled("This version isn't installed. PLAY starts your installed %s.",
+							libraryPack->second.version.c_str());
 					else
 						ImGui::TextDisabled("Progress and errors appear in My Library.");
 
@@ -2384,7 +2638,7 @@ int main(int argc, char** argv)
 			} else if (page == Page::Library) {
 				const float iconSize = S(56.0f);
 				int cardIndex = 0;
-				for (const auto& [packId, pack] : libraryPacks) {
+				for (auto& [packId, pack] : libraryPacks) {
 					PlayState play;
 					{
 						std::lock_guard<std::mutex> lock(playsMutex);
@@ -2400,14 +2654,47 @@ int main(int argc, char** argv)
 					const bool hostable = canHostServer(pack);
 					ImGui::PushTextWrapPos(0.0f);
 					Widgets::Text(fonts.bold, Theme::kFontHeading, Theme::C().text, pack.name.c_str());
-					std::string details = std::string(PackSourceName(pack.source)) + "  \xC2\xB7  " + pack.version;
+					// With several installed versions, a dropdown picks the active one (what PLAY,
+					// Open folder and Manage act on).
+					const bool multipleVersions = pack.installedVersions.size() > 1;
+					std::string details = PackSourceName(pack.source);
+					if (!multipleVersions)
+						details += "  \xC2\xB7  " + pack.version;
 					if (!pack.gameVersion.empty())
 						details += "  \xC2\xB7  Minecraft " + pack.gameVersion;
 					if (!pack.loaders.empty())
 						details += "  \xC2\xB7  " + pack.loaders;
+					std::string switchTo;
+					if (multipleVersions) {
+						ImGui::SetNextItemWidth(S(190.0f));
+						ImGui::BeginDisabled(play.busy);
+						if (ImGui::BeginCombo("##installed_version", pack.version.c_str())) {
+							for (const InstalledVersion& v : pack.installedVersions) {
+								ImGui::PushID(v.key.c_str());
+								if (ImGui::Selectable(v.version.empty() ? v.key.c_str() : v.version.c_str(), v.key == pack.activeVersion))
+									switchTo = v.key;
+								if (!v.gameVersion.empty()) {
+									ImGui::SameLine();
+									ImGui::TextDisabled("Minecraft %s", v.gameVersion.c_str());
+								}
+								ImGui::PopID();
+							}
+							ImGui::EndCombo();
+						}
+						ImGui::EndDisabled();
+						ImGui::SetItemTooltip("%d versions installed. PLAY starts the one picked here; each has its own "
+							"mods, settings and worlds. Install more from Discover.", static_cast<int>(pack.installedVersions.size()));
+						ImGui::SameLine();
+						ImGui::AlignTextToFramePadding();
+					}
 					ImGui::TextDisabled("%s", details.c_str());
 					if (!pack.description.empty())
 						Widgets::WrappedText(Theme::C().textDim, ShortenText(pack.description, 160).c_str());
+					if (!switchTo.empty()) {
+						SelectInstalledVersion(pack, switchTo);
+						if (!SavePackLibrary(kLibraryFile, libraryPacks))
+							log << "Could not save " << kLibraryFile << "\n";
+					}
 					if (play.playing) {
 						ImGui::TextColored(Theme::C().accent, "Minecraft is running");
 					} else if (play.busy) {
@@ -2472,8 +2759,20 @@ int main(int argc, char** argv)
 								startRepair(pack);
 							ImGui::SetItemTooltip("Re-check every pack file and re-download damaged or missing ones");
 							ImGui::Separator();
-							if (ImGui::MenuItem("Uninstall...")) {
+							if (pack.installedVersions.size() > 1) {
+								if (ImGui::MenuItem(("Uninstall " + pack.version + "...").c_str())) {
+									uninstallPackId = pack.id;
+									uninstallVersionKey = pack.activeVersion;
+									uninstallDeleteServer = false;
+								}
+								if (ImGui::MenuItem("Uninstall all versions...")) {
+									uninstallPackId = pack.id;
+									uninstallVersionKey.clear();
+									uninstallDeleteServer = false;
+								}
+							} else if (ImGui::MenuItem("Uninstall...")) {
 								uninstallPackId = pack.id;
+								uninstallVersionKey.clear();
 								uninstallDeleteServer = false;
 							}
 							ImGui::PopFont();
@@ -2555,7 +2854,7 @@ int main(int argc, char** argv)
 						const char* tag = server.running ? "Running" : busy ? "Setting up" : server.ready ? "Ready" : nullptr;
 						const ImVec4 tagColor = server.running ? Theme::C().accent : busy ? Theme::C().info : Theme::C().textDim;
 						const std::string meta = !inLibrary ? "Pack uninstalled"
-							: CanCreateServer(fs::path("installs") / packId)
+							: canHostServer(pack)
 							? (server.ready ? server.info.loader + " " + server.info.minecraftVersion : "No server yet")
 							: "Pack files are missing";
 						ImGui::PushID(packId.c_str());
@@ -2579,7 +2878,7 @@ int main(int argc, char** argv)
 					const bool inLibrary = libraryPacks.count(serverPackId) > 0;
 					// supported: the pack can be (re)built into a server. A finished server can still
 					// be run and configured after its pack was uninstalled.
-					const bool supported = inLibrary && CanCreateServer(fs::path("installs") / serverPackId);
+					const bool supported = inLibrary && canHostServer(pack);
 					std::error_code serverDirError;
 					const bool hasServerDir = fs::is_directory(serverDir, serverDirError);
 					bool busy, deleting;
@@ -2648,6 +2947,32 @@ int main(int argc, char** argv)
 							if (progress >= 0.0)
 								Widgets::ThinProgressBar(static_cast<float>(progress));
 						} else {
+							// Which pack version to set up: the one installed in My Library unless another is picked.
+							if (pack.source != PackSource::LocalIndex) {
+								ImGui::AlignTextToFramePadding();
+								ImGui::TextDisabled("Pack version");
+								ImGui::SameLine();
+								ImGui::SetNextItemWidth(S(240.0f));
+								std::string chosenId;
+								std::string preview;
+								{
+									std::lock_guard<std::mutex> lock(serversMutex);
+									chosenId = server.hasVersion ? server.version.sourceVersionId : pack.sourceVersionId;
+									preview = server.hasVersion ? server.version.versionNumber : pack.version + " (installed)";
+								}
+								ImGui::BeginDisabled(server.running);
+								PackVersionInfo picked;
+								if (versionCombo("##server_version", pack, preview, chosenId, picked)) {
+									std::lock_guard<std::mutex> lock(serversMutex);
+									server.hasVersion = !isInstalledVersion(pack, picked);
+									server.version = picked;
+								}
+								ImGui::EndDisabled();
+								if (server.ready && !server.info.packVersion.empty()) {
+									ImGui::SameLine();
+									ImGui::TextDisabled("Server has %s", server.info.packVersion.c_str());
+								}
+							}
 							const char* label = server.ready ? "Update server files" : "Create server files";
 							std::vector<const char*> buttons;
 							if (hasServerDir) {
@@ -3342,9 +3667,19 @@ int main(int argc, char** argv)
 					ImGui::SetNextWindowSize(ImVec2(S(460.0f), 0.0f));
 					if (ImGui::BeginPopupModal("Uninstall pack?", nullptr, ImGuiWindowFlags_NoResize)) {
 						const Modpack pack = it->second;
-						ImGui::TextWrapped("%s will be removed from My Library and its files deleted, including "
-							"worlds in its saves folder. This can't be undone.", pack.name.c_str());
-						ImGui::TextDisabled("%s", gameDir(pack).string().c_str());
+						const InstalledVersion* one = uninstallVersionKey.empty() ? nullptr
+							: FindInstalledVersion(pack, uninstallVersionKey);
+						if (one) {
+							ImGui::TextWrapped("Version %s of %s will be removed and its files deleted, including worlds in "
+								"its saves folder. Other versions stay. This can't be undone.", one->version.c_str(), pack.name.c_str());
+							ImGui::TextDisabled("%s", one->gameDir.c_str());
+						} else {
+							ImGui::TextWrapped("%s will be removed from My Library and the files of %s deleted, including "
+								"worlds in their saves folders. This can't be undone.", pack.name.c_str(),
+								pack.installedVersions.size() > 1 ? "all its versions" : "the pack");
+							for (const InstalledVersion& v : pack.installedVersions)
+								ImGui::TextDisabled("%s", v.gameDir.c_str());
+						}
 						ImGui::Spacing();
 						bool busy = false;
 						{
@@ -3359,7 +3694,9 @@ int main(int argc, char** argv)
 						}
 						const fs::path packServerDir = fs::path(kServersRoot) / pack.id;
 						std::error_code serverDirError;
-						if (fs::is_directory(packServerDir, serverDirError)) {
+						// One server per pack: offered only when the whole pack goes.
+						const bool removesPack = !one || pack.installedVersions.size() <= 1;
+						if (removesPack && fs::is_directory(packServerDir, serverDirError)) {
 							ImGui::Checkbox("Also delete its server", &uninstallDeleteServer);
 							ImGui::SetItemTooltip("Deletes %s, including the server's world. Otherwise the server is kept "
 								"and still listed on the Servers page.", packServerDir.string().c_str());
@@ -3378,10 +3715,12 @@ int main(int argc, char** argv)
 						ImGui::PushStyleColor(ImGuiCol_Button, Theme::Mix(Theme::C().cardBg, Theme::C().error, 0.55f));
 						ImGui::BeginDisabled(busy);
 						if (ImGui::Button("Uninstall")) {
-							if (settings.packLaunch.erase(pack.id) > 0)
+							const bool lastVersion = !one || pack.installedVersions.size() <= 1;
+							if (lastVersion && settings.packLaunch.erase(pack.id) > 0)
 								settingsDirty = true;
-							uninstallPack(pack);
-							if (uninstallDeleteServer)
+							uninstallPack(pack, one ? uninstallVersionKey : std::string());
+							// The server goes only with the pack's last version.
+							if (uninstallDeleteServer && lastVersion)
 								startServerDelete(pack.id, pack.name);
 							uninstallPackId.clear();
 							ImGui::CloseCurrentPopup();

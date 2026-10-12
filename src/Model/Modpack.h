@@ -26,6 +26,20 @@ struct PackFile {
 	uint64_t size = 0;
 };
 
+// One installed version of a My Library pack. A pack can have several side by side,
+// each with its own folders. Paths are relative to the data folder.
+struct InstalledVersion {
+	std::string key;             // folder-safe id, unique within the pack (from the version name, else sourceVersionId)
+	std::string version;         // display name
+	std::string sourceVersionId;
+	std::string gameVersion;
+	std::string loaders;
+	std::vector<PackFile> files;          // Modrinth: the version's .mrpack
+	std::vector<std::string> optionalMods; // ATLauncher choices for this version
+	std::string installDir;      // the unzipped .mrpack, or pack.json + minecraft/ for whole-pack installs
+	std::string gameDir;         // the game folder Minecraft runs in
+};
+
 struct Modpack {
 	std::string id; // unique across sources: Modrinth slug, or "cf-123", "ftb-135", "technic-<slug>", "atl-<name>"
 	std::string name;
@@ -56,6 +70,12 @@ struct Modpack {
 	bool sourceIsSolder = false;
 	// ATLauncher only: the optional mods (by name) the player chose to install.
 	std::vector<std::string> optionalMods;
+
+	// My Library only: every installed version, and the key of the active one (the one Play
+	// uses). The fields above (version, sourceVersionId, gameVersion, loaders, files,
+	// optionalMods) mirror the active version.
+	std::vector<InstalledVersion> installedVersions;
+	std::string activeVersion;
 
 	// Online search results don't include versions; they're fetched when the pack is selected.
 	bool filesLoaded = true;
