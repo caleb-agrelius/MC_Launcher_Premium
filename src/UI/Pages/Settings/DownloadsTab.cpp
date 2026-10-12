@@ -64,6 +64,8 @@ bool DownloadsTab::Draw(Settings& settings, const SettingsPageContext& context, 
 			ImGui::TextWrapped("%s", context.sharingStatus.c_str());
 		if (!context.sharingStats.empty())
 			ImGui::TextDisabled("%s", context.sharingStats.c_str());
+		else if (context.sharingStatus.empty())
+			ImGui::Dummy(ImVec2(0.0f, ImGui::GetTextLineHeightWithSpacing())); // the count line, still being worked out
 		ImGui::PopFont();
 	});
 

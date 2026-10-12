@@ -4,6 +4,7 @@
 #include "Core/UiQueue.h"
 #include "Core/WorkerPool.h"
 #include "Network/HttpClient.h"
+#include "Network/OfflineHttpClient.h"
 #include "Network/TracingHttpClient.h"
 #include "Services/Account/AccountService.h"
 #include "Services/Discover/DiscoverService.h"
@@ -75,7 +76,7 @@ class ThemeController;
 class AppRoot {
 public:
 	AppRoot(const std::filesystem::path& dataRoot, std::ostream& log, GlfwWindow& window, SettingsStore& settings,
-		ThemeController& theme);
+		ThemeController& theme, bool offline = false);
 
 	// One frame, from running what workers posted to presenting the picture.
 	void Frame(const std::vector<std::filesystem::path>& droppedPaths);
@@ -95,6 +96,7 @@ private:
 	WorkerPool m_workers;
 	UiQueue m_uiQueue;
 	HttpClient m_http;
+	OfflineHttpClient m_offlineHttp; // stands in for m_http in offline mode
 	TracingHttpClient m_tracedHttp; // what the services use: traces requests when the debug harness is on
 	ToastNotifier m_notifier;
 	Runtime m_rt;

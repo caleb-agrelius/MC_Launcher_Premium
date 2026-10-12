@@ -24,6 +24,10 @@ void EndCard();
 
 // When true, images appear without fading in.
 void SetReduceMotion(bool reduce);
+// How fast animations play: 1 is the normal speed, 2 twice as fast. Divide a duration by it, or multiply a
+// rate. Settings > Appearance > Animation speed.
+void SetAnimationSpeed(float speed);
+float AnimationSpeed();
 
 // Entrance animation: the item fades in and rises into place. start is the
 // ImGui::GetTime() the animation began (e.g. when the page was opened); index staggers
@@ -63,6 +67,17 @@ void WrappedText(const ImVec4& color, const char* text);
 void SectionLabel(const char* text);
 // A spinning arc sized to the current text line.
 void Spinner(const ImVec4& color);
+// A pulsing rounded bar standing in for content that is still loading, so the page keeps the size
+// it will have. Still (no pulse) with Reduce motion on.
+// barHeight > 0 draws a thinner bar centered in size (for text next to taller controls).
+void Skeleton(ImVec2 size, float rounding = 6.0f, float barHeight = 0.0f);
+// Pads the layout so that everything since startCursorY (the cursor's Y when the block began) is at least
+// minHeight tall. Use it where a block is shorter while loading than once loaded, so what follows
+// doesn't move.
+void PadToHeight(float startCursorY, float minHeight);
+// A frame-high field with a spinner and label inside, standing in for a dropdown or input that is
+// still loading. width <= 0 uses the next item width (like a real input).
+void LoadingField(const char* label, float width = 0.0f);
 // A rounded "pill" tag, laid out like a normal item (use SameLine() between chips).
 void Chip(const char* text, const ImVec4& tint);
 // The amber "Modified" chip for a pack version the player changed, with what changed

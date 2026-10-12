@@ -8,6 +8,8 @@ set "BUILD_DIR=%PROJECT_DIR%\build"
 if /I "%~1"=="build" goto build
 if /I "%~1"=="run" goto run
 if /I "%~1"=="debug" goto debug
+if /I "%~1"=="offline" goto offline
+if /I "%~1"=="offline" goto offline
 if /I "%~1"=="help" goto usage
 if "%~1"=="" goto usage
 
@@ -50,6 +52,33 @@ goto collect_channels
 :run_debug
 if defined CHANNELS (set "MCLP_DEBUG=%CHANNELS:~1%") else set "MCLP_DEBUG=all"
 echo Debug harness on [%MCLP_DEBUG%]. Close the app window or press Ctrl+C to stop.
+pushd "%PROJECT_DIR%"
+"%APP%"
+set "APP_EXIT=%errorlevel%"
+popd
+exit /b %APP_EXIT%
+
+
+:offline
+rem Builds, then runs the app in this console with every network request refused at once, so a
+rem launch that doesn't need the pack APIs, images or sign-in doesn't call them. Blocked requests
+rem show in the http trace. Channels work as in debug (default: http,log). Example: mcdebug offline file
+call :build
+if errorlevel 1 exit /b %errorlevel%
+call :find_app
+if errorlevel 1 exit /b 1
+
+set "CHANNELS="
+:collect_offline_channels
+shift
+if "%~1"=="" goto run_offline
+set "CHANNELS=%CHANNELS%,%~1"
+goto collect_offline_channels
+
+:run_offline
+if defined CHANNELS (set "MCLP_DEBUG=%CHANNELS:~1%") else set "MCLP_DEBUG=http,log"
+set "MCLP_OFFLINE=1"
+echo Offline mode on, debug harness on [%MCLP_DEBUG%]. Close the app window or press Ctrl+C to stop.
 pushd "%PROJECT_DIR%"
 "%APP%"
 set "APP_EXIT=%errorlevel%"
@@ -104,13 +133,14 @@ echo cmake was not found on PATH or in a Visual Studio installation.
 exit /b 1
 
 :usage
-echo Usage: mcdebug ^<build^|run^|debug^|help^>
+echo Usage: mcdebug ^<build^|run^|debug^|offline^|help^>
 echo   build  Configure and build the Debug executable.
 echo   run    Build the Debug executable, then launch it.
 echo   debug  Build, then run it in this console with the debug harness on.
 echo          Optional channels: http, body, file, process, log, all. Example: mcdebug debug http,file
+echo   offline  Like debug, but every network request fails at once. Use it unless the work needs the APIs.
 exit /b 0
 
 :usage_error
-echo Usage: mcdebug ^<build^|run^|debug^|help^>
+echo Usage: mcdebug ^<build^|run^|debug^|offline^|help^>
 exit /b 2

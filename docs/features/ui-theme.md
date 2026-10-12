@@ -97,6 +97,9 @@ Color themes, fonts, DPI and UI scaling, shared drawing helpers, and toast notif
 | `Text(font, size, color, text)` | Text in a given font, size, and color |
 | `SectionLabel` | Small bold dimmed heading, e.g. "PACK FILES (1)" |
 | `Spinner` | A rotating arc the height of a text line |
+| `Skeleton(size, rounding, barHeight)` | A pulsing placeholder block (or a bar of `barHeight` inside `size`) standing in for content still loading. Size it like the loaded content so nothing moves when the data arrives |
+| `LoadingField(label, width)` | A combo-sized box with a spinner and `label`, in place of a dropdown whose items are still loading |
+| `PadToHeight(startY, minHeight)` | Pads the current row to `minHeight` since `startY`, so a status line that is replaced by a taller one (or by nothing) keeps the layout below it still |
 | `ModifiedChip` | The amber "Modified" chip for a pack version the player changed, with the changes ("1 added, 1 turned off") in its tooltip. Used everywhere an installed version shows (see [manage.md](manage.md#your-changes)). `ModifiedColor()` is its color, for related text |
 | `Chip` | A rounded pill tag tinted with a color. It centers on the line it shares: in the middle of a button-height line (after `AlignTextToFramePadding` or next to buttons), or on a line of plain text without pushing the next line down |
 | `ThinProgressBar` | An 8px accent progress bar with no text |
@@ -119,7 +122,12 @@ Color themes, fonts, DPI and UI scaling, shared drawing helpers, and toast notif
 | `HeroBanner` | The banner at the top of the pack details pane (see [discover.md](discover.md)) |
 | `DrawPackIcon` | The pack icon, or a placeholder tile in the pack's color with its first letter, shown until the icon loads or if it fails |
 
+
+Loading states reserve the space of what replaces them (see [discover.md](discover.md), [manage.md](manage.md)). To look at them, launch offline with `MCLP_OFFLINE_DELAY_MS` (see [debug-harness.md](debug-harness.md#offline-mode)).
+
 Images fade in over 0.25 s (`FadeAlpha`), unless **Reduce motion** is on (`Widgets::SetReduceMotion`).
+
+**Animation speed** (`Widgets::SetAnimationSpeed`, set each frame by `ThemeController` from `Settings::animationSpeed`; read with `Widgets::AnimationSpeed()`) scales every time-based animation: the entrance rise and stagger (`BeginEntrance`), smooth-scroll easing, image fade-ins, toast fade and slide, and the mascot's head easing, hop and idle bob. Divide a duration by it or multiply a rate, and use it for any new animation. At 300% a tab's cards finish arriving in about 0.1 s instead of 0.3 s.
 
 Every button, dropdown, list row, switch and menu entry comes from these widgets, so they share the theme's rounding and colors. No page uses `ImGui::Combo`, `ImGui::Selectable`, `ImGui::Checkbox` or `ImGui::MenuItem` directly, or pushes its own button colors.
 

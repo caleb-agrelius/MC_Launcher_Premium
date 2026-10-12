@@ -15,6 +15,7 @@ std::vector<std::string> DiscoverResultList::DrawStatus(const DiscoverPlan& plan
 {
 	DiscoverState& discover = m_discover.State();
 	auto& views = m_discover.Views();
+	const float rowTop = ImGui::GetCursorPosY();
 	std::vector<std::string> searchingNames;
 	for (PackSource source : discover.activeSources) {
 		if (views[source].searching)
@@ -24,9 +25,11 @@ std::vector<std::string> DiscoverResultList::DrawStatus(const DiscoverPlan& plan
 		std::string names;
 		for (std::size_t i = 0; i < searchingNames.size(); ++i)
 			names += (i ? ", " : "") + searchingNames[i];
+		ImGui::AlignTextToFramePadding(); // as tall as the results line that replaces it, so the list doesn't drop
 		Widgets::Spinner(Theme::C().accent);
 		ImGui::SameLine();
 		ImGui::TextDisabled("Searching %s...", names.c_str());
+		Widgets::PadToHeight(rowTop, ImGui::GetFrameHeight()); // the height of the results line that replaces it
 	} else if (discover.activeSources.empty()) {
 		Widgets::WrappedText(Theme::C().error, plan.skipped.empty() ? "Pick at least one source."
 			: ("No source can run this search. " + plan.skipped.front()).c_str());

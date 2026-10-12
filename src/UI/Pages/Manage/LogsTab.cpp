@@ -145,7 +145,12 @@ void LogsTab::Draw(const ManagePageContext& context, ManageFrame& frame)
 	}
 	const float viewHeight = height - ImGui::GetFrameHeightWithSpacing();
 	if (m_logLoading) {
-		UiHelpers::BusyLabel(("Reading " + log.label + "...").c_str());
+		// The log view's size and look, so it doesn't jump when the lines arrive.
+		ImGui::PushStyleColor(ImGuiCol_ChildBg, Theme::Mix(Theme::C().windowBg, Theme::C().cardBg, 0.4f));
+		if (ImGui::BeginChild("log_loading", ImVec2(0.0f, viewHeight), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding))
+			UiHelpers::BusyLabel(("Reading " + log.label + "...").c_str());
+		ImGui::EndChild();
+		ImGui::PopStyleColor();
 	} else if (!m_logError.empty()) {
 		Widgets::WrappedText(Theme::C().error, m_logError.c_str());
 	} else {

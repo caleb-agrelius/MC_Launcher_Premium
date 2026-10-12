@@ -17,6 +17,8 @@ The CTest checks cover window settings, server file filtering and setup, preserv
 
 `tests/UiDriver.ps1` is a set of PowerShell helpers for testing the launcher the way a person uses it: `Start-App` runs the exe in a throwaway data folder (`New-Fixture`), `Click-At`, `Wheel-At` and `Move-Mouse` send real mouse input, `Shot` saves a screenshot of the window, and `Get-Shift` measures how far a strip of the window moved between two screenshots (a card that jumps while scrolling shows up as a column that moved by a different amount). Dot-source it from a script or a PowerShell session.
 
+The harness starts the app offline (see [debug-harness.md](features/debug-harness.md#offline-mode)); set `$script:AppOnline = $true` before `Start-App` for a test that needs the network.
+
 `tests/UiSmoke.ps1` uses it to check the Settings page offline: the tip's "x" and Don't show again (also after a restart), Appearance scrolling back to the exact top, and Game options not re-flowing while scrolling.
 
 ```powershell

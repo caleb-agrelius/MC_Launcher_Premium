@@ -27,6 +27,10 @@ private:
 	void DrawFileCards(SourceView& view, Modpack& pack, bool compact);
 	// "Version [picker]  Minecraft x . loader" for a source that installs file by file.
 	void DrawVersionRow(Modpack& pack, float comboWidth);
+	// Stand-ins with the loaded layout's sizes while the pack's versions and files load, so the PLAY
+	// button and everything below stay put when they arrive.
+	void DrawVersionRowPlaceholder(float comboWidth);
+	void DrawFileRowPlaceholder();
 	// One file: name, size and its Install / progress / Installed state. Draws inside a card.
 	void DrawFileRow(Modpack& pack, const PackFile& file);
 

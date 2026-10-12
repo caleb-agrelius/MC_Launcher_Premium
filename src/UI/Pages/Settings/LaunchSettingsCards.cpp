@@ -77,6 +77,9 @@ bool LaunchSettingsCards::DrawJavaChoice(LaunchSettings& launch, const SettingsP
 
 	ImGui::PushFont(nullptr, Theme::kFontSmall);
 	ImGui::PushTextWrapPos(0.0f);
+	// The note under the picker is one line while scanning and up to two once Java is found; keep two.
+	const float noteTop = ImGui::GetCursorPosY();
+	const float noteHeight = ImGui::GetTextLineHeightWithSpacing() * 2.0f;
 	if (custom) {
 		changed |= ImGui::InputTextWithHint("##java_path", "Path to java.exe, javaw.exe, or a Java folder", &launch.javaPath);
 		std::error_code ec;
@@ -100,6 +103,8 @@ bool LaunchSettingsCards::DrawJavaChoice(LaunchSettings& launch, const SettingsP
 	} else {
 		ImGui::TextDisabled("%s", chosen->home.string().c_str());
 	}
+	if (!custom)
+		Widgets::PadToHeight(noteTop, noteHeight);
 	ImGui::PopTextWrapPos();
 	ImGui::PopFont();
 	return changed;

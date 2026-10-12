@@ -8,7 +8,9 @@
 class Application {
 public:
 	// dataRoot is the folder holding resources/ (the working directory), or empty if not found.
-	Application(std::filesystem::path dataRoot, std::ostream& log) : m_dataRoot(std::move(dataRoot)), m_log(log) {}
+	// offline: every network request fails at once (see Network/OfflineHttpClient.h).
+	Application(std::filesystem::path dataRoot, std::ostream& log, bool offline = false)
+		: m_dataRoot(std::move(dataRoot)), m_log(log), m_offline(offline) {}
 
 	// Returns the process exit code.
 	int Run();
@@ -16,4 +18,5 @@ public:
 private:
 	std::filesystem::path m_dataRoot;
 	std::ostream& m_log;
+	bool m_offline;
 };

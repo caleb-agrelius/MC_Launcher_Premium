@@ -17,10 +17,10 @@
 namespace fs = std::filesystem;
 
 AppRoot::AppRoot(const fs::path& dataRoot, std::ostream& log, GlfwWindow& window, SettingsStore& settings,
-	ThemeController& theme)
+	ThemeController& theme, bool offline)
 	: m_log(log), m_window(window), m_settings(settings), m_theme(theme),
 	  m_workers([] { HttpClient::ReleaseThreadHandle(); }),
-	  m_tracedHttp(m_http),
+	  m_tracedHttp(offline ? static_cast<IHttpClient&>(m_offlineHttp) : static_cast<IHttpClient&>(m_http)),
 	  m_rt{ m_workers, m_uiQueue, m_tracedHttp, m_notifier, log, m_shuttingDown },
 	  m_library(AppPaths::kLibraryFile, log),
 	  m_images(m_tracedHttp),

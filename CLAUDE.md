@@ -34,6 +34,10 @@ Other docs: [docs/development.md](docs/development.md) (debugging, logs, trouble
 | [accounts.md](docs/features/accounts.md) | Microsoft sign-in, offline mode, `account.dat` |
 | [planned.md](docs/features/planned.md) | Features that aren't implemented yet |
 
+## Offline launches
+
+Launch the app offline (`mcdebug offline`, `--offline` or `MCLP_OFFLINE=1`) for any run or test that doesn't depend on the network or a third-party API: UI, layout, settings, Library, Manage, the UI test harness. It refuses every request instantly instead of calling Modrinth, CurseForge, FTB, Technic and ATLauncher on each launch. Go online only when the work touches an API client, search, version lists, images, sign-in or downloads. See [debug-harness.md](docs/features/debug-harness.md#offline-mode).
+
 ## Keeping docs current
 
 When a change adds, removes, or changes user-visible behavior or a feature's internals, update the matching doc in the same change. Add a new doc and table row for a new area. Docs describe current behavior only. Put future work in `planned.md`.
