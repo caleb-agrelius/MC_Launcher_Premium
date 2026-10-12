@@ -2,6 +2,10 @@
 
 Debugging, logs, and troubleshooting. Build steps are in the [README](../README.md#build).
 
+## Build speed
+
+`mcdebug build`, `run`, `debug` and `offline` build only the app target; `mcdebug build all` also builds `launcher_checks`, `live_checks` and `logo_export` (the check programs compile most of the same sources again). MSVC compiles files in parallel (`/MP`), and `src/Pch.h` is a precompiled header of the standard library, nlohmann/json and `imgui.h` for the app and `launcher_checks`: add only headers that never change with app code, since editing anything in it rebuilds every file. A clean app build takes about 8 s and a one-file change about 1 s; project headers that many files include (`Widgets.h`, `Modpack.h`, `Settings.h`) still recompile every file that includes them, so keep new declarations out of them when a narrower header will do.
+
 ## Regression checks
 
 `BUILD_TESTING` defaults to `ON`. After building Debug, run:

@@ -5,12 +5,19 @@
 #include "UI/Theme.h"
 #include "UI/Widgets.h"
 
+namespace {
+constexpr float kMinWindowWidth = 1180.0f;
+constexpr float kMinWindowHeight = 720.0f;
+}
+
 void ThemeController::ApplyAll(bool recolorTitleBar)
 {
 	Theme::Apply(m_appliedTheme, m_dpiScale, m_appliedUiScale);
 	if (recolorTitleBar)
 		m_window.ApplyTitleBar(Theme::C().light == false, Theme::C().windowBg, Theme::C().text);
-	m_window.SetMinimumSize(static_cast<int>(Theme::S(900.0f)), static_cast<int>(Theme::S(600.0f)));
+	// The smallest window where every page's layout still fits (Discover's filter row and the sidebar are the
+	// widest and tallest), in logical pixels so it grows with Windows scaling and the UI scale.
+	m_window.SetMinimumSize(static_cast<int>(Theme::S(kMinWindowWidth)), static_cast<int>(Theme::S(kMinWindowHeight)));
 }
 
 void ThemeController::Initialize()

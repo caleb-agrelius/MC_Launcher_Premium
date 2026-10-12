@@ -117,6 +117,7 @@ Color themes, fonts, DPI and UI scaling, shared drawing helpers, and toast notif
 | `EmptyState` | A centered block illustration, title, hint, and optional button for empty pages |
 | `ThemeCard` | A theme swatch: a miniature launcher drawn in the theme's colors, its name, and a check mark when selected |
 | `PackRow` | A pack list row (see [discover.md](discover.md)) |
+| `PackCard` | A pack grid card in CurseForge's style: banner cover, source pill, name, author, category chips, downloads and update date (see [discover.md](discover.md)). `DrawPackIcon` takes the corners to round, so the cover is rounded on top only |
 | `HeroBanner` | The banner at the top of the pack details pane (see [discover.md](discover.md)) |
 | `DrawPackIcon` | The pack icon, or a placeholder tile in the pack's color with its first letter, shown until the icon loads or if it fails |
 

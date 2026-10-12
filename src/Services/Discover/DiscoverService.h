@@ -40,6 +40,8 @@ public:
 
 	// Remembers the source filter in settings.
 	void SaveSourceFilter();
+	// Sets and remembers the grid view's card size (percent, clamped to kMinGridScale..kMaxGridScale).
+	void SetGridScale(int percent);
 
 	// Sends the pending search to every active source once typing has paused.
 	void SendIfDue(const DiscoverPlan& plan, bool singleSource);

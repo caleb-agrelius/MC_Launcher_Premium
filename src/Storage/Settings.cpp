@@ -63,6 +63,7 @@ Settings LoadSettings(const std::string& path)
 		ifs >> j;
 		settings.uiScale = std::clamp(j.value("uiScale", settings.uiScale), kMinUiScale, kMaxUiScale);
 		settings.discoverSources = j.value("discoverSources", settings.discoverSources);
+		settings.discoverGridScale = std::clamp(j.value("discoverGridScale", settings.discoverGridScale), kMinGridScale, kMaxGridScale);
 		settings.theme = j.value("theme", settings.theme);
 		settings.reduceMotion = j.value("reduceMotion", settings.reduceMotion);
 		settings.animationSpeed = std::clamp(j.value("animationSpeed", settings.animationSpeed), kMinAnimationSpeed, kMaxAnimationSpeed);
@@ -133,6 +134,7 @@ bool SaveSettings(const std::string& path, const Settings& settings)
 	json j;
 	j["uiScale"] = std::round(settings.uiScale * 100.0) / 100.0; // 1.1, not 1.100000023841858
 	j["discoverSources"] = settings.discoverSources;
+	j["discoverGridScale"] = settings.discoverGridScale;
 	j["theme"] = settings.theme;
 	j["reduceMotion"] = settings.reduceMotion;
 	j["animationSpeed"] = std::round(settings.animationSpeed * 100.0) / 100.0;

@@ -133,7 +133,7 @@ void DiscoverResultList::DrawGrid(const Modpack* selected, double rowsShownAt, b
 	auto& views = m_discover.Views();
 	const float gap = ImGui::GetStyle().ItemSpacing.x;
 	const float avail = ImGui::GetContentRegionAvail().x;
-	const int columns = std::max(1, static_cast<int>((avail + gap) / (S(132.0f) + gap)));
+	const int columns = std::max(1, static_cast<int>((avail + gap) / (S(190.0f) * static_cast<float>(discover.gridScalePercent) / 100.0f + gap)));
 	const float cardWidth = (avail - gap * static_cast<float>(columns - 1)) / static_cast<float>(columns);
 	for (std::size_t i = 0; i < discover.merged.size(); ++i) {
 		const auto& ref = discover.merged[i];

@@ -20,7 +20,13 @@ goto usage_error
 call :configure
 if errorlevel 1 exit /b %errorlevel%
 
-cmake --build "%BUILD_DIR%" --config Debug
+rem Only the app by default: launcher_checks and live_checks compile most of the same sources again, which
+rem doubled or tripled every build. "mcdebug build all" builds them too.
+if /I "%~1"=="build" if /I "%~2"=="all" (
+    cmake --build "%BUILD_DIR%" --config Debug --parallel
+    exit /b %errorlevel%
+)
+cmake --build "%BUILD_DIR%" --config Debug --target MC_Launcher_Premium --parallel
 exit /b %errorlevel%
 
 :run
@@ -134,7 +140,7 @@ exit /b 1
 
 :usage
 echo Usage: mcdebug ^<build^|run^|debug^|offline^|help^>
-echo   build  Configure and build the Debug executable.
+echo   build  Configure and build the Debug executable (build all: also the check programs).
 echo   run    Build the Debug executable, then launch it.
 echo   debug  Build, then run it in this console with the debug harness on.
 echo          Optional channels: http, body, file, process, log, all. Example: mcdebug debug http,file

@@ -199,6 +199,11 @@ bool SearchCurseForgeModpacks(IHttpClient& http,
 			pack.name = StringOrEmpty(item, "name");
 			pack.description = StringOrEmpty(item, "summary");
 			pack.downloads = item.value("downloadCount", 0ULL);
+			pack.updated = StringOrEmpty(item, "dateModified");
+			for (const auto& category : item.value("categories", json::array())) {
+				if (const std::string name = StringOrEmpty(category, "name"); !name.empty())
+					pack.categories.push_back(name);
+			}
 			const json authors = item.value("authors", json::array());
 			if (!authors.empty())
 				pack.author = StringOrEmpty(authors.front(), "name");

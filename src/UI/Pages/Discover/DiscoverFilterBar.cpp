@@ -5,6 +5,7 @@
 #include "UI/Widgets.h"
 #include "imgui.h"
 
+#include <algorithm>
 #include <string>
 
 using Theme::S;
@@ -115,6 +116,33 @@ void DiscoverFilterBar::Draw(const DiscoverPlan& plan)
 	}
 	if (!single)
 		ImGui::SetItemTooltip("Best match mixes each source's top results. Pick one source for its own sort options.");
+	if (discover.viewMode == DiscoverViewMode::Grid) {
+		// Card size as - and + buttons around the percentage, right-aligned under the view buttons; it takes
+		// the row's free space so nothing moves when it appears.
+		const float button = ImGui::GetFrameHeight();
+		const float spacing = ImGui::GetStyle().ItemSpacing.x;
+		const std::string label = std::to_string(discover.gridScalePercent) + "%";
+		const float labelWidth = ImGui::CalcTextSize("160%").x;
+		const float width = 2.0f * button + labelWidth + 2.0f * spacing;
+		ImGui::SameLine(std::max(ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x + spacing,
+			ImGui::GetContentRegionMax().x - width));
+		ImGui::BeginDisabled(discover.gridScalePercent <= kMinGridScale);
+		if (ImGui::Button("-##grid_smaller", ImVec2(button, button)))
+			m_discover.SetGridScale(discover.gridScalePercent - kGridScaleStep);
+		ImGui::EndDisabled();
+		ImGui::SetItemTooltip("Smaller cards");
+		ImGui::SameLine();
+		ImGui::AlignTextToFramePadding();
+		ImGui::TextDisabled("%s", label.c_str());
+		ImGui::SameLine(0.0f, 0.0f);
+		ImGui::Dummy(ImVec2(labelWidth - ImGui::CalcTextSize(label.c_str()).x, 0.0f)); // keeps the buttons still as the number changes
+		ImGui::SameLine();
+		ImGui::BeginDisabled(discover.gridScalePercent >= kMaxGridScale);
+		if (ImGui::Button("+##grid_larger", ImVec2(button, button)))
+			m_discover.SetGridScale(discover.gridScalePercent + kGridScaleStep);
+		ImGui::EndDisabled();
+		ImGui::SetItemTooltip("Larger cards");
+	}
 	if (filtersChanged) {
 		discover.searchPending = true;
 		discover.lastSearchEdit = -1.0; // no typing delay

@@ -21,6 +21,7 @@ DiscoverService::DiscoverService(const Runtime& runtime, SettingsStore& settings
 	}
 	if (m_state.sources.empty())
 		m_state.sources.insert(OnlineSources().begin(), OnlineSources().end()); // nothing saved = every source
+	m_state.gridScalePercent = settings.Get().discoverGridScale;
 }
 
 DiscoverPlan DiscoverService::Plan()
@@ -89,6 +90,16 @@ void DiscoverService::SaveSourceFilter()
 	settings.discoverSources.clear();
 	for (PackSource source : m_state.sources)
 		settings.discoverSources.push_back(PackSourceKey(source));
+	m_settings.MarkDirty();
+}
+
+void DiscoverService::SetGridScale(int percent)
+{
+	percent = std::clamp(percent, kMinGridScale, kMaxGridScale);
+	if (percent == m_state.gridScalePercent)
+		return;
+	m_state.gridScalePercent = percent;
+	m_settings.Get().discoverGridScale = percent;
 	m_settings.MarkDirty();
 }
 

@@ -31,6 +31,11 @@ else()
   set(PLATFORM_SOURCES src/Platform/Platform_posix.cpp)
 endif()
 
+if (MSVC)
+  # Compile each target's source files in parallel (cmake --build builds the targets one after another).
+  add_compile_options(/MP)
+endif()
+
 add_executable(MC_Launcher_Premium
   src/main.cpp
   ${PLATFORM_SOURCES}
@@ -191,6 +196,9 @@ if (WIN32)
   target_link_libraries(MC_Launcher_Premium PRIVATE bcrypt shell32 ws2_32)
 endif()
 
+# Precompiled third-party and standard headers (src/Pch.h), so each source file doesn't re-parse them.
+target_precompile_headers(MC_Launcher_Premium PRIVATE src/Pch.h)
+
 # Visual Studio: make F5 launch the app (not ALL_BUILD), running from the repo root.
 set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT MC_Launcher_Premium)
 set_target_properties(MC_Launcher_Premium PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
@@ -239,6 +247,7 @@ if (BUILD_TESTING)
   get_target_property(launcher_libraries MC_Launcher_Premium LINK_LIBRARIES)
   target_include_directories(launcher_checks PRIVATE ${launcher_includes})
   target_link_libraries(launcher_checks PRIVATE ${launcher_libraries})
+  target_precompile_headers(launcher_checks PRIVATE src/Pch.h)
   if (WIN32)
     target_compile_definitions(launcher_checks PRIVATE _CRT_SECURE_NO_WARNINGS GLFW_INCLUDE_NONE)
   endif()

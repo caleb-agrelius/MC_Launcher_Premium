@@ -64,6 +64,8 @@ struct Modpack {
 	bool bannerLoaded = false;  // true once the full-size banner lookup has finished
 	std::uint32_t color = 0; // project accent color as 0xRRGGBB, 0 if unknown
 	std::string websiteUrl;  // the pack's page on its source's website
+	std::vector<std::string> categories; // the source's own tags (Adventure, Technology), for the grid card
+	std::string updated;     // last update as ISO "YYYY-MM-DD..." (see FormatShortDate), empty if unknown
 
 	PackSource source = PackSource::LocalIndex;
 	// The source's own ids, used to fetch versions and install. Meaning per source:

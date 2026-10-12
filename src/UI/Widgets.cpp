@@ -4,6 +4,7 @@
 #include "Logo.h"
 #include "Model/Modpack.h"
 #include "Theme.h"
+#include "Util/Text.h"
 
 #include "imgui_internal.h" // DC.CursorPos, for entrance animations
 
@@ -691,14 +692,14 @@ float FadeAlpha(const LoadedImage& image)
 }
 
 void DrawPackIcon(ImDrawList* drawList, const LoadedImage* image, const Modpack& pack,
-				  ImVec2 min, float size, float rounding)
+				  ImVec2 min, float size, float rounding, ImDrawFlags flags)
 {
 	const ImVec2 max(min.x + size, min.y + size);
 	const float alpha = image ? FadeAlpha(*image) : 0.0f;
 	if (alpha < 1.0f) {
 		// Placeholder tile: the pack's color with its initial.
 		const ImVec4 base = PackColor(pack);
-		drawList->AddRectFilled(min, max, ImGui::GetColorU32(Scaled(base, 0.55f)), rounding);
+		drawList->AddRectFilled(min, max, ImGui::GetColorU32(Scaled(base, 0.55f)), rounding, flags);
 		const char initial[2] = { pack.name.empty() ? '?' : static_cast<char>(std::toupper(static_cast<unsigned char>(pack.name[0]))), '\0' };
 		ImFont* font = Theme::GetFonts().bold;
 		const float fontSize = size * 0.5f;
@@ -707,8 +708,8 @@ void DrawPackIcon(ImDrawList* drawList, const LoadedImage* image, const Modpack&
 			IM_COL32(255, 255, 255, 230), initial);
 	}
 	if (image)
-		DrawImageCover(drawList, *image, min, max, rounding, alpha);
-	drawList->AddRect(min, max, OutlineColor(0.08f), rounding);
+		DrawImageCover(drawList, *image, min, max, rounding, alpha, flags);
+	drawList->AddRect(min, max, OutlineColor(0.08f), rounding, 1.0f, flags);
 }
 
 // A small pill with the source's name in its color, one text line (lineHeight) tall, drawn at pos.
@@ -759,30 +760,149 @@ bool PackRow(const Modpack& pack, ImageCache& images, bool selected, const std::
 	return clicked;
 }
 
+// A small pill of text with a border, for the category chips on a grid card. Returns its width.
+static float DrawOutlineChip(ImDrawList* drawList, ImVec2 pos, float height, float maxWidth, const std::string& text, float size)
+{
+	ImFont* font = Theme::GetFonts().regular;
+	const float padX = S(8.0f);
+	const float width = std::min(maxWidth, font->CalcTextSizeA(size, FLT_MAX, 0.0f, text.c_str()).x + padX * 2.0f + 1.0f);
+	drawList->AddRectFilled(pos, ImVec2(pos.x + width, pos.y + height), ImGui::GetColorU32(Theme::C().frameBg), S(5.0f));
+	drawList->AddRect(pos, ImVec2(pos.x + width, pos.y + height), ImGui::GetColorU32(Theme::C().border), S(5.0f));
+	DrawClippedText(drawList, font, size, ImVec2(pos.x + padX, pos.y + (height - size) * 0.5f), pos.x + width - padX,
+		ImGui::GetColorU32(Theme::C().text), text);
+	return width;
+}
+
+// The category names a grid card shows: the pack's categories, else its loaders, else its Minecraft version.
+static std::vector<std::string> CardTags(const Modpack& pack)
+{
+	if (!pack.categories.empty())
+		return pack.categories;
+	std::vector<std::string> tags;
+	std::size_t start = 0;
+	while (start < pack.loaders.size()) {
+		std::size_t end = pack.loaders.find(", ", start);
+		if (end == std::string::npos)
+			end = pack.loaders.size();
+		if (end > start)
+			tags.push_back(CategoryLabel(pack.loaders.substr(start, end - start)));
+		start = end + 2;
+	}
+	if (tags.empty() && !pack.gameVersion.empty())
+		tags.push_back(pack.gameVersion);
+	return tags;
+}
+
+// A down arrow onto a line: the "downloads" glyph, drawn so it doesn't depend on the font.
+static void DrawDownloadGlyph(ImDrawList* drawList, ImVec2 min, float size, ImU32 color)
+{
+	const float x = min.x + size * 0.5f;
+	const float thick = std::max(1.0f, size * 0.13f);
+	drawList->AddLine(ImVec2(x, min.y + size * 0.1f), ImVec2(x, min.y + size * 0.65f), color, thick);
+	drawList->AddLine(ImVec2(x - size * 0.28f, min.y + size * 0.4f), ImVec2(x, min.y + size * 0.68f), color, thick);
+	drawList->AddLine(ImVec2(x + size * 0.28f, min.y + size * 0.4f), ImVec2(x, min.y + size * 0.68f), color, thick);
+	drawList->AddLine(ImVec2(min.x + size * 0.15f, min.y + size * 0.92f), ImVec2(min.x + size * 0.85f, min.y + size * 0.92f), color, thick);
+}
+
+// A clock face: the "last updated" glyph.
+static void DrawClockGlyph(ImDrawList* drawList, ImVec2 min, float size, ImU32 color, ImU32 hands)
+{
+	const ImVec2 center(min.x + size * 0.5f, min.y + size * 0.5f);
+	const float thick = std::max(1.0f, size * 0.12f);
+	drawList->AddCircleFilled(center, size * 0.5f, color, 24);
+	drawList->AddLine(center, ImVec2(center.x, center.y - size * 0.3f), hands, thick);
+	drawList->AddLine(center, ImVec2(center.x + size * 0.22f, center.y + size * 0.1f), hands, thick);
+}
+
 bool PackCard(const Modpack& pack, ImageCache& images, bool selected, const std::string& meta,
 	const char* tag, const ImVec4& tagColor, float width)
 {
-	const float pad = S(7.0f);
-	const float iconSize = S(48.0f);
+	const Theme::Palette& p = Theme::C();
 	const Theme::Fonts& fonts = Theme::GetFonts();
+	const float pad = S(10.0f);
+	const float rounding = S(8.0f);
 	const float nameSize = ImGui::GetFontSize();
 	const float metaSize = nameSize * (Theme::kFontSmall / Theme::kFontBody);
-	const float height = pad + iconSize + S(5.0f) + nameSize + S(2.0f) + metaSize + S(2.0f) + metaSize + pad;
-	const bool clicked = RoundedSelectable("##card", selected, ImVec2(width, height), S(10.0f));
+	const float chipHeight = metaSize + S(8.0f);
+	const float coverHeight = width * 0.6f;
+	const float iconSize = S(44.0f);
+	const float height = coverHeight + pad + iconSize + S(8.0f) + chipHeight + S(10.0f) + S(1.0f) + S(8.0f) +
+		metaSize + pad;
+	ImGui::InvisibleButton("##card", ImVec2(std::max(1.0f, width), height));
+	const bool clicked = ImGui::IsItemClicked();
+	const bool hovered = ImGui::IsItemHovered();
 	const ImVec2 min = ImGui::GetItemRectMin();
 	const ImVec2 max = ImGui::GetItemRectMax();
 	if (!ImGui::IsItemVisible())
 		return clicked; // skip image requests and drawing for cards scrolled out of view
 
 	ImDrawList* drawList = ImGui::GetWindowDrawList();
-	DrawPackIcon(drawList, images.Get(pack.iconUrl), pack, ImVec2(min.x + (width - iconSize) * 0.5f, min.y + pad), iconSize, S(10.0f));
-	float y = min.y + pad + iconSize + S(5.0f);
-	DrawClippedText(drawList, fonts.bold, nameSize, ImVec2(min.x + pad, y), max.x - pad, ImGui::GetColorU32(Theme::C().text), pack.name);
-	y += nameSize + S(2.0f);
-	if (tag && tag[0] != '\0')
-		DrawSourceTag(drawList, tag, tagColor, ImVec2(min.x + pad, y), metaSize);
-	y += metaSize + S(2.0f);
-	DrawClippedText(drawList, fonts.regular, metaSize, ImVec2(min.x + pad, y), max.x - pad, ImGui::GetColorU32(Theme::C().textDim), meta);
+	drawList->AddRectFilled(min, max, ImGui::GetColorU32(hovered ? Theme::Mix(p.cardBg, p.accent, 0.08f) : p.cardBg), rounding);
+	// The cover: the pack's banner image when it has one, else a tile in the pack's color; the banner fades in.
+	const ImVec2 coverMax(max.x, min.y + coverHeight);
+	drawList->AddRectFilled(min, coverMax, ImGui::GetColorU32(Theme::Mix(p.cardBg, PackColor(pack), 0.3f)), rounding,
+		ImDrawFlags_RoundCornersTop);
+	if (const LoadedImage* banner = pack.bannerUrl.empty() ? nullptr : images.Get(pack.bannerUrl))
+		DrawImageCover(drawList, *banner, min, coverMax, rounding, FadeAlpha(*banner), ImDrawFlags_RoundCornersTop);
+	if (tag && tag[0] != '\0') {
+		// The source, on a dark pill over the cover with a dot in its color.
+		const float tagSize = metaSize;
+		const float dot = S(4.0f);
+		const ImVec2 tagMin(min.x + S(8.0f), min.y + S(8.0f));
+		const float tagWidth = fonts.bold->CalcTextSizeA(tagSize, FLT_MAX, 0.0f, tag).x + S(10.0f) + dot * 2.0f + S(5.0f);
+		drawList->AddRectFilled(tagMin, ImVec2(tagMin.x + tagWidth, tagMin.y + tagSize + S(8.0f)), IM_COL32(12, 14, 18, 215), S(4.0f));
+		drawList->AddCircleFilled(ImVec2(tagMin.x + S(7.0f) + dot, tagMin.y + (tagSize + S(8.0f)) * 0.5f), dot, ImGui::GetColorU32(tagColor));
+		drawList->AddText(fonts.bold, tagSize, ImVec2(tagMin.x + S(12.0f) + dot * 2.0f, tagMin.y + S(4.0f)),
+			IM_COL32(240, 242, 245, 255), tag);
+	}
+
+	const float left = min.x + pad;
+	const float right = max.x - pad;
+	float y = min.y + coverHeight + pad;
+	// The pack's icon at the left, with the name and author beside it, centered on the icon.
+	DrawPackIcon(drawList, images.Get(pack.iconUrl), pack, ImVec2(left, y), iconSize, S(8.0f));
+	const float textLeft = left + iconSize + S(10.0f);
+	const float textTop = y + (iconSize - (nameSize + S(3.0f) + metaSize)) * 0.5f;
+	DrawClippedText(drawList, fonts.bold, nameSize, ImVec2(textLeft, textTop), right, ImGui::GetColorU32(p.text), pack.name);
+	DrawClippedText(drawList, fonts.regular, metaSize, ImVec2(textLeft, textTop + nameSize + S(3.0f)), right, ImGui::GetColorU32(p.textDim),
+		pack.author.empty() ? std::string() : "by " + pack.author);
+	y += iconSize + S(8.0f);
+
+	// The first category, and how many more there are.
+	const std::vector<std::string> tags = CardTags(pack);
+	if (!tags.empty()) {
+		const std::string more = tags.size() > 1 ? "+" + std::to_string(tags.size() - 1) : std::string();
+		const float moreWidth = more.empty() ? 0.0f
+			: fonts.regular->CalcTextSizeA(metaSize, FLT_MAX, 0.0f, more.c_str()).x + S(16.0f) + S(6.0f);
+		const float used = DrawOutlineChip(drawList, ImVec2(left, y), chipHeight, right - left - moreWidth, tags.front(), metaSize);
+		if (!more.empty())
+			DrawOutlineChip(drawList, ImVec2(left + used + S(6.0f), y), chipHeight, S(60.0f), more, metaSize);
+	}
+	y += chipHeight + S(10.0f);
+
+	// A rule, then the stats: downloads and the last update.
+	drawList->AddLine(ImVec2(left, y), ImVec2(right, y), ImGui::GetColorU32(p.border));
+	y += S(1.0f) + S(8.0f);
+	const ImU32 dim = ImGui::GetColorU32(p.textDim);
+	const std::string date = FormatShortDate(pack.updated);
+	if (pack.downloads == 0 && date.empty()) {
+		DrawClippedText(drawList, fonts.regular, metaSize, ImVec2(left, y), right, dim, meta);
+	} else {
+		float x = left;
+		if (pack.downloads > 0) {
+			DrawDownloadGlyph(drawList, ImVec2(x, y), metaSize, dim);
+			x += metaSize + S(5.0f);
+			const std::string count = FormatCount(pack.downloads);
+			DrawClippedText(drawList, fonts.regular, metaSize, ImVec2(x, y), right, dim, count);
+			x += fonts.regular->CalcTextSizeA(metaSize, FLT_MAX, 0.0f, count.c_str()).x + S(12.0f);
+		}
+		if (!date.empty() && x + metaSize < right) {
+			DrawClockGlyph(drawList, ImVec2(x, y), metaSize, dim, ImGui::GetColorU32(p.cardBg));
+			DrawClippedText(drawList, fonts.regular, metaSize, ImVec2(x + metaSize + S(5.0f), y), right, dim, date);
+		}
+	}
+	drawList->AddRect(min, max, ImGui::GetColorU32(selected ? p.accent : hovered ? Theme::Mix(p.border, p.accent, 0.5f) : p.border),
+		rounding, selected ? S(2.0f) : 1.0f);
 	return clicked;
 }
 
