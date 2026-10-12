@@ -14,8 +14,9 @@ public:
 
 	// Draws the dropdown. preview is the closed text and currentId (a sourceVersionId) is
 	// highlighted. Returns true when the player picked a version, which fills picked.
+	// libraryPack, when given, is the pack's My Library entry: versions installed there show green.
 	bool Combo(const char* id, const Modpack& pack, const std::string& preview, const std::string& currentId,
-		PackVersionInfo& picked);
+		PackVersionInfo& picked, const Modpack* libraryPack = nullptr);
 
 	// Puts a picked version on a pack. Its Minecraft version replaces the old one even
 	// when unknown, so the pack doesn't show the previous version's.

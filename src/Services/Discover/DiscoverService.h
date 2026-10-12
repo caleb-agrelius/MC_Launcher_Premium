@@ -30,6 +30,14 @@ public:
 	// Fetches the Modrinth category list for the category picker, once.
 	void LoadCategories();
 
+	// The source filter's rules, one place for every view of it. The set holds exactly the sources
+	// selected, so deselecting the last one leaves none (the page then says to pick a source).
+	bool AllSourcesSelected() const;
+	// Selects the source if it is off, else deselects it.
+	void ToggleSource(PackSource source);
+	// Selects every source unless every source is already selected, in which case it selects none.
+	void ToggleAllSources();
+
 	// Remembers the source filter in settings.
 	void SaveSourceFilter();
 
@@ -38,7 +46,7 @@ public:
 	// Merges the sources' results whenever one of them changed.
 	void Remerge();
 	// Runs a search for one source. With append, fetches the next page (starting after the
-	// results already loaded) and adds it to them, for "Load more".
+	// results already loaded) and adds it to them, for infinite scroll.
 	void StartSearch(SourceView& view, bool append = false);
 
 	// The selected pack (kept across re-merges, else the first result) and the source it came from.

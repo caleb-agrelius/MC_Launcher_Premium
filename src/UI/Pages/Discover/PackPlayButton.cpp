@@ -4,10 +4,17 @@
 #include "UI/Theme.h"
 #include "imgui.h"
 
+#include <algorithm>
+
 using Theme::S;
 
-void PackPlayButton::Draw(const Modpack& pack)
+void PackPlayButton::Draw(const Modpack& pack, bool compact)
 {
+	if (compact) {
+		ImGui::PushStyleColor(ImGuiCol_Button, Theme::C().accentDeep);
+		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Theme::Mix(Theme::C().accentDeep, Theme::C().accent, 0.35f));
+		ImGui::PushStyleColor(ImGuiCol_ButtonActive, Theme::Mix(Theme::C().accentDeep, Theme::C().accent, 0.6f));
+	}
 	ImGui::PushFont(Theme::GetFonts().bold, Theme::kFontHeading);
 	ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, S(8.0f));
 	Modpack* libraryPack = m_library.Find(pack.id);
@@ -19,7 +26,12 @@ void PackPlayButton::Draw(const Modpack& pack)
 		: libraryPack ? ActiveInstalledVersion(*libraryPack) : nullptr;
 	const bool playBusy = toPlay && m_plays.VersionBusy(pack.id, toPlay->key);
 	ImGui::BeginDisabled(!libraryPack || playBusy);
-	if (ImGui::Button(playBusy ? "PLAYING" : "PLAY", ImVec2(-1.0f, S(52.0f)))) {
+	// Spans the column, like the install card above it. The label names the version it launches.
+	std::string label = playBusy ? "PLAYING" : "PLAY";
+	if (toPlay && !toPlay->version.empty())
+		label += " (" + toPlay->version + ")";
+	label += "##play";
+	if (ImGui::Button(label.c_str(), ImVec2(-1.0f, S(compact ? 40.0f : 52.0f)))) {
 		if (shownInstalled && shownInstalled->key != libraryPack->activeVersion) {
 			const std::string key = shownInstalled->key;
 			SelectInstalledVersion(*libraryPack, key);
@@ -31,12 +43,6 @@ void PackPlayButton::Draw(const Modpack& pack)
 	ImGui::EndDisabled();
 	ImGui::PopStyleVar();
 	ImGui::PopFont();
-	if (!libraryPack)
-		ImGui::TextDisabled(GetSourceCapabilities(pack.source).installsPacks
-			? "Install the pack to play it." : "Install the pack's file to play it.");
-	else if (!shownInstalled && pack.filesLoaded)
-		ImGui::TextDisabled("This version isn't installed. PLAY starts your installed %s.",
-			libraryPack->version.c_str());
-	else
-		ImGui::TextDisabled("Progress and errors appear in My Library.");
+	if (compact)
+		ImGui::PopStyleColor(3);
 }

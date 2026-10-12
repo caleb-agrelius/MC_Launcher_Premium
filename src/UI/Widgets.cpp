@@ -124,6 +124,11 @@ void SmoothScroll()
 		next = scroll + (*target - scroll) * follow;
 		if (std::fabs(*target - next) < 0.5f)
 			next = *target;
+		// ImGui rounds the scroll position to whole pixels. Round here too, and always move at
+		// least one pixel, or the last pixels stall and read as a scrollbar drag above.
+		next = std::round(next);
+		if (next == scroll && *target != scroll)
+			next = scroll + (*target > scroll ? 1.0f : -1.0f);
 	}
 	if (next != scroll)
 		ImGui::SetScrollY(next);
@@ -144,10 +149,77 @@ bool BeginScrollArea(const char* id, ImVec2 size, ImGuiChildFlags childFlags, Im
 	return visible;
 }
 
+// Content scrolled out of the top fades into the panel color instead of being cut off. Cards are
+// child windows drawn after their parent, so the fade is its own click-through child, begun last.
+static void DrawTopFade()
+{
+	const float scroll = ImGui::GetScrollY();
+	if (scroll < 1.0f)
+		return;
+	ImGuiWindow* window = ImGui::GetCurrentWindow();
+	// Inside the panel's border and rounded corners, so the fade never paints over its outline.
+	const float border = window->WindowBorderSize;
+	const float inset = border + std::ceil(window->WindowRounding * 0.5f);
+	const ImVec2 min(std::max(window->InnerRect.Min.x, window->Pos.x + inset), std::max(window->InnerRect.Min.y, window->Pos.y + border));
+	const float width = std::min(window->InnerRect.Max.x, window->Pos.x + window->Size.x - inset) - min.x;
+	const float height = std::min(S(28.0f), window->InnerRect.GetHeight() * 0.25f);
+	if (height < 1.0f || width < 1.0f)
+		return;
+	ImVec4 color = ImGui::GetStyleColorVec4(ImGuiCol_ChildBg);
+	color.w = 1.0f;
+	// Eases in over the first few pixels so the fade doesn't pop in at the first notch.
+	const float strength = std::clamp(scroll / S(24.0f), 0.0f, 1.0f) * 0.9f;
+	ImGui::SetCursorScreenPos(min);
+	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+	ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 0.0f);
+	if (ImGui::BeginChild("##top_fade", ImVec2(width, height), ImGuiChildFlags_None,
+			ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings)) {
+		const ImU32 solid = ImGui::GetColorU32(Theme::WithAlpha(color, strength));
+		const ImU32 clear = ImGui::GetColorU32(Theme::WithAlpha(color, 0.0f));
+		ImGui::GetWindowDrawList()->AddRectFilledMultiColor(min, ImVec2(min.x + width, min.y + height), solid, solid, clear, clear);
+	}
+	ImGui::EndChild();
+	ImGui::PopStyleVar(2);
+}
+
 void EndScrollArea()
 {
 	SmoothScroll();
+	DrawTopFade();
 	ImGui::EndChild();
+}
+
+bool CloseX(const char* id, ImVec2 min, float size)
+{
+	ImGuiWindow* window = ImGui::GetCurrentWindow();
+	const ImRect rect(min, ImVec2(min.x + size, min.y + size));
+	const ImGuiID key = window->GetID(id);
+	ImGui::KeepAliveID(key); // not an ImGui item, so nothing else keeps the click alive between frames
+	bool hovered = false;
+	bool held = false;
+	const bool pressed = ImGui::ButtonBehavior(rect, key, &hovered, &held);
+	if (hovered)
+		ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+	ImDrawList* drawList = window->DrawList;
+	if (hovered || held)
+		drawList->AddRectFilled(rect.Min, rect.Max, ImGui::GetColorU32(held ? ImGuiCol_ButtonActive : ImGuiCol_ButtonHovered), S(6.0f));
+	const ImVec2 center((rect.Min.x + rect.Max.x) * 0.5f, (rect.Min.y + rect.Max.y) * 0.5f);
+	const float arm = size * 0.22f;
+	const ImU32 color = ImGui::GetColorU32(ImGuiCol_Text);
+	drawList->AddLine(ImVec2(center.x - arm, center.y - arm), ImVec2(center.x + arm, center.y + arm), color, S(1.5f));
+	drawList->AddLine(ImVec2(center.x - arm, center.y + arm), ImVec2(center.x + arm, center.y - arm), color, S(1.5f));
+	return pressed;
+}
+
+bool ModalCloseButton()
+{
+	ImGuiWindow* window = ImGui::GetCurrentWindow();
+	const ImRect bar = window->TitleBarRect();
+	const float size = bar.GetHeight() - S(8.0f);
+	ImGui::PushClipRect(bar.Min, bar.Max, false); // the window's own clip rect too, or hovering the title bar is clipped away
+	const bool clicked = CloseX("##modal_close", ImVec2(bar.Max.x - size - S(8.0f), bar.Min.y + S(4.0f)), size);
+	ImGui::PopClipRect();
+	return clicked;
 }
 
 bool PaneSplitter(const char* id, float* width, float minWidth, float maxWidth)
@@ -298,7 +370,7 @@ static void DrawSelectionBar(ImDrawList* drawList, ImVec2 min, ImVec2 max, float
 		ImGui::GetColorU32(Theme::C().accent), S(2.0f));
 }
 
-bool ListItem(const char* label, bool selected, bool closePopup, const char* hint)
+bool ListItem(const char* label, bool selected, bool closePopup, const char* hint, const ImVec4* textColor)
 {
 	const char* labelEnd = ImGui::FindRenderedTextEnd(label);
 	const float hintWidth = hint && *hint ? ImGui::CalcTextSize(hint).x + S(16.0f) : 0.0f;
@@ -318,7 +390,8 @@ bool ListItem(const char* label, bool selected, bool closePopup, const char* hin
 	// Long labels end in "..." instead of running past the row.
 	DrawClippedText(drawList, ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(min.x + S(8.0f), textY),
 		max.x - S(8.0f) - hintWidth,
-		ImGui::GetColorU32(selected ? Theme::C().text : (ImGui::IsItemHovered() ? Theme::C().text : Theme::C().textDim)),
+		textColor ? ImGui::GetColorU32(*textColor)
+			: ImGui::GetColorU32(selected ? Theme::C().text : (ImGui::IsItemHovered() ? Theme::C().text : Theme::C().textDim)),
 		std::string(label, labelEnd));
 	if (selected && ImGui::IsWindowAppearing())
 		ImGui::SetScrollHereY();
@@ -623,6 +696,20 @@ void DrawPackIcon(ImDrawList* drawList, const LoadedImage* image, const Modpack&
 	drawList->AddRect(min, max, OutlineColor(0.08f), rounding);
 }
 
+// A small pill with the source's name in its color, one text line (lineHeight) tall, drawn at pos.
+// Returns its width. Shared by the pack list rows and the grid cards.
+static float DrawSourceTag(ImDrawList* drawList, const char* tag, const ImVec4& color, ImVec2 pos, float lineHeight)
+{
+	const float textSize = lineHeight * 0.92f;
+	ImFont* bold = Theme::GetFonts().bold;
+	const float width = bold->CalcTextSizeA(textSize, FLT_MAX, 0.0f, tag).x + S(10.0f);
+	drawList->AddRectFilled(ImVec2(pos.x, pos.y - S(1.0f)), ImVec2(pos.x + width, pos.y + lineHeight + S(1.0f)),
+		ImGui::GetColorU32(Theme::WithAlpha(color, 0.22f)), S(4.0f));
+	drawList->AddText(bold, textSize, ImVec2(pos.x + S(5.0f), pos.y + (lineHeight - textSize) * 0.5f),
+		ImGui::GetColorU32(Theme::Mix(color, Theme::C().text, Theme::C().light ? 0.0f : 0.35f)), tag);
+	return width;
+}
+
 bool PackRow(const Modpack& pack, ImageCache& images, bool selected, const std::string& meta,
 	const char* tag, const ImVec4& tagColor)
 {
@@ -650,19 +737,37 @@ bool PackRow(const Modpack& pack, ImageCache& images, bool selected, const std::
 		ImGui::GetColorU32(Theme::C().text), pack.name);
 	float metaX = textX;
 	const float metaY = textTop + nameSize + S(4.0f);
-	if (tag && tag[0] != '\0') {
-		// Small colored source tag before the metadata, e.g. "CurseForge".
-		const float tagSize = metaSize * 0.92f;
-		const float tagWidth = fonts.bold->CalcTextSizeA(tagSize, FLT_MAX, 0.0f, tag).x + S(10.0f);
-		const ImVec2 tagMin(metaX, metaY - S(1.0f));
-		const ImVec2 tagMax(metaX + tagWidth, metaY + metaSize + S(1.0f));
-		drawList->AddRectFilled(tagMin, tagMax, ImGui::GetColorU32(Theme::WithAlpha(tagColor, 0.22f)), S(4.0f));
-		drawList->AddText(fonts.bold, tagSize, ImVec2(tagMin.x + S(5.0f), tagMin.y + (tagMax.y - tagMin.y - tagSize) * 0.5f),
-			ImGui::GetColorU32(Theme::Mix(tagColor, Theme::C().text, Theme::C().light ? 0.0f : 0.35f)), tag);
-		metaX = tagMax.x + S(6.0f);
-	}
+	if (tag && tag[0] != '\0')
+		metaX += DrawSourceTag(drawList, tag, tagColor, ImVec2(metaX, metaY), metaSize) + S(6.0f); // e.g. "CurseForge"
 	DrawClippedText(drawList, fonts.regular, metaSize, ImVec2(metaX, metaY), max.x - pad,
 		ImGui::GetColorU32(Theme::C().textDim), meta);
+	return clicked;
+}
+
+bool PackCard(const Modpack& pack, ImageCache& images, bool selected, const std::string& meta,
+	const char* tag, const ImVec4& tagColor, float width)
+{
+	const float pad = S(7.0f);
+	const float iconSize = S(48.0f);
+	const Theme::Fonts& fonts = Theme::GetFonts();
+	const float nameSize = ImGui::GetFontSize();
+	const float metaSize = nameSize * (Theme::kFontSmall / Theme::kFontBody);
+	const float height = pad + iconSize + S(5.0f) + nameSize + S(2.0f) + metaSize + S(2.0f) + metaSize + pad;
+	const bool clicked = RoundedSelectable("##card", selected, ImVec2(width, height), S(10.0f));
+	const ImVec2 min = ImGui::GetItemRectMin();
+	const ImVec2 max = ImGui::GetItemRectMax();
+	if (!ImGui::IsItemVisible())
+		return clicked; // skip image requests and drawing for cards scrolled out of view
+
+	ImDrawList* drawList = ImGui::GetWindowDrawList();
+	DrawPackIcon(drawList, images.Get(pack.iconUrl), pack, ImVec2(min.x + (width - iconSize) * 0.5f, min.y + pad), iconSize, S(10.0f));
+	float y = min.y + pad + iconSize + S(5.0f);
+	DrawClippedText(drawList, fonts.bold, nameSize, ImVec2(min.x + pad, y), max.x - pad, ImGui::GetColorU32(Theme::C().text), pack.name);
+	y += nameSize + S(2.0f);
+	if (tag && tag[0] != '\0')
+		DrawSourceTag(drawList, tag, tagColor, ImVec2(min.x + pad, y), metaSize);
+	y += metaSize + S(2.0f);
+	DrawClippedText(drawList, fonts.regular, metaSize, ImVec2(min.x + pad, y), max.x - pad, ImGui::GetColorU32(Theme::C().textDim), meta);
 	return clicked;
 }
 
@@ -686,6 +791,38 @@ bool ToggleChip(const char* label, bool on, const ImVec4& color, bool enabled)
 	ImGui::EndDisabled();
 	ImGui::PopStyleColor(4);
 	ImGui::PopStyleVar(2);
+	return clicked;
+}
+
+bool ViewModeButton(const char* id, bool grid, bool on)
+{
+	const Theme::Palette& p = Theme::C();
+	const float size = ImGui::GetFrameHeight();
+	const ImVec2 pos = ImGui::GetCursorScreenPos();
+	const bool clicked = ImGui::InvisibleButton(id, ImVec2(size, size));
+	const bool hovered = ImGui::IsItemHovered();
+	ImDrawList* draw = ImGui::GetWindowDrawList();
+	const ImVec2 end(pos.x + size, pos.y + size);
+	draw->AddRectFilled(pos, end, ImGui::GetColorU32(on ? Theme::Mix(p.cardBg, p.accent, 0.32f) : hovered ? Theme::Mix(p.cardBg, p.accent, 0.2f) : p.frameBg), S(8.0f));
+	const ImU32 ink = ImGui::GetColorU32(on ? p.text : p.textDim);
+	const float pad = size * 0.28f;
+	const float inner = size - 2.0f * pad;
+	if (grid) {
+		const float gap = S(2.0f);
+		const float cell = (inner - gap) * 0.5f;
+		for (int row = 0; row < 2; ++row) {
+			for (int col = 0; col < 2; ++col) {
+				const ImVec2 min(pos.x + pad + col * (cell + gap), pos.y + pad + row * (cell + gap));
+				draw->AddRectFilled(min, ImVec2(min.x + cell, min.y + cell), ink, S(1.5f));
+			}
+		}
+	} else {
+		const float thick = S(2.0f);
+		for (int line = 0; line < 3; ++line) {
+			const float y = pos.y + pad + line * (inner - thick) * 0.5f;
+			draw->AddRectFilled(ImVec2(pos.x + pad, y), ImVec2(pos.x + pad + inner, y + thick), ink, S(1.0f));
+		}
+	}
 	return clicked;
 }
 
@@ -986,6 +1123,7 @@ namespace {
 struct OpenCard {
 	ImGuiID id = 0;
 	float bottomPadding = 0.0f;
+	bool measuringOffscreen = false; // pushed the invisible, unclipped state (see BeginCard)
 };
 std::vector<OpenCard> g_openCards;
 }
@@ -997,12 +1135,20 @@ void BeginCard(const char* id, ImVec2 padding, float width)
 	const ImVec2 pad = padding.x >= 0.0f ? padding : ImGui::GetStyle().WindowPadding;
 	// First time only: a guess, corrected on the next frame.
 	const float height = remembered > 0.0f ? remembered : pad.y * 2.0f + ImGui::GetFrameHeightWithSpacing() * 2.0f;
+	// A card below the visible area is skipped by ImGui and so never measured, which leaves a guessed
+	// height that jumps when the card scrolls in (moving everything laid out after it). Measure it
+	// once, unclipped and invisible (an alpha of exactly 0 would skip it again).
+	const bool measuringOffscreen = remembered <= 0.0f && ImGui::GetCursorScreenPos().y > ImGui::GetCurrentWindow()->ClipRect.Max.y;
+	if (measuringOffscreen) {
+		ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.001f);
+		ImGui::PushClipRect(ImVec2(-1.0e5f, -1.0e5f), ImVec2(1.0e5f, 1.0e5f), false);
+	}
 	ImGui::PushStyleColor(ImGuiCol_ChildBg, Theme::C().cardBg);
 	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, pad);
 	ImGui::BeginChild(key, ImVec2(std::max(0.0f, width), height), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding,
 		ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 	ImGui::PopStyleVar();
-	g_openCards.push_back({ key, pad.y });
+	g_openCards.push_back({ key, pad.y, measuringOffscreen });
 }
 
 void EndCard()
@@ -1015,6 +1161,10 @@ void EndCard()
 	const bool measured = !ImGui::GetCurrentWindow()->SkipItems;
 	ImGui::EndChild();
 	ImGui::PopStyleColor();
+	if (card.measuringOffscreen) {
+		ImGui::PopClipRect();
+		ImGui::PopStyleVar();
+	}
 	if (measured)
 		ImGui::GetStateStorage()->SetFloat(card.id, height);
 }

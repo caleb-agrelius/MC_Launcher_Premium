@@ -53,8 +53,10 @@ public:
 		EndCard();
 	}
 
-	// A tinted notice box, e.g. for placeholder sections.
-	void Notice(const char* text, const ImVec4& tint);
+	// A tinted tip box with an "x". The x asks to hide it for good; returns true once the player
+	// confirms "Don't show again", and the caller stores id as dismissed (Settings::dismissedNotices)
+	// and stops drawing it.
+	bool Notice(const char* id, const char* text, const ImVec4& tint);
 
 	// "1.5 GB" from megabytes.
 	static std::string FormatGb(int mb);
@@ -67,7 +69,8 @@ private:
 		float gap = 0.0f;
 		float x = 0.0f;           // left edge, in screen space
 		float columnY[3] = {};    // where each column's next card goes
-		float afterCardY = -1.0f; // where EndCard left the cursor; anything lower means content came between
+		float afterCardY = 0.0f;  // where EndCard left the cursor (screen space, so negative once scrolled); anything lower means content came between
+		bool hasCard = false;     // a card has ended since BeginFlow, so afterCardY is set
 		int column = 0;           // the open card's column
 		bool fullWidth = false;   // the open card spans every column
 	};

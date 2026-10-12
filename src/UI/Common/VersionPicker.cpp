@@ -23,8 +23,9 @@ std::string VersionDetails(const PackVersionInfo& v)
 }
 
 bool VersionPicker::Combo(const char* id, const Modpack& pack, const std::string& preview, const std::string& currentId,
-	PackVersionInfo& picked)
+	PackVersionInfo& picked, const Modpack* libraryPack)
 {
+	static const ImVec4 kInstalledGreen(0.30f, 0.80f, 0.42f, 1.0f);
 	bool chosen = false;
 	if (Widgets::BeginSelect(id, preview.c_str(), ImGuiComboFlags_HeightLarge)) {
 		VersionList& list = m_details.Versions(pack.id);
@@ -43,9 +44,17 @@ bool VersionPicker::Combo(const char* id, const Modpack& pack, const std::string
 			const PackVersionInfo& v = list.versions[i];
 			ImGui::PushID(static_cast<int>(i));
 			const bool current = !currentId.empty() && v.sourceVersionId == currentId;
-			const std::string details = (i == 0 ? std::string("newest  \xC2\xB7  ") : std::string()) + VersionDetails(v);
+			bool installed = false;
+			if (libraryPack) {
+				for (const InstalledVersion& have : libraryPack->installedVersions) {
+					installed = installed || (have.sourceVersionId.empty() ? have.version == v.versionNumber
+						: have.sourceVersionId == v.sourceVersionId);
+				}
+			}
+			const std::string details = (i == 0 ? std::string("newest  \xC2\xB7  ") : std::string())
+				+ (installed ? std::string("installed  \xC2\xB7  ") : std::string()) + VersionDetails(v);
 			if (Widgets::ListItem(v.versionNumber.empty() ? v.sourceVersionId.c_str() : v.versionNumber.c_str(), current,
-					true, details.c_str())) {
+					true, details.c_str(), installed ? &kInstalledGreen : nullptr)) {
 				picked = v;
 				chosen = true;
 			}

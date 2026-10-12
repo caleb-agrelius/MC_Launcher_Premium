@@ -13,6 +13,18 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tests/WindowSmoke.ps1
 
 The CTest checks cover window settings, server file filtering and setup, preserved configuration, server mods, host IP validation, server deletion, the player data a pack update carries over, card heights, and console commands using local fixtures. The Windows smoke test launches the app with isolated data and checks window resize, close, reopen, maximization and minimization. Fixtures are kept under gitignored `tests/out/` folders.
 
+## Driving the real window
+
+`tests/UiDriver.ps1` is a set of PowerShell helpers for testing the launcher the way a person uses it: `Start-App` runs the exe in a throwaway data folder (`New-Fixture`), `Click-At`, `Wheel-At` and `Move-Mouse` send real mouse input, `Shot` saves a screenshot of the window, and `Get-Shift` measures how far a strip of the window moved between two screenshots (a card that jumps while scrolling shows up as a column that moved by a different amount). Dot-source it from a script or a PowerShell session.
+
+`tests/UiSmoke.ps1` uses it to check the Settings page offline: the tip's "x" and Don't show again (also after a restart), Appearance scrolling back to the exact top, and Game options not re-flowing while scrolling.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/UiSmoke.ps1
+```
+
+It needs a visible desktop, Windows display scaling at 100%, and no mouse use while it runs (the window is placed at 100,100 at 1800x1100 and made topmost, and screenshots copy that screen area). Screenshots and the data folder are kept under `tests/out/ui-*`. For a one-off check of something new (a modal, a dropdown), write a small script with the helpers, look at the screenshots, and add an assertion to `UiSmoke.ps1` when it's worth keeping. Pages that need the network (Discover) work too, but the results change from day to day, so assert on layout rather than content.
+
 `live_checks` is built with the tests but isn't a CTest test, because it calls the real pack APIs. Run it from the repository root after a change to a source client:
 
 ```powershell

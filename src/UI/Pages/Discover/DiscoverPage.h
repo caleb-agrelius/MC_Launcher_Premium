@@ -21,6 +21,8 @@ public:
 	void Draw(const PageFrame& frame) override;
 
 private:
+	void DrawDetailsModal(SourceView* view, Modpack* selected, bool searching, const PageFrame& frame);
+
 	DiscoverService& m_discover;
 	DiscoverFilterBar& m_filters;
 	DiscoverResultList& m_results;

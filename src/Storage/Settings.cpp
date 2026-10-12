@@ -66,6 +66,7 @@ Settings LoadSettings(const std::string& path)
 		settings.theme = j.value("theme", settings.theme);
 		settings.reduceMotion = j.value("reduceMotion", settings.reduceMotion);
 		settings.showGalleryBanners = j.value("showGalleryBanners", settings.showGalleryBanners);
+		settings.dismissedNotices = j.value("dismissedNotices", settings.dismissedNotices);
 		settings.searchLimit = std::clamp(j.value("searchLimit", settings.searchLimit), kMinSearchLimit, kMaxSearchLimit);
 		settings.microsoftClientId = j.value("microsoftClientId", settings.microsoftClientId);
 		settings.curseForgeApiKey = j.value("curseForgeApiKey", settings.curseForgeApiKey);
@@ -134,6 +135,7 @@ bool SaveSettings(const std::string& path, const Settings& settings)
 	j["theme"] = settings.theme;
 	j["reduceMotion"] = settings.reduceMotion;
 	j["showGalleryBanners"] = settings.showGalleryBanners;
+	j["dismissedNotices"] = settings.dismissedNotices;
 	j["searchLimit"] = settings.searchLimit;
 	j["microsoftClientId"] = settings.microsoftClientId;
 	j["curseForgeApiKey"] = settings.curseForgeApiKey;

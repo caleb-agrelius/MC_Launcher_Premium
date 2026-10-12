@@ -852,6 +852,15 @@ static void PackEditChecks(const fs::path& dir)
 	again.contentChanges.clear();
 	AddInstalledVersion(library, pack, again);
 	Check(ActiveInstalledVersion(library.at("edited"))->contentChanges == changes, "Replacing a version dropped its changes");
+
+	// Total play time is saved with the pack and survives installing another version.
+	library.at("edited").playSeconds = 11100;
+	Check(SavePackLibrary(libraryFile.string(), library), "Library save failed");
+	Check(LoadPackLibrary(libraryFile.string()).at("edited").playSeconds == 11100, "Play time did not round-trip through library.json");
+	AddInstalledVersion(library, pack, PlanInstalledVersion(library, pack, false));
+	Check(library.at("edited").playSeconds == 11100, "Installing a version reset the play time");
+	Check(FormatPlaytime(0) == "Not played yet" && FormatPlaytime(45) == "Under a minute" && FormatPlaytime(12 * 60) == "12 min" &&
+		FormatPlaytime(11100) == "3 h 05 min" && FormatPlaytime(120 * 3600) == "120 h", "Play time was formatted wrongly");
 }
 
 // New packs made in the launcher.

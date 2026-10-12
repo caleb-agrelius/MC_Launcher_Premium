@@ -5,6 +5,7 @@
 #include "Network/PackSources.h"
 #include "Services/AppPaths.h"
 
+#include <chrono>
 #include <ctime>
 #include <filesystem>
 #include <iterator>
@@ -132,6 +133,7 @@ void PlayService::Start(const Modpack& pack)
 	m_rt.log.flush();
 	m_scope.Run([this, request, clientId, packId, stateKey, packName, afterLaunch, cancel, stop]() mutable {
 		bool started = false; // Minecraft's process is running
+		std::chrono::steady_clock::time_point startedAt;
 		auto progress = [&](const std::string& step, double fraction) {
 			std::lock_guard<std::mutex> lock(m_mutex);
 			PlayState& state = m_plays[stateKey];
@@ -140,6 +142,7 @@ void PlayService::Start(const Modpack& pack)
 			state.playing = step == "Playing";
 			if (state.playing && !started) {
 				started = true;
+				startedAt = std::chrono::steady_clock::now();
 				// "When the game starts" from Settings > Minecraft.
 				m_rt.ui.Post([this, afterLaunch, packName]() {
 					if (afterLaunch == AfterLaunch::Minimize)
@@ -179,7 +182,15 @@ void PlayService::Start(const Modpack& pack)
 		}
 		const bool cancelled = cancel->load() || stop->load();
 		const bool stopped = stop->load();
-		m_rt.ui.Post([this, packId, packName, ok, cancelled, stopped, started, afterLaunch, error]() {
+		const std::int64_t playedSeconds = started
+			? std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - startedAt).count() : 0;
+		m_rt.ui.Post([this, packId, packName, ok, cancelled, stopped, started, afterLaunch, error, playedSeconds]() {
+			if (playedSeconds > 0) {
+				if (Modpack* played = m_library.Find(packId)) {
+					played->playSeconds += playedSeconds;
+					m_library.Save();
+				}
+			}
 			if (ok)
 				m_rt.log << "Minecraft closed (" << packId << ")\n";
 			else

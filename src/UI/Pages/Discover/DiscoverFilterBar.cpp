@@ -47,31 +47,35 @@ void DiscoverFilterBar::Draw(const DiscoverPlan& plan)
 	ImGui::PopStyleVar();
 	ImGui::TextDisabled("Sources");
 	ImGui::SameLine();
-	if (Widgets::ToggleChip("All", discover.sources.empty(), Theme::C().accent) && !discover.sources.empty()) {
-		discover.sources.clear();
+	if (Widgets::ToggleChip("All", m_discover.AllSourcesSelected(), Theme::C().accent)) {
+		m_discover.ToggleAllSources();
 		filtersChanged = true;
 	}
+	ImGui::SetItemTooltip(m_discover.AllSourcesSelected() ? "Deselect every source" : "Select every source");
 	for (PackSource source : OnlineSources()) {
 		std::string reason;
 		const bool available = IsSourceAvailable(source, &reason);
-		const bool on = discover.sources.empty() || discover.sources.count(source) > 0;
+		const bool on = discover.sources.count(source) > 0;
 		ImGui::SameLine();
 		if (Widgets::ToggleChip(PackSourceName(source), on && available, UiHelpers::SourceColor(source), available)) {
-			if (discover.sources.empty())
-				discover.sources = { source }; // from "all", a click picks just this one
-			else if (discover.sources.count(source))
-				discover.sources.erase(source);
-			else
-				discover.sources.insert(source);
-			if (discover.sources.size() == OnlineSources().size())
-				discover.sources.clear();
+			m_discover.ToggleSource(source);
 			filtersChanged = true;
 		}
 		if (!available)
 			ImGui::SetItemTooltip("%s", reason.c_str());
-		else if (discover.sources.empty())
-			ImGui::SetItemTooltip("Show only %s", PackSourceName(source));
 	}
+
+	// View switch: list or grid, on the right of the source chips.
+	const float buttonSize = ImGui::GetFrameHeight();
+	const float spacing = ImGui::GetStyle().ItemSpacing.x;
+	ImGui::SameLine(ImGui::GetContentRegionMax().x - 2.0f * buttonSize - spacing);
+	if (Widgets::ViewModeButton("##view_list", false, discover.viewMode == DiscoverViewMode::List))
+		discover.viewMode = DiscoverViewMode::List;
+	ImGui::SetItemTooltip("List view");
+	ImGui::SameLine();
+	if (Widgets::ViewModeButton("##view_grid", true, discover.viewMode == DiscoverViewMode::Grid))
+		discover.viewMode = DiscoverViewMode::Grid;
+	ImGui::SetItemTooltip("Grid view");
 
 	// Minecraft version, loader, sort.
 	ImGui::SetNextItemWidth(S(170.0f));

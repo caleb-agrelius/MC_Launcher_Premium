@@ -250,6 +250,23 @@ std::string FormatFileSize(std::uint64_t bytes)
 	return formatted;
 }
 
+std::string FormatPlaytime(std::int64_t seconds)
+{
+	if (seconds <= 0)
+		return "Not played yet";
+	const std::int64_t minutes = seconds / 60;
+	if (minutes < 1)
+		return "Under a minute";
+	if (minutes < 60)
+		return std::to_string(minutes) + " min";
+	const std::int64_t hours = minutes / 60;
+	if (hours >= 100)
+		return std::to_string(hours) + " h";
+	char text[32];
+	std::snprintf(text, sizeof(text), "%lld h %02lld min", static_cast<long long>(hours), static_cast<long long>(minutes % 60));
+	return text;
+}
+
 std::string FormatFileTime(std::filesystem::file_time_type time)
 {
 	namespace fs = std::filesystem;

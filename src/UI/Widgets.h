@@ -44,6 +44,12 @@ bool BeginScrollArea(const char* id, ImVec2 size = ImVec2(0.0f, 0.0f), ImGuiChil
 	ImGuiWindowFlags windowFlags = 0);
 void EndScrollArea();
 
+// A small "x" button with a rounded hover highlight at a screen position. Returns true when clicked.
+bool CloseX(const char* id, ImVec2 min, float size);
+// Replaces the title bar's close button (which highlights with a circle) in a modal opened without
+// a p_open. Call right after BeginPopupModal; returns true when clicked.
+bool ModalCloseButton();
+
 // A draggable divider between two side-by-side panes; put it between them with
 // SameLine(0, 0) on both sides. Dragging changes *width (the left pane's width, in
 // unscaled pixels), kept within [minWidth, maxWidth]. Returns true while it changes.
@@ -76,7 +82,9 @@ void ThinProgressBar(float fraction);
 // true when clicked; in a popup the click also closes it unless closePopup is false.
 // hint (optional) is dimmed text on the right, e.g. "Minecraft 1.20.1" or a shortcut.
 // In a popup the row asks for room for both, so the popup widens to fit them.
-bool ListItem(const char* label, bool selected, bool closePopup = true, const char* hint = nullptr);
+// textColor, when set, replaces the label's color (e.g. green for an installed version).
+bool ListItem(const char* label, bool selected, bool closePopup = true, const char* hint = nullptr,
+	const ImVec4* textColor = nullptr);
 // A popup menu entry (context menus, the account menu): a ListItem with an optional
 // shortcut hint on the right, dimmed and unclickable when disabled.
 bool MenuItem(const char* label, const char* shortcut = nullptr, bool enabled = true);
@@ -120,8 +128,16 @@ void DrawPackIcon(ImDrawList* drawList, const LoadedImage* image, const Modpack&
 bool PackRow(const Modpack& pack, ImageCache& images, bool selected, const std::string& meta,
 	const char* tag = nullptr, const ImVec4& tagColor = ImVec4(0, 0, 0, 0));
 
+// Selectable card for the pack grid: icon on top, then the name, the source tag and the metadata.
+// width is the card's width; the height follows from it. Returns true when clicked.
+bool PackCard(const Modpack& pack, ImageCache& images, bool selected, const std::string& meta,
+	const char* tag, const ImVec4& tagColor, float width);
+
 // A pill-shaped on/off filter button with a colored dot. Returns true when clicked.
 bool ToggleChip(const char* label, bool on, const ImVec4& color, bool enabled = true);
+// A square icon button for switching a view: three stacked lines (grid = false) or a 2x2 grid of
+// squares (grid = true), highlighted when on. id must be unique among nearby widgets.
+bool ViewModeButton(const char* id, bool grid, bool on);
 
 // Wide banner for the selected pack: gallery image (or a pattern in the pack's color),
 // a gradient into the panel color, and the icon, name, author and tags on top.

@@ -35,7 +35,7 @@ struct SourceView {
 	bool searchFailed = false;
 	std::uint64_t totalHits = 0;
 	int revision = 0; // bumped whenever packs is replaced or extended, so Discover re-merges
-	bool loadingMore = false; // fetching the next page for "Load more"
+	bool loadingMore = false; // fetching the next page for infinite scroll
 	std::string loadMoreError;
 	// True when the source has results beyond the ones loaded.
 	bool HasMore() const { return !searchFailed && !searching && packs.size() < totalHits; }
@@ -44,7 +44,12 @@ struct SourceView {
 // Discover's combined search: one query and set of filters, sent to every selected
 // source at once. Each source's results stay in its SourceView; the list shown is
 // merged from them.
+// How Discover shows the merged results. Grid isn't drawn yet; it falls back to List.
+enum class DiscoverViewMode { List, Grid };
+
 struct DiscoverState {
+	DiscoverViewMode viewMode = DiscoverViewMode::List;
+	bool detailsOpen = false; // grid view: the selected pack's details modal is showing
 	char search[128] = "";
 	char gameVersion[32] = "";
 	std::string loader; // "" = any, else "forge", "neoforge", "fabric" or "quilt"
@@ -54,7 +59,7 @@ struct DiscoverState {
 	std::vector<ModrinthCategory> categories;
 	bool categoriesLoading = false;
 	std::string categoriesError;
-	std::set<PackSource> sources; // the source filter; empty = every source
+	std::set<PackSource> sources; // the source filter: exactly the sources selected (none is allowed)
 	// With one source: that source's sort index. With several: 0 best match
 	// (the sources' results interleaved by rank), 1 most downloads, 2 name.
 	int sort = 0;
