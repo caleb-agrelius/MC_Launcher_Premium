@@ -43,7 +43,7 @@ Technic answers `401 Unauthorized` unless every request carries a `build` value.
   - If the build has a `forge` version, it's recorded as the loader. Otherwise a note explains that the loader ships as files.
 - **Single zip:** the zip is downloaded and unpacked into `minecraft/`.
   - There's no hash to check.
-  - A note says the loader isn't declared. Loader detection from `bin/` (Prism's `TechnicPackProcessor`) isn't implemented.
+  - A note says the loader isn't declared. When the pack is played, the loader is detected from `bin/version.json` or the `version.json` inside `bin/modpack.jar` (see [launching.md](launching.md)).
 
 ## Verification
 Checked against the live API with a scratch harness:

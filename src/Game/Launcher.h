@@ -24,6 +24,14 @@ struct PlayRequest {
 // Splits a JVM argument string on spaces; double quotes group words ("-Dname=a b").
 std::vector<std::string> SplitArguments(const std::string& text);
 
+// Re-checks an .mrpack instance's files against their hashes and re-downloads damaged or
+// missing ones (see RepairInstance). Doesn't launch.
+bool RepairModpack(HttpClient& http,
+				   const PlayRequest& request,
+				   const ProgressFn& progress,
+				   std::string* err,
+				   const std::atomic<bool>* cancel);
+
 // Everything needed to play a modpack, in order: mods and overrides, game options,
 // vanilla Minecraft, Java, the mod loader, then the game itself. Blocks until
 // Minecraft exits. When cancel is set before launch it stops; after launch the game

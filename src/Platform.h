@@ -10,6 +10,10 @@ namespace Platform {
 // it doesn't exist. Returns false if it couldn't be opened.
 bool OpenFolder(const std::string& path);
 
+// Opens a file with its default program (e.g. a .log in Notepad). Returns false if the
+// file doesn't exist or couldn't be opened.
+bool OpenFile(const std::string& path);
+
 // Total physical memory in MB, or 0 if unknown.
 std::uint64_t SystemMemoryMb();
 

@@ -28,6 +28,7 @@ static Modpack PackFromJson(const json& item)
 	pack.sourceVersionId = item.value("sourceVersionId", "");
 	pack.sourceUrl = item.value("sourceUrl", "");
 	pack.sourceIsSolder = item.value("sourceIsSolder", false);
+	pack.optionalMods = item.value("optionalMods", std::vector<std::string>());
 	if (item.contains("files") && item["files"].is_array()) {
 		for (const auto& f : item["files"]) {
 			PackFile file;
@@ -61,6 +62,7 @@ static json PackToJson(const Modpack& pack)
 		{ "sourceVersionId", pack.sourceVersionId },
 		{ "sourceUrl", pack.sourceUrl },
 		{ "sourceIsSolder", pack.sourceIsSolder },
+		{ "optionalMods", pack.optionalMods },
 		{ "files", files },
 	};
 }

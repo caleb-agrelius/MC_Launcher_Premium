@@ -81,6 +81,23 @@ bool FetchPackVersion(HttpClient& http,
 // Copies a FetchPackVersion result onto the pack and marks its files as loaded.
 void ApplyPackVersion(Modpack& pack, const PackVersionInfo& version);
 
+// An optional mod the player can choose when installing a pack (ATLauncher).
+struct OptionalMod {
+	std::string name;
+	std::string description;
+	std::string group;                // mods in the same group are either/or
+	std::vector<std::string> depends; // names of other optional mods it needs
+	bool selected = false;            // the pack author's default
+};
+
+// The optional mods of the pack's version (pack.sourceVersionId). Sources without
+// optional mods succeed with an empty list.
+bool FetchOptionalMods(HttpClient& http,
+					   const Modpack& pack,
+					   std::vector<OptionalMod>& out,
+					   std::string* err = nullptr,
+					   const std::atomic<bool>* cancel = nullptr);
+
 // Builds the install plan for the pack's chosen version (pack.sourceVersionId). May
 // download the pack's own archive (e.g. a CurseForge zip) into workDir first.
 // status reports what it is doing, for the UI.

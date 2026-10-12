@@ -51,4 +51,4 @@ A JSON array of modpacks:
 ## Behavior notes
 - Missing fields default to empty strings / `0`.
 - If the file is missing, isn't a JSON array, or fails to parse, the result is an empty list (packs parsed before the error are kept).
-- The bundled index contains one real pack: the Fabric "Fabulously Optimized" modpack, served from the Modrinth CDN. Its file is an `.mrpack` (a zip holding `modrinth.index.json` and an `overrides/` folder). Extracting it doesn't download the mods listed in the manifest; see [planned.md](planned.md).
+- The bundled index contains one real pack: the Fabric "Fabulously Optimized" modpack, served from the Modrinth CDN. Its file is an `.mrpack` (a zip holding `modrinth.index.json` and an `overrides/` folder). Extracting it only unpacks the manifest and `overrides/`. The mods listed in the manifest are downloaded when the pack is played (see [launching.md](launching.md)).

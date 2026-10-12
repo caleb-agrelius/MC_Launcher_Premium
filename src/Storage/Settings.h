@@ -65,6 +65,9 @@ struct Settings {
 	// CurseForge API key. Empty = use the MCLP_CURSEFORGE_API_KEY environment variable.
 	std::string curseForgeApiKey;
 	LaunchSettings launch;
+	// Per-pack launch options (pack id -> options) that replace launch for that pack.
+	// afterLaunch always comes from launch.
+	std::map<std::string, LaunchSettings> packLaunch;
 	GameOptionsSettings gameOptions;
 	std::vector<CustomTheme> customThemes;
 	WindowPlacement window;
@@ -78,6 +81,10 @@ static constexpr int kMinMemoryMb = 1024;   // smallest -Xmx
 static constexpr int kMaxMemoryMb = 32768;
 static constexpr int kMinWindowSide = 320;
 static constexpr std::size_t kCustomThemeFloats = 11 * 3; // 11 palette colors, RGB
+
+// The launch options for a pack: its own from packLaunch if it has them, else the
+// global ones. afterLaunch is always the global choice.
+LaunchSettings LaunchSettingsFor(const Settings& settings, const std::string& packId);
 
 // Missing or unreadable files give the defaults. Values are clamped to their valid ranges.
 // The older top-level "maxMemoryMb" key is read into launch.maxMemoryMb.

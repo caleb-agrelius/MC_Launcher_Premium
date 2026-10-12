@@ -54,6 +54,8 @@ struct Modpack {
 	// Technic only: the single-zip download URL, or the Solder API base for Solder packs.
 	std::string sourceUrl;
 	bool sourceIsSolder = false;
+	// ATLauncher only: the optional mods (by name) the player chose to install.
+	std::vector<std::string> optionalMods;
 
 	// Online search results don't include versions; they're fetched when the pack is selected.
 	bool filesLoaded = true;
