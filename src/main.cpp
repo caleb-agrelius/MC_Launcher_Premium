@@ -241,6 +241,7 @@ struct SourceView {
 	char search[128] = "";
 	char gameVersion[32] = "";
 	int loader = 0; // 0 = any, else caps.loaders[loader - 1]
+	std::string category; // Modrinth category key; empty = any
 	int sort = 0;   // index into caps.sorts
 	std::vector<Modpack> packs;
 	int selected = -1;
@@ -268,6 +269,12 @@ struct DiscoverState {
 	char search[128] = "";
 	char gameVersion[32] = "";
 	std::string loader; // "" = any, else "forge", "neoforge", "fabric" or "quilt"
+	// A Modrinth category ("adventure", "tech", ...); "" = any. Sources that can't filter by
+	// category are skipped while one is chosen. The list loads the first time the menu opens.
+	std::string category;
+	std::vector<ModrinthCategory> categories;
+	bool categoriesLoading = false;
+	std::string categoriesError;
 	std::set<PackSource> sources; // the source filter; empty = every source
 	// With one source: that source's sort index. With several: 0 best match
 	// (the sources' results interleaved by rank), 1 most downloads, 2 name.
@@ -1344,6 +1351,7 @@ int main(int argc, char** argv)
 			if (view.loader > 0 && view.loader <= static_cast<int>(view.caps.loaders.size()))
 				filters.loader = view.caps.loaders[static_cast<std::size_t>(view.loader - 1)];
 			filters.sort = view.sort;
+			filters.category = view.category;
 			filters.offset = append ? static_cast<int>(view.packs.size()) : 0;
 			const int limit = settings.searchLimit;
 			if (append) {
@@ -2397,6 +2405,10 @@ int main(int argc, char** argv)
 						skipped.push_back(std::string(PackSourceName(source)) + " can't filter by loader");
 						continue;
 					}
+					if (!discover.category.empty() && !views[source].caps.categoryFilter) {
+						skipped.push_back(std::string(PackSourceName(source)) + " can't filter by category");
+						continue;
+					}
 					active.push_back(source);
 				}
 				const bool single = active.size() == 1;
@@ -2476,6 +2488,53 @@ int main(int argc, char** argv)
 					Widgets::EndSelect();
 				}
 				ImGui::SameLine();
+				{
+					// Category (Modrinth): the list loads the first time the menu opens.
+					std::string categoryLabel = "Any category";
+					for (const ModrinthCategory& category : discover.categories) {
+						if (category.key == discover.category)
+							categoryLabel = category.label;
+					}
+					ImGui::SetNextItemWidth(S(170.0f));
+					if (Widgets::BeginSelect("##category", categoryLabel.c_str())) {
+						if (discover.categories.empty() && !discover.categoriesLoading && discover.categoriesError.empty()) {
+							discover.categoriesLoading = true;
+							StartWorker(workers, [&http, &uiQueue, &shuttingDown, &discover]() {
+								std::vector<ModrinthCategory> categories;
+								std::string error;
+								const bool ok = FetchModrinthCategories(http, categories, &error, &shuttingDown);
+								uiQueue.Post([&discover, ok, categories, error]() {
+									discover.categoriesLoading = false;
+									discover.categories = categories;
+									discover.categoriesError = ok ? std::string() : error;
+								});
+							});
+						}
+						if (Widgets::ListItem("Any category", discover.category.empty())) {
+							discover.category.clear();
+							filtersChanged = true;
+						}
+						if (discover.categoriesLoading) {
+							Widgets::Spinner(Theme::C().accent);
+							ImGui::SameLine();
+							ImGui::TextDisabled("Loading categories...");
+						} else if (!discover.categoriesError.empty()) {
+							ImGui::TextColored(Theme::C().error, "Couldn't load categories");
+							if (Widgets::ListItem("Retry", false))
+								discover.categoriesError.clear();
+						}
+						for (const ModrinthCategory& category : discover.categories) {
+							if (Widgets::ListItem(category.label.c_str(), discover.category == category.key)) {
+								discover.category = category.key;
+								filtersChanged = true;
+							}
+						}
+						Widgets::EndSelect();
+					}
+					ImGui::SetItemTooltip("Modrinth categories, e.g. Adventure or Technology. Other sources can't filter by category, "
+						"so they're skipped while one is chosen.");
+				}
+				ImGui::SameLine();
 				ImGui::SetNextItemWidth(S(210.0f));
 				const char* sortLabel = single ? singleCaps->sorts[static_cast<std::size_t>(discover.sort)] : kCombinedSorts[discover.sort];
 				if (Widgets::BeginSelect("##sort", (std::string("Sort: ") + sortLabel).c_str())) {
@@ -2513,6 +2572,7 @@ int main(int argc, char** argv)
 								view.loader = static_cast<int>(i + 1);
 						}
 						view.sort = single ? discover.sort : 0;
+						view.category = view.caps.categoryFilter ? discover.category : std::string();
 						startSearch(view);
 					}
 					discover.mergedKey.clear();

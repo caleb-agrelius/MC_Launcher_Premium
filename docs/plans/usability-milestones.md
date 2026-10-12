@@ -9,9 +9,9 @@ Milestones are verified stages, not commits.
 
 ## Found along the way
 
-- **Long override paths:** server setup failed for a Modrinth pack whose overrides nest past 260 characters (`recursive_directory_iterator ... cannot find the path specified`). `LongPath` only prefixes paths that are already long, so a short root walked recursively still overflowed. Added `ExtendedPath` (always `\\?\`), used for server override copying, whole-pack copying and `RemoveServer`, with a 280-character override check. Play's `PrepareInstance` wasn't changed and may have the same limit.
+- **Long override paths:** server setup failed for a Modrinth pack whose overrides nest past 260 characters (`recursive_directory_iterator ... cannot find the path specified`). `LongPath` only prefixes paths that are already long, so a short root walked recursively still overflowed. Added `ExtendedPath` (always `\\?\`), used for server override copying, whole-pack copying and `RemoveServer`, with a 280-character override check. Play's `PrepareInstance` now copies overrides through `ExtendedPath` too.
 - **`FindModrinthClientOnly` crash:** `live_checks` caught a range-for over `json::parse(...).items()`, a dangling temporary. Fixed before it shipped.
-- **`tests/WindowSmoke.ps1` fails on this PC with "Launcher did not close normally"**, but it also fails with a clean build of `main` (built in a scratch worktree), so it predates this branch. Launching, resizing and closing the same way by hand exits in about 0.1 s, so the cause is in how the harness starts the hidden window. Not investigated further.
+- **`tests/WindowSmoke.ps1` failed on this PC with "Launcher did not close normally"**, also with a clean build of `main` at the time. It passes on later `main` (5 runs in a row at `2f022c5`, about 9 s each), presumably fixed by the v2 shutdown and worker changes; no change to the script was needed.
 
 | # | Report | Status | Verification |
 |---|---|---|---|

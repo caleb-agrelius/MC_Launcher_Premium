@@ -53,7 +53,7 @@ If the source returns nothing, the pack's summary is used.
 | ATLauncher | `Configs.json` mods, without the loader (`forge`, `mcpc`) and `library` or `hidden` entries. `client`/`server` give the sides. |
 
 ## Search filters
-`SearchFilters` holds a Minecraft version (free text, e.g. `1.20.1`), a loader key (`forge`, `neoforge`, `fabric`, `quilt`), a sort index, and an `offset`: how many results to skip, for Discover's **Load more**. Modrinth passes it as `offset`, CurseForge as `index`. FTB, Technic and ATLauncher search a full list locally and return the slice after it; Technic also fetches details for `(offset + limit) * 2` packs when filtering or sorting, so later pages are filtered too. `live_checks` (`CheckPaging`) confirms page 2 continues page 1 without repeats for Modrinth, FTB, ATLauncher and Technic. `SourceCapabilities` says which apply:
+`SearchFilters` holds a Minecraft version (free text, e.g. `1.20.1`), a loader key (`forge`, `neoforge`, `fabric`, `quilt`), a sort index, a Modrinth `category` key (only sources whose capabilities set `categoryFilter` honor it; Discover skips the rest while one is chosen), and an `offset`: how many results to skip, for Discover's **Load more**. Modrinth passes it as `offset`, CurseForge as `index`. FTB, Technic and ATLauncher search a full list locally and return the slice after it; Technic also fetches details for `(offset + limit) * 2` packs when filtering or sorting, so later pages are filtered too. `live_checks` (`CheckPaging`) confirms page 2 continues page 1 without repeats for Modrinth, FTB, ATLauncher and Technic. `SourceCapabilities` says which apply:
 
 | Source | Minecraft version | Loader | Sorts |
 |---|---|---|---|

@@ -31,6 +31,10 @@ Live modpack search and version lookup against the public Modrinth API (`https:/
   - `files` holds a single `PackFile`: the version's primary file, or else its first `.mrpack`.
   - Also fills `id` (the version id, used as `sourceVersionId`), `versionType` and `published` (the date part of `date_published`). Parsing is shared with the list below (`ParseModrinthVersion`).
 - `ListModrinthVersions(http, slugOrId, out, err, cancel)` returns every version from the same endpoint that has an `.mrpack`, newest first, for the version picker.
+- `FetchModrinthCategories(http, out, err, cancel)`
+  - Calls `GET /tag/category` and keeps the tags with `project_type == "modpack"` and `header == "categories"` (not the feature, resolution or performance tags).
+  - Each becomes a `ModrinthCategory`: the `name` as the key, and a label with dashes turned into spaces and a capital first letter (`kitchen-sink` -> "Kitchen sink"), sorted by label.
+  - `ModrinthSearchOptions::category` adds a `["categories:<key>"]` facet, AND-ed with the others. `live_checks` (`CheckCategories`) confirms the list includes Adventure and that the Adventure filter narrows the most-downloaded list.
 - `FetchModrinthBanner(http, slugOrId, outUrl, err, cancel)`
   - Calls `GET /project/{slug}` and picks the gallery image marked `featured`, else the first one.
   - Sets `outUrl` to its `raw_url` (the original upload), else its `url`. `outUrl` is empty if the project has no gallery.
@@ -51,6 +55,3 @@ This applies to every source.
 - Results are posted to `UiQueue`, which is drained at the start of each frame. A sub-page's pack list, selection, and the lookup state (`filesLoading`, `filesErrors`) are therefore only modified on the UI thread.
 - Each sub-page's searches get a `searchGeneration` number. Results from an older search than that sub-page's latest are dropped, so typing quickly can't show stale results.
 - Version-lookup and banner-lookup results are applied to every pack in the sub-page's current list with a matching `id`. If the list has changed since the lookup started, the result is discarded.
-
-## Not yet supported
-- Category filters.

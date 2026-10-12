@@ -35,7 +35,21 @@ struct ModrinthSearchOptions {
 	std::string index;       // relevance | downloads | follows | newest | updated; empty = downloads
 	                         // for an empty query, relevance otherwise
 	int offset = 0;          // results to skip (paging)
+	std::string category;    // e.g. "adventure" (a Modrinth category)
 };
+
+// A modpack category Modrinth can filter by ("adventure", "tech", ...).
+struct ModrinthCategory {
+	std::string key;   // used in the search facet
+	std::string label; // for display, e.g. "Kitchen sink"
+};
+
+// The modpack categories from /tag/category (header "categories", not features or
+// performance tags), sorted by label.
+bool FetchModrinthCategories(HttpClient& http,
+							 std::vector<ModrinthCategory>& out,
+							 std::string* err = nullptr,
+							 const std::atomic<bool>* cancel = nullptr);
 
 // Searches Modrinth modpacks. An empty query lists the most downloaded packs.
 bool SearchModrinthModpacks(HttpClient& http,

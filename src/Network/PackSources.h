@@ -21,11 +21,13 @@ struct SearchFilters {
 	std::string loader;      // "forge" | "neoforge" | "fabric" | "quilt"; empty = any
 	int sort = 0;            // index into SourceCapabilities::sorts
 	int offset = 0;          // results to skip, for loading the next page ("Load more")
+	std::string category;    // a Modrinth category key, e.g. "adventure"; empty = any
 };
 
 struct SourceCapabilities {
 	bool gameVersionFilter = false;
 	bool loaderFilter = false;
+	bool categoryFilter = false;            // honors SearchFilters::category (Modrinth)
 	std::vector<const char*> loaders;        // loader filter values, e.g. "fabric"
 	std::vector<const char*> sorts;          // sort option labels; index 0 is the default
 	bool changelogs = false;                 // FetchPackChangelog works

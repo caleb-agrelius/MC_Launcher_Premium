@@ -5,6 +5,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <map>
 
 using json = nlohmann::json;
@@ -27,6 +28,40 @@ static std::string JoinStrings(const json& array, const std::string& separator)
 }
 
 // Search hits use null for missing icons/gallery images, which json::value() would throw on.
+bool FetchModrinthCategories(HttpClient& http, std::vector<ModrinthCategory>& out, std::string* err,
+	const std::atomic<bool>* cancel)
+{
+	out.clear();
+	std::string body;
+	if (!http.Get(std::string(kApiBase) + "/tag/category", body, err, cancel))
+		return false;
+	try {
+		for (const auto& tag : json::parse(body)) {
+			if (tag.value("project_type", "") != "modpack" || tag.value("header", "") != "categories")
+				continue;
+			ModrinthCategory category;
+			category.key = tag.value("name", "");
+			if (category.key.empty())
+				continue;
+			// "kitchen-sink" -> "Kitchen sink"
+			category.label = category.key;
+			std::replace(category.label.begin(), category.label.end(), '-', ' ');
+			category.label[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(category.label[0])));
+			out.push_back(std::move(category));
+		}
+	}
+	catch (const std::exception& ex) {
+		if (err) *err = std::string("Unexpected category response: ") + ex.what();
+		return false;
+	}
+	std::sort(out.begin(), out.end(), [](const ModrinthCategory& a, const ModrinthCategory& b) { return a.label < b.label; });
+	if (out.empty()) {
+		if (err) *err = "Modrinth listed no modpack categories";
+		return false;
+	}
+	return true;
+}
+
 bool SearchModrinthModpacks(HttpClient& http,
 							const std::string& query,
 							const ModrinthSearchOptions& options,
@@ -42,6 +77,8 @@ bool SearchModrinthModpacks(HttpClient& http,
 		facets.push_back(json::array({ "versions:" + options.gameVersion }));
 	if (!options.loader.empty())
 		facets.push_back(json::array({ "categories:" + options.loader }));
+	if (!options.category.empty())
+		facets.push_back(json::array({ "categories:" + options.category }));
 	const std::string index = !options.index.empty() ? options.index : (query.empty() ? "downloads" : "relevance");
 	std::string url = std::string(kApiBase) + "/search?facets=" +
 		HttpClient::UrlEncode(facets.dump()) +
