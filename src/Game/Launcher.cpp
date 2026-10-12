@@ -5,6 +5,7 @@
 #include "Network/HttpClient.h"
 #include "Util/Process.h"
 
+#include <algorithm>
 #include <fstream>
 #include <map>
 #include <sstream>
@@ -63,6 +64,51 @@ static void ExpandArguments(const json& args, const std::map<std::string, std::s
 			}
 		}
 	}
+}
+
+std::vector<std::string> SplitArguments(const std::string& text)
+{
+	std::vector<std::string> args;
+	std::string current;
+	bool quoted = false;
+	bool any = false; // current holds an argument, even an empty quoted one
+	for (char c : text) {
+		if (c == '"') {
+			quoted = !quoted;
+			any = true;
+		} else if (!quoted && (c == ' ' || c == '\t' || c == '\r' || c == '\n')) {
+			if (any)
+				args.push_back(current);
+			current.clear();
+			any = false;
+		} else {
+			current += c;
+			any = true;
+		}
+	}
+	if (any)
+		args.push_back(current);
+	return args;
+}
+
+// The Java to run the game with: the user's choice from Settings, or Mojang's
+// runtime. A console java.exe is swapped for its javaw.exe sibling so no
+// console window opens.
+static bool CustomJava(const std::string& setting, fs::path& javaw, fs::path& javaConsole, std::string* err)
+{
+	std::error_code ec;
+	fs::path chosen = fs::path(setting);
+	if (fs::is_directory(chosen, ec)) // a JDK/JRE folder or its bin/
+		chosen = fs::is_directory(chosen / "bin", ec) ? chosen / "bin" / "javaw.exe" : chosen / "javaw.exe";
+	if (!fs::is_regular_file(chosen, ec)) {
+		if (err) *err = "The Java set in Settings > Minecraft wasn't found: " + setting;
+		return false;
+	}
+	const fs::path dir = chosen.parent_path();
+	const bool windows = chosen.extension() == ".exe";
+	javaw = windows && fs::is_regular_file(dir / "javaw.exe", ec) ? dir / "javaw.exe" : chosen;
+	javaConsole = windows && fs::is_regular_file(dir / "java.exe", ec) ? dir / "java.exe" : chosen;
+	return true;
 }
 
 static std::string PathString(const fs::path& path)
@@ -133,7 +179,11 @@ static bool LaunchVersion(const PlayRequest& request, const ResolvedVersion& ver
 		{ "launcher_version", "0.1" },
 	};
 
-	std::vector<std::string> jvmArgs = { "-Xmx" + std::to_string(request.maxMemoryMb) + "M" };
+	const LaunchSettings& launch = request.launch;
+	std::vector<std::string> jvmArgs;
+	if (launch.minMemoryMb > 0)
+		jvmArgs.push_back("-Xms" + std::to_string(std::min(launch.minMemoryMb, launch.maxMemoryMb)) + "M");
+	jvmArgs.push_back("-Xmx" + std::to_string(launch.maxMemoryMb) + "M");
 	if (!version.jvmArgs.empty()) {
 		ExpandArguments(version.jvmArgs, values, jvmArgs);
 	} else {
@@ -146,6 +196,9 @@ static bool LaunchVersion(const PlayRequest& request, const ResolvedVersion& ver
 		if (fs::is_regular_file(config, ec))
 			jvmArgs.push_back(Substitute(version.logging.value("argument", ""), { { "path", PathString(config) } }));
 	}
+	// The player's own JVM arguments go last, so they win over the defaults above.
+	for (std::string& arg : SplitArguments(launch.jvmArgs))
+		jvmArgs.push_back(std::move(arg));
 
 	std::vector<std::string> gameArgs;
 	if (!version.gameArgs.empty()) {
@@ -155,6 +208,16 @@ static bool LaunchVersion(const PlayRequest& request, const ResolvedVersion& ver
 		std::string word;
 		while (words >> word)
 			gameArgs.push_back(Substitute(word, values));
+	}
+	// Window size from Settings. The version's own resolution arguments sit behind a
+	// feature rule that never matches, so these aren't duplicated.
+	if (launch.fullscreen) {
+		gameArgs.push_back("--fullscreen");
+	} else if (launch.windowWidth > 0 && launch.windowHeight > 0) {
+		gameArgs.push_back("--width");
+		gameArgs.push_back(std::to_string(launch.windowWidth));
+		gameArgs.push_back("--height");
+		gameArgs.push_back(std::to_string(launch.windowHeight));
 	}
 
 	std::vector<std::string> command = { javaExe.string() };
@@ -205,9 +268,15 @@ bool PlayModpack(HttpClient& http, const PlayRequest& request, const ProgressFn&
 		return false;
 
 	fs::path javaw;
-	if (!InstallJavaRuntime(http, root, vanilla.javaComponent, true, javaw, progress, err, cancel))
-		return false;
-	const fs::path javaConsole = javaw.parent_path() / (javaw.extension() == ".exe" ? "java.exe" : "java");
+	fs::path javaConsole;
+	if (!request.launch.javaPath.empty()) {
+		if (!CustomJava(request.launch.javaPath, javaw, javaConsole, err))
+			return false;
+	} else {
+		if (!InstallJavaRuntime(http, root, vanilla.javaComponent, true, javaw, progress, err, cancel))
+			return false;
+		javaConsole = javaw.parent_path() / (javaw.extension() == ".exe" ? "java.exe" : "java");
+	}
 
 	if (!InstallGameFiles(http, root, vanilla, progress, err, cancel))
 		return false;

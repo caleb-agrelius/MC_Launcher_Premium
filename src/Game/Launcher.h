@@ -2,10 +2,12 @@
 
 #include "Game/GameFiles.h"
 #include "Storage/Account.h"
+#include "Storage/Settings.h"
 
 #include <atomic>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 class HttpClient;
 
@@ -14,8 +16,11 @@ struct PlayRequest {
 	std::filesystem::path extractedDir; // installs/<pack id>/ (the unzipped .mrpack)
 	std::filesystem::path instanceDir;  // instances/<pack id>/ (the game directory)
 	Account account;                    // must have a valid access token
-	int maxMemoryMb = 4096;
+	LaunchSettings launch;              // memory, Java, JVM arguments, window size
 };
+
+// Splits a JVM argument string on spaces; double quotes group words ("-Dname=a b").
+std::vector<std::string> SplitArguments(const std::string& text);
 
 // Everything needed to play a modpack, in order: mods and overrides, vanilla
 // Minecraft, Java, the mod loader, then the game itself. Blocks until Minecraft

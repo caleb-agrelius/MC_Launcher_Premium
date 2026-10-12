@@ -35,7 +35,9 @@ Shows one card per entry in `downloads`, with the pack icon, the pack name, and 
 
 A finished download that isn't extracted or extracting also gets an **Install files** button. This includes one whose extraction failed. It calls the same `startInstall()` as Discover (see [installation.md](installation.md)), so a saved file can be installed even when Discover now lists a newer version of the pack.
 
-If nothing has been started, the page shows a message saying so.
+If nothing has been started, the page shows an empty state with a **Browse modpacks** button that opens Discover.
+
+While any download or extraction is running, the sidebar's **Downloads** entry shows a count badge. When one finishes, a toast says whether it succeeded (see [ui-theme.md](ui-theme.md)). No toast is shown for transfers cancelled at shutdown.
 
 ## Saved downloads (`downloads.json`)
 - When a download succeeds, the worker posts `saveDownloads()` to the `UiQueue`. That call copies every entry with a non-empty `outPath` under the lock and writes them to `downloads.json` with `SaveDownloads` (`src/Storage/Library.{h,cpp}`). Each record holds the URL, `fileName`, `outPath`, and a copy of the pack.

@@ -5,13 +5,29 @@
 #include "Theme.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
 #include <functional>
 
 namespace Widgets {
 
 using Theme::S;
+
+static bool g_reduceMotion = false;
+
+void SetReduceMotion(bool reduce)
+{
+	g_reduceMotion = reduce;
+}
+
+// Faint outline for icons and banners: light on dark themes, dark on light ones.
+static ImU32 OutlineColor(float alpha)
+{
+	return Theme::C().light ? IM_COL32(0, 0, 0, static_cast<int>(alpha * 255.0f * 1.5f))
+		: IM_COL32(255, 255, 255, static_cast<int>(alpha * 255.0f));
+}
 
 static ImU32 WithAlpha(const ImVec4& color, float alpha)
 {
@@ -22,7 +38,7 @@ static ImU32 WithAlpha(const ImVec4& color, float alpha)
 static ImVec4 PackColor(const Modpack& pack)
 {
 	if (pack.color == 0)
-		return Theme::kAccentDeep;
+		return Theme::C().accentDeep;
 	return ImVec4(((pack.color >> 16) & 0xFF) / 255.0f, ((pack.color >> 8) & 0xFF) / 255.0f,
 		(pack.color & 0xFF) / 255.0f, 1.0f);
 }
@@ -88,9 +104,12 @@ static void DrawChip(ImDrawList* drawList, ImVec2 pos, float fontSize, const cha
 	const float height = fontSize + S(8.0f);
 	drawList->AddRectFilled(pos, ImVec2(pos.x + width, pos.y + height), WithAlpha(tint, 0.18f), height * 0.5f);
 	drawList->AddRect(pos, ImVec2(pos.x + width, pos.y + height), WithAlpha(tint, 0.35f), height * 0.5f);
+	// Text in a stronger shade of the tint: lighter on dark themes, darker on light ones.
+	const ImVec4 textColor = Theme::C().light ? Scaled(tint, 0.6f)
+		: ImVec4(std::min(1.0f, tint.x * 1.25f + 0.1f), std::min(1.0f, tint.y * 1.25f + 0.1f),
+			std::min(1.0f, tint.z * 1.25f + 0.1f), 1.0f);
 	drawList->AddText(Theme::GetFonts().bold, fontSize, ImVec2(pos.x + S(10.0f), pos.y + S(4.0f)),
-		ImGui::GetColorU32(ImVec4(std::min(1.0f, tint.x * 1.25f + 0.1f), std::min(1.0f, tint.y * 1.25f + 0.1f),
-			std::min(1.0f, tint.z * 1.25f + 0.1f), 1.0f)), text);
+		ImGui::GetColorU32(textColor), text);
 }
 
 void Text(ImFont* font, float size, const ImVec4& color, const char* text)
@@ -104,7 +123,7 @@ void Text(ImFont* font, float size, const ImVec4& color, const char* text)
 
 void SectionLabel(const char* text)
 {
-	Text(Theme::GetFonts().bold, Theme::kFontSmall, Theme::kTextDim, text);
+	Text(Theme::GetFonts().bold, Theme::kFontSmall, Theme::C().textDim, text);
 }
 
 void Spinner(const ImVec4& color)
@@ -129,6 +148,31 @@ void Chip(const char* text, const ImVec4& tint)
 	ImGui::Dummy(ImVec2(ChipWidth(fontSize, text), fontSize + S(8.0f)));
 }
 
+bool Toggle(const char* id, bool* value)
+{
+	const float height = ImGui::GetFrameHeight() * 0.8f;
+	const float width = height * 1.9f;
+	ImVec2 pos = ImGui::GetCursorScreenPos();
+	pos.y += (ImGui::GetFrameHeight() - height) * 0.5f; // center on the row like other frames
+	const bool clicked = ImGui::InvisibleButton(id, ImVec2(width, ImGui::GetFrameHeight()));
+	if (clicked)
+		*value = !*value;
+	const bool hovered = ImGui::IsItemHovered();
+	if (hovered)
+		ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+
+	const Theme::Palette& p = Theme::C();
+	ImDrawList* drawList = ImGui::GetWindowDrawList();
+	const ImVec4 track = *value ? (hovered ? Theme::Mix(p.accent, p.text, 0.15f) : p.accent)
+		: (hovered ? Theme::Mix(p.frameBg, p.textDim, 0.35f) : Theme::Mix(p.frameBg, p.textDim, 0.2f));
+	drawList->AddRectFilled(pos, ImVec2(pos.x + width, pos.y + height), ImGui::GetColorU32(track), height * 0.5f);
+	const float knobRadius = height * 0.5f - S(3.0f);
+	const float knobX = *value ? pos.x + width - height * 0.5f : pos.x + height * 0.5f;
+	const ImVec4 knob = *value ? p.windowBg : p.text;
+	drawList->AddCircleFilled(ImVec2(knobX, pos.y + height * 0.5f), knobRadius, ImGui::GetColorU32(knob));
+	return clicked;
+}
+
 void ThinProgressBar(float fraction)
 {
 	ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, S(4.0f));
@@ -136,7 +180,7 @@ void ThinProgressBar(float fraction)
 	ImGui::PopStyleVar();
 }
 
-bool NavItem(const char* label, bool selected)
+bool NavItem(const char* label, bool selected, int badge)
 {
 	const float height = S(44.0f);
 	ImGui::PushID(label);
@@ -147,19 +191,35 @@ bool NavItem(const char* label, bool selected)
 	ImDrawList* drawList = ImGui::GetWindowDrawList();
 	if (selected) {
 		drawList->AddRectFilled(ImVec2(min.x, min.y + S(10.0f)), ImVec2(min.x + S(4.0f), max.y - S(10.0f)),
-			ImGui::GetColorU32(Theme::kAccent), S(2.0f));
+			ImGui::GetColorU32(Theme::C().accent), S(2.0f));
 	}
 	const Theme::Fonts& fonts = Theme::GetFonts();
 	ImFont* font = selected ? fonts.bold : fonts.regular;
 	const float fontSize = ImGui::GetFontSize();
-	const ImVec4& color = selected ? Theme::kText : (ImGui::IsItemHovered() ? Theme::kText : Theme::kTextDim);
+	const ImVec4& color = selected ? Theme::C().text : (ImGui::IsItemHovered() ? Theme::C().text : Theme::C().textDim);
 	drawList->AddText(font, fontSize, ImVec2(min.x + S(18.0f), min.y + (height - fontSize) * 0.5f),
 		ImGui::GetColorU32(color), label);
+	if (badge > 0) {
+		// Count pill on the right, e.g. active downloads.
+		char count[16];
+		std::snprintf(count, sizeof(count), "%d", badge);
+		const float badgeFont = fontSize * (Theme::kFontSmall / Theme::kFontBody);
+		const ImVec2 textSize = fonts.bold->CalcTextSizeA(badgeFont, FLT_MAX, 0.0f, count);
+		const float badgeHeight = badgeFont + S(6.0f);
+		const float badgeWidth = std::max(badgeHeight, textSize.x + S(12.0f));
+		const ImVec2 badgeMin(max.x - S(12.0f) - badgeWidth, min.y + (height - badgeHeight) * 0.5f);
+		drawList->AddRectFilled(badgeMin, ImVec2(badgeMin.x + badgeWidth, badgeMin.y + badgeHeight),
+			ImGui::GetColorU32(Theme::C().accent), badgeHeight * 0.5f);
+		drawList->AddText(fonts.bold, badgeFont, ImVec2(badgeMin.x + (badgeWidth - textSize.x) * 0.5f, badgeMin.y + S(3.0f)),
+			ImGui::GetColorU32(Theme::C().windowBg), count);
+	}
 	return clicked;
 }
 
 float FadeAlpha(const LoadedImage& image)
 {
+	if (g_reduceMotion)
+		return 1.0f;
 	return std::clamp(static_cast<float>((ImGui::GetTime() - image.readyTime) / 0.25), 0.0f, 1.0f);
 }
 
@@ -177,11 +237,11 @@ void DrawPackIcon(ImDrawList* drawList, const LoadedImage* image, const Modpack&
 		const float fontSize = size * 0.5f;
 		const ImVec2 textSize = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, initial);
 		drawList->AddText(font, fontSize, ImVec2(min.x + (size - textSize.x) * 0.5f, min.y + (size - textSize.y) * 0.5f),
-			WithAlpha(Theme::kText, 0.9f), initial);
+			IM_COL32(255, 255, 255, 230), initial);
 	}
 	if (image)
 		DrawImageCover(drawList, *image, min, max, rounding, alpha);
-	drawList->AddRect(min, max, WithAlpha(ImVec4(1, 1, 1, 1), 0.08f), rounding);
+	drawList->AddRect(min, max, OutlineColor(0.08f), rounding);
 }
 
 bool PackRow(const Modpack& pack, ImageCache& images, bool selected, const std::string& meta)
@@ -196,7 +256,7 @@ bool PackRow(const Modpack& pack, ImageCache& images, bool selected, const std::
 	ImDrawList* drawList = ImGui::GetWindowDrawList();
 	if (selected) {
 		drawList->AddRectFilled(ImVec2(min.x, min.y + S(12.0f)), ImVec2(min.x + S(4.0f), max.y - S(12.0f)),
-			ImGui::GetColorU32(Theme::kAccent), S(2.0f));
+			ImGui::GetColorU32(Theme::C().accent), S(2.0f));
 	}
 
 	const float pad = S(10.0f);
@@ -209,9 +269,9 @@ bool PackRow(const Modpack& pack, ImageCache& images, bool selected, const std::
 	const float metaSize = nameSize * (Theme::kFontSmall / Theme::kFontBody);
 	const float textTop = min.y + (height - (nameSize + metaSize + S(4.0f))) * 0.5f;
 	DrawClippedText(drawList, fonts.bold, nameSize, ImVec2(textX, textTop), max.x - pad,
-		ImGui::GetColorU32(Theme::kText), pack.name);
+		ImGui::GetColorU32(Theme::C().text), pack.name);
 	DrawClippedText(drawList, fonts.regular, metaSize, ImVec2(textX, textTop + nameSize + S(4.0f)), max.x - pad,
-		ImGui::GetColorU32(Theme::kTextDim), meta);
+		ImGui::GetColorU32(Theme::C().textDim), meta);
 	return clicked;
 }
 
@@ -241,7 +301,7 @@ static void DrawBlockPattern(ImDrawList* drawList, const Modpack& pack, ImVec2 m
 	}
 }
 
-void HeroBanner(const Modpack& pack, ImageCache& images, float height)
+void HeroBanner(const Modpack& pack, ImageCache& images, float height, bool showGallery)
 {
 	const ImVec2 min = ImGui::GetCursorScreenPos();
 	const float width = ImGui::GetContentRegionAvail().x;
@@ -259,15 +319,17 @@ void HeroBanner(const Modpack& pack, ImageCache& images, float height)
 	const ImVec4 base = PackColor(pack);
 	drawList->AddRectFilled(min, max, ImGui::GetColorU32(Scaled(base, 0.35f)), rounding);
 	DrawBlockPattern(drawList, pack, min, max);
-	if (const LoadedImage* thumb = images.Get(pack.bannerUrl))
-		DrawImageCover(drawList, *thumb, min, max, rounding, FadeAlpha(*thumb));
-	if (const LoadedImage* full = images.Get(pack.bannerHiResUrl))
-		DrawImageCover(drawList, *full, min, max, rounding, FadeAlpha(*full));
+	if (showGallery) {
+		if (const LoadedImage* thumb = images.Get(pack.bannerUrl))
+			DrawImageCover(drawList, *thumb, min, max, rounding, FadeAlpha(*thumb));
+		if (const LoadedImage* full = images.Get(pack.bannerHiResUrl))
+			DrawImageCover(drawList, *full, min, max, rounding, FadeAlpha(*full));
+	}
 
 	// Fade the lower part into the panel color so the text stays readable, plus a soft
 	// darkening from the left for bright images. These overlays are unrounded, but they
 	// are the panel color, so the parts outside the rounded corners are invisible.
-	const ImVec4 panel = Theme::kPanelBg;
+	const ImVec4 panel = Theme::C().panelBg;
 	const float fadeTop = min.y + height * 0.25f;
 	drawList->AddRectFilledMultiColor(ImVec2(min.x, fadeTop), max,
 		WithAlpha(panel, 0.0f), WithAlpha(panel, 0.0f), WithAlpha(panel, 0.97f), WithAlpha(panel, 0.97f));
@@ -303,23 +365,157 @@ void HeroBanner(const Modpack& pack, ImageCache& images, float height)
 		chipX += chipWidth + S(8.0f);
 	};
 	if (!pack.gameVersion.empty())
-		addChip("Minecraft " + pack.gameVersion, Theme::kAccent);
+		addChip("Minecraft " + pack.gameVersion, Theme::C().accent);
 	if (!pack.loaders.empty())
-		addChip(pack.loaders, ImVec4(0.45f, 0.65f, 0.95f, 1.0f));
+		addChip(pack.loaders, Theme::C().info);
 	if (!pack.version.empty())
-		addChip("v" + pack.version, ImVec4(0.75f, 0.75f, 0.80f, 1.0f));
+		addChip("v" + pack.version, Theme::C().textDim);
 
 	if (!pack.author.empty()) {
 		y -= bodySize + S(10.0f);
 		DrawClippedText(drawList, fonts.regular, bodySize, ImVec2(textX, y), textRight,
-			ImGui::GetColorU32(Theme::kTextDim), "by " + pack.author);
+			ImGui::GetColorU32(Theme::C().textDim), "by " + pack.author);
 	}
 	y -= titleSize + S(2.0f);
 	DrawClippedText(drawList, fonts.bold, titleSize, ImVec2(textX, y), textRight,
-		ImGui::GetColorU32(Theme::kText), pack.name);
+		ImGui::GetColorU32(Theme::C().text), pack.name);
 
 	drawList->PopClipRect();
-	drawList->AddRect(min, max, WithAlpha(ImVec4(1, 1, 1, 1), 0.06f), rounding);
+	drawList->AddRect(min, max, OutlineColor(0.06f), rounding);
+}
+
+}
+
+namespace Widgets {
+
+bool EmptyState(const char* title, const char* body, const char* buttonLabel)
+{
+	const float width = ImGui::GetContentRegionAvail().x;
+	const float wrap = std::min(width, S(460.0f));
+	ImGui::Dummy(ImVec2(0.0f, S(40.0f)));
+
+	// A small stack of blocks as the illustration.
+	ImDrawList* drawList = ImGui::GetWindowDrawList();
+	const float block = S(26.0f);
+	const ImVec2 cursor = ImGui::GetCursorScreenPos();
+	const ImVec2 origin(cursor.x + (width - block * 3.0f) * 0.5f, cursor.y);
+	const ImVec2 cells[] = { ImVec2(0, 1), ImVec2(1, 1), ImVec2(2, 1), ImVec2(1, 0) };
+	for (int i = 0; i < 4; ++i) {
+		const ImVec2 cellMin(origin.x + cells[i].x * block, origin.y + cells[i].y * block);
+		const ImVec4 color = Theme::Mix(Theme::C().accentDeep, Theme::C().accent, 0.25f * static_cast<float>(i));
+		drawList->AddRectFilled(ImVec2(cellMin.x + S(2.0f), cellMin.y + S(2.0f)),
+			ImVec2(cellMin.x + block - S(2.0f), cellMin.y + block - S(2.0f)), ImGui::GetColorU32(color), S(4.0f));
+	}
+	ImGui::Dummy(ImVec2(0.0f, block * 2.0f + S(14.0f)));
+
+	auto centered = [&](ImFont* font, float size, const ImVec4& color, const char* text) {
+		ImGui::PushFont(font, size);
+		const float textWidth = std::min(ImGui::CalcTextSize(text, nullptr, false, wrap).x, wrap);
+		const float x = ImGui::GetCursorPosX() + (width - textWidth) * 0.5f;
+		ImGui::SetCursorPosX(x);
+		ImGui::PushTextWrapPos(x + textWidth + 1.0f);
+		ImGui::PushStyleColor(ImGuiCol_Text, color);
+		ImGui::TextWrapped("%s", text);
+		ImGui::PopStyleColor();
+		ImGui::PopTextWrapPos();
+		ImGui::PopFont();
+	};
+	const Theme::Fonts& fonts = Theme::GetFonts();
+	centered(fonts.bold, Theme::kFontHeading, Theme::C().text, title);
+	centered(fonts.regular, Theme::kFontBody, Theme::C().textDim, body);
+
+	bool clicked = false;
+	if (buttonLabel) {
+		ImGui::Dummy(ImVec2(0.0f, S(6.0f)));
+		const float buttonWidth = ImGui::CalcTextSize(buttonLabel, nullptr, true).x + S(48.0f);
+		ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (width - buttonWidth) * 0.5f);
+		clicked = ImGui::Button(buttonLabel, ImVec2(buttonWidth, S(40.0f)));
+	}
+	return clicked;
+}
+
+bool ThemeCard(const Theme::ThemeInfo& theme, bool selected, float width)
+{
+	const Theme::Palette& p = theme.palette;
+	const float previewHeight = width * 0.52f;
+	const float fontSize = ImGui::GetFontSize();
+	const float smallSize = fontSize * (Theme::kFontSmall / Theme::kFontBody);
+	const float height = previewHeight + fontSize + smallSize + S(26.0f);
+	ImGui::PushID(theme.id);
+	const bool clicked = ImGui::InvisibleButton("##theme", ImVec2(width, height));
+	const bool hovered = ImGui::IsItemHovered();
+	ImGui::PopID();
+	const ImVec2 min = ImGui::GetItemRectMin();
+	const ImVec2 max = ImGui::GetItemRectMax();
+	ImDrawList* drawList = ImGui::GetWindowDrawList();
+	const float rounding = S(10.0f);
+
+	// Card background and outline (accent when selected).
+	drawList->AddRectFilled(min, max, ImGui::GetColorU32(Theme::C().cardBg), rounding);
+	const ImVec4 outline = selected ? Theme::C().accent : (hovered ? Theme::C().textDim : Theme::C().border);
+	drawList->AddRect(min, max, ImGui::GetColorU32(outline), rounding, 0, selected ? S(2.5f) : S(1.0f));
+
+	// Miniature launcher in the theme's colors: sidebar, pack list, banner, play button.
+	auto col = [](const ImVec4& c) { return ImGui::GetColorU32(c); };
+	const float pad = S(8.0f);
+	const ImVec2 pMin(min.x + pad, min.y + pad);
+	const ImVec2 pMax(max.x - pad, min.y + previewHeight);
+	const float pw = pMax.x - pMin.x;
+	const float ph = pMax.y - pMin.y;
+	const float r = S(6.0f);
+	const float g = S(4.0f);
+	drawList->AddRectFilled(pMin, pMax, col(p.windowBg), r);
+
+	const ImVec2 sideMin(pMin.x + g, pMin.y + g);
+	const ImVec2 sideMax(pMin.x + pw * 0.24f, pMax.y - g);
+	drawList->AddRectFilled(sideMin, sideMax, col(p.panelBg), r * 0.6f);
+	const float navH = ph * 0.11f;
+	for (int i = 0; i < 3; ++i) {
+		const float y = sideMin.y + ph * 0.2f + i * (navH + g);
+		drawList->AddRectFilled(ImVec2(sideMin.x + g, y), ImVec2(sideMax.x - g, y + navH),
+			col(i == 0 ? p.accentDeep : p.frameBg), r * 0.4f);
+	}
+
+	const ImVec2 mainMin(sideMax.x + g, pMin.y + g);
+	const ImVec2 mainMax(pMax.x - g, pMax.y - g);
+	const float listRight = mainMin.x + (mainMax.x - mainMin.x) * 0.38f;
+	drawList->AddRectFilled(mainMin, ImVec2(listRight, mainMax.y), col(p.panelBg), r * 0.6f);
+	const float icon = ph * 0.13f;
+	for (int i = 0; i < 4; ++i) {
+		const float y = mainMin.y + g + i * (ph * 0.21f);
+		drawList->AddRectFilled(ImVec2(mainMin.x + g, y), ImVec2(mainMin.x + g + icon, y + icon),
+			col(Theme::Mix(p.accentDeep, p.accent, 0.25f * static_cast<float>(i))), r * 0.3f);
+		const float textX = mainMin.x + g * 2.0f + icon;
+		drawList->AddRectFilled(ImVec2(textX, y + icon * 0.15f), ImVec2(listRight - g, y + icon * 0.4f), col(p.text), 1.0f);
+		drawList->AddRectFilled(ImVec2(textX, y + icon * 0.6f), ImVec2(listRight - g * 3.0f, y + icon * 0.8f), col(p.textDim), 1.0f);
+	}
+
+	const ImVec2 detailMin(listRight + g, mainMin.y);
+	drawList->AddRectFilled(detailMin, mainMax, col(p.panelBg), r * 0.6f);
+	drawList->AddRectFilledMultiColor(ImVec2(detailMin.x + g, detailMin.y + g), ImVec2(mainMax.x - g, detailMin.y + ph * 0.42f),
+		col(p.accentDeep), col(p.accent), col(p.panelBg), col(p.panelBg));
+	drawList->AddRectFilled(ImVec2(detailMin.x + g, detailMin.y + ph * 0.5f), ImVec2(mainMax.x - g * 4.0f, detailMin.y + ph * 0.55f),
+		col(p.textDim), 1.0f);
+	drawList->AddRectFilled(ImVec2(detailMin.x + g, mainMax.y - g - ph * 0.14f), ImVec2(mainMax.x - g, mainMax.y - g),
+		col(p.accentDeep), r * 0.4f);
+
+	// Name, description, and a check mark when selected.
+	const Theme::Fonts& fonts = Theme::GetFonts();
+	const float textY = pMax.y + S(8.0f);
+	DrawClippedText(drawList, fonts.bold, fontSize, ImVec2(min.x + S(12.0f), textY), max.x - S(34.0f),
+		ImGui::GetColorU32(Theme::C().text), theme.name);
+	DrawClippedText(drawList, fonts.regular, smallSize, ImVec2(min.x + S(12.0f), textY + fontSize + S(2.0f)), max.x - S(10.0f),
+		ImGui::GetColorU32(Theme::C().textDim), theme.description);
+	if (selected) {
+		const ImVec2 c(max.x - S(20.0f), textY + fontSize * 0.5f);
+		const float k = S(4.5f);
+		drawList->AddCircleFilled(c, S(9.0f), ImGui::GetColorU32(Theme::C().accent));
+		const std::array<ImVec2, 3> check = { ImVec2(c.x - k, c.y), ImVec2(c.x - k * 0.25f, c.y + k * 0.75f), ImVec2(c.x + k, c.y - k * 0.6f) };
+		drawList->AddPolyline(check.data(), 3, ImGui::GetColorU32(Theme::C().windowBg), 0, S(2.0f));
+	}
+	if (hovered)
+		ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+	return clicked;
 }
 
 }

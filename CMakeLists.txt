@@ -26,6 +26,7 @@ FetchContent_MakeAvailable(imgui_backend_source)
 
 add_executable(MC_Launcher_Premium
   src/main.cpp
+  src/Platform.cpp
   src/Game/GameFiles.cpp
   src/Game/Launcher.cpp
   src/Game/Loaders.cpp
@@ -39,7 +40,9 @@ add_executable(MC_Launcher_Premium
   src/Storage/Library.cpp
   src/Storage/Settings.cpp
   src/UI/ImageCache.cpp
+  src/UI/SettingsPage.cpp
   src/UI/Theme.cpp
+  src/UI/Toasts.cpp
   src/UI/Widgets.cpp
   src/Util/Process.cpp
   src/Util/Sha1.cpp

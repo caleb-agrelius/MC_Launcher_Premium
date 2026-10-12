@@ -70,7 +70,7 @@ You can also double-click the exe or start it from any folder. The app finds the
 | `downloads\<pack>\` | Downloaded `.mrpack` files                                     |
 | `installs\<pack>\`  | Extracted pack files                                           |
 | `imgui.ini`         | Window layout                                                  |
-| `settings.json`     | UI scale                                                       |
+| `settings.json`     | Theme, UI scale, launch defaults, and other settings           |
 | `library.json`      | Packs listed in My Library                                     |
 | `downloads.json`    | Finished downloads, restored on startup                        |
 | `account.dat`       | Signed-in account (encrypted with Windows DPAPI)               |
@@ -152,7 +152,7 @@ src/Network/HttpClient.*  libcurl wrapper (downloads, GET/POST, cancel)
 src/Network/MicrosoftAuth.* Microsoft -> Xbox -> Minecraft sign-in
 src/Network/Modrinth.*    Modrinth API client (search, versions)
 src/Storage/Installer.*   Zip extraction
-src/Storage/Settings.*    settings.json (UI scale)
+src/Storage/Settings.*    settings.json (theme, UI scale, launch defaults)
 src/Storage/Library.*     library.json (My Library), downloads.json (finished downloads)
 src/Storage/Account.*     account.dat (signed-in or offline account)
 src/Game/GameFiles.*      Minecraft versions, libraries, assets, Java runtimes
@@ -160,8 +160,11 @@ src/Game/Loaders.*        Fabric, Quilt, Forge, NeoForge
 src/Game/PackInstance.*   .mrpack index -> instances/<pack>/
 src/Game/Launcher.*       Play: prepare everything, build the command line, run Java
 src/Util/                 SHA-1, process launching
-src/UI/Theme.*            Colors, fonts, DPI/UI scaling
-src/UI/Widgets.*          Pack rows, hero banner, chips, spinner
+src/Platform.*            Open folders, system memory
+src/UI/Theme.*            Color themes, fonts, DPI/UI scaling
+src/UI/SettingsPage.*     Settings page
+src/UI/Toasts.*           Toast notifications
+src/UI/Widgets.*          Pack rows, hero banner, chips, toggles, theme cards
 src/UI/ImageCache.*       Async icon/banner loading (PNG, JPEG, WebP)
 resources/index.json      Offline fallback pack list
 docs/features/            What each feature does (start with CLAUDE.md)
