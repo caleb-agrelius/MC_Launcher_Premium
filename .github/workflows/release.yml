@@ -1,0 +1,60 @@
+# Manual release: Actions > Release > Run workflow. Builds Release from the selected ref,
+# zips it with resources/, and publishes a GitHub release tagged v<version>.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version without the leading v (for example 1.2.0)
+        required: true
+        type: string
+      prerelease:
+        description: Mark as a pre-release
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml
+    with:
+      configuration: Release
+      artifact-name: release-build
+
+  publish:
+    needs: build
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate version
+        run: |
+          if ($env:VERSION -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$') { throw "Invalid version '$env:VERSION'" }
+          gh release view "v$env:VERSION" *> $null
+          if ($LASTEXITCODE -eq 0) { throw "Release v$env:VERSION already exists" }
+          $global:LASTEXITCODE = 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-build
+          path: package/MC_Launcher_Premium
+
+      # The exe finds its data by searching upward for resources\index.json.
+      - name: Package
+        run: |
+          Copy-Item resources package/MC_Launcher_Premium/resources -Recurse
+          Compress-Archive -Path package/MC_Launcher_Premium -DestinationPath "MC_Launcher_Premium-v$env:VERSION-win64.zip"
+
+      - name: Create release
+        run: |
+          $args = @("v$env:VERSION", "MC_Launcher_Premium-v$env:VERSION-win64.zip", '--target', $env:GITHUB_SHA, '--title', "v$env:VERSION", '--generate-notes')
+          if ('${{ inputs.prerelease }}' -eq 'true') { $args += '--prerelease' }
+          gh release create @args

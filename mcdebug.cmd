@@ -9,7 +9,6 @@ if /I "%~1"=="build" goto build
 if /I "%~1"=="run" goto run
 if /I "%~1"=="debug" goto debug
 if /I "%~1"=="offline" goto offline
-if /I "%~1"=="offline" goto offline
 if /I "%~1"=="help" goto usage
 if "%~1"=="" goto usage
 
@@ -20,8 +19,8 @@ goto usage_error
 call :configure
 if errorlevel 1 exit /b %errorlevel%
 
-rem Only the app by default: launcher_checks and live_checks compile most of the same sources again, which
-rem doubled or tripled every build. "mcdebug build all" builds them too.
+rem Only the app by default. "mcdebug build all" also builds launcher_checks, live_checks and logo_export;
+rem the shared sources are one static library, so that adds little compile time.
 if /I "%~1"=="build" if /I "%~2"=="all" (
     cmake --build "%BUILD_DIR%" --config Debug --parallel
     exit /b %errorlevel%
@@ -107,14 +106,26 @@ exit /b 1
 call :find_cmake
 if errorlevel 1 exit /b 1
 
+rem FetchContent contacts GitHub on every configure to check the ImGui tag. Skip that when the
+rem checkout under build\_deps is already at the tag CMakeLists.txt pins (so this also works offline).
+set "FETCH_FLAG="
+set "IMGUI_SRC=%BUILD_DIR%\_deps\imgui_backend_source-src"
+set "IMGUI_WANT="
+set "IMGUI_HAVE="
+if exist "%IMGUI_SRC%\.git" (
+    for /f "tokens=2" %%t in ('findstr /C:"GIT_TAG v" "%PROJECT_DIR%\CMakeLists.txt"') do set "IMGUI_WANT=%%t"
+    for /f %%t in ('git -C "%IMGUI_SRC%" describe --tags --exact-match 2^>nul') do set "IMGUI_HAVE=%%t"
+)
+if defined IMGUI_WANT if "%IMGUI_WANT%"=="%IMGUI_HAVE%" set "FETCH_FLAG=-DFETCHCONTENT_UPDATES_DISCONNECTED=ON"
+
 if defined VCPKG_ROOT (
     if not exist "%VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake" (
         echo VCPKG_ROOT does not contain scripts\buildsystems\vcpkg.cmake: "%VCPKG_ROOT%"
         exit /b 1
     )
-    cmake -S "%PROJECT_DIR%" -B "%BUILD_DIR%" -DCMAKE_BUILD_TYPE=Debug "-DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake"
+    cmake -S "%PROJECT_DIR%" -B "%BUILD_DIR%" -DCMAKE_BUILD_TYPE=Debug %FETCH_FLAG% "-DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake"
 ) else (
-    cmake -S "%PROJECT_DIR%" -B "%BUILD_DIR%" -DCMAKE_BUILD_TYPE=Debug
+    cmake -S "%PROJECT_DIR%" -B "%BUILD_DIR%" -DCMAKE_BUILD_TYPE=Debug %FETCH_FLAG%
 )
 exit /b %errorlevel%
 
