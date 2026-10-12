@@ -219,18 +219,17 @@ bool DrawMinecraft(Settings& settings, const SettingsPageContext& context)
 	bool changed = false;
 	LaunchSettings& launch = settings.launch;
 
-	Notice("Launching Minecraft isn't available yet. These defaults are saved now and will be used for every pack once it is.",
-		Theme::C().info);
+	Notice("These apply to every pack the next time you press Play.", Theme::C().info);
 
 	BeginCard("memory_card");
 	CardTitle("Memory", "How much RAM Minecraft may use. Most modpacks run well with 4\xE2\x80\x93" "8 GB.");
-	const int systemMb = context.systemMemoryMb > 0 ? static_cast<int>(context.systemMemoryMb) : 32 * 1024;
-	const int sliderMaxMb = std::max(kMinMemoryMb * 2, systemMb);
+	const int systemMb = context.systemMemoryMb > 0 ? static_cast<int>(context.systemMemoryMb) : kMaxMemoryMb;
+	const int sliderMaxMb = std::clamp(systemMb, kMinMemoryMb * 2, kMaxMemoryMb);
 	if (BeginRows("memory_rows")) {
 		Row("Maximum memory", "Java's -Xmx.");
 		float maxGb = launch.maxMemoryMb / 1024.0f;
-		if (ImGui::SliderFloat("##max_memory", &maxGb, 1.0f, sliderMaxMb / 1024.0f, "%.1f GB")) {
-			launch.maxMemoryMb = std::max(kMinMemoryMb, static_cast<int>(std::lround(maxGb * 2.0f)) * 512);
+		if (ImGui::SliderFloat("##max_memory", &maxGb, kMinMemoryMb / 1024.0f, sliderMaxMb / 1024.0f, "%.1f GB")) {
+			launch.maxMemoryMb = std::clamp(static_cast<int>(std::lround(maxGb * 2.0f)) * 512, kMinMemoryMb, kMaxMemoryMb);
 			launch.minMemoryMb = std::min(launch.minMemoryMb, launch.maxMemoryMb);
 			changed = true;
 		}
@@ -243,10 +242,11 @@ bool DrawMinecraft(Settings& settings, const SettingsPageContext& context)
 			ImGui::PopFont();
 		}
 
-		Row("Minimum memory", "Java's -Xms. Memory reserved at startup.");
+		Row("Starting memory", "Java's -Xms. Automatic lets Java decide; a fixed amount can smooth out early stutters.");
 		float minGb = launch.minMemoryMb / 1024.0f;
-		if (ImGui::SliderFloat("##min_memory", &minGb, 0.5f, launch.maxMemoryMb / 1024.0f, "%.1f GB")) {
-			launch.minMemoryMb = std::clamp(static_cast<int>(std::lround(minGb * 2.0f)) * 512, kMinMemoryMb, launch.maxMemoryMb);
+		if (ImGui::SliderFloat("##min_memory", &minGb, 0.0f, launch.maxMemoryMb / 1024.0f,
+				launch.minMemoryMb == 0 ? "Automatic" : "%.1f GB")) {
+			launch.minMemoryMb = std::clamp(static_cast<int>(std::lround(minGb * 2.0f)) * 512, 0, launch.maxMemoryMb);
 			changed = true;
 		}
 		EndRows();
@@ -256,11 +256,21 @@ bool DrawMinecraft(Settings& settings, const SettingsPageContext& context)
 	BeginCard("java_card");
 	CardTitle("Java");
 	if (BeginRows("java_rows")) {
-		Row("Java executable", "Leave empty to pick a suitable Java for each Minecraft version automatically.");
-		changed |= ImGui::InputTextWithHint("##java_path", "Automatic", &launch.javaPath);
+		Row("Java executable", "Leave empty to use Mojang's Java for each Minecraft version (downloaded automatically). "
+			"Otherwise, the path to java.exe, javaw.exe, or a Java folder.");
+		changed |= ImGui::InputTextWithHint("##java_path", "Automatic (Mojang's Java)", &launch.javaPath);
+		if (!launch.javaPath.empty()) {
+			std::error_code ec;
+			const std::filesystem::path java(launch.javaPath);
+			if (!std::filesystem::exists(java, ec)) {
+				ImGui::PushFont(nullptr, Theme::kFontSmall);
+				ImGui::TextColored(Theme::C().error, "Not found. Play will fail until this is fixed or cleared.");
+				ImGui::PopFont();
+			}
+		}
 
-		Row("JVM arguments", "Extra arguments passed to Java, separated by spaces.");
-		changed |= ImGui::InputTextWithHint("##jvm_args", "e.g. -XX:+UseG1GC", &launch.jvmArgs);
+		Row("JVM arguments", "Extra arguments for Java, separated by spaces. Use quotes for values with spaces.");
+		changed |= ImGui::InputTextWithHint("##jvm_args", "e.g. -XX:+UseG1GC -XX:MaxGCPauseMillis=50", &launch.jvmArgs);
 		EndRows();
 	}
 	EndCard();
@@ -268,28 +278,37 @@ bool DrawMinecraft(Settings& settings, const SettingsPageContext& context)
 	BeginCard("window_card");
 	CardTitle("Game window");
 	if (BeginRows("window_rows")) {
-		Row("Resolution", "Window size when the game starts.");
-		const float half = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x - ImGui::CalcTextSize("x").x -
-			ImGui::GetStyle().ItemSpacing.x) * 0.5f;
-		ImGui::BeginDisabled(launch.fullscreen);
-		ImGui::SetNextItemWidth(half);
-		if (ImGui::InputInt("##width", &launch.windowWidth, 0)) {
-			launch.windowWidth = std::max(kMinWindowSide, launch.windowWidth);
-			changed = true;
-		}
-		ImGui::SameLine();
-		ImGui::AlignTextToFramePadding();
-		ImGui::TextDisabled("x");
-		ImGui::SameLine();
-		ImGui::SetNextItemWidth(half);
-		if (ImGui::InputInt("##height", &launch.windowHeight, 0)) {
-			launch.windowHeight = std::max(kMinWindowSide, launch.windowHeight);
-			changed = true;
-		}
-		ImGui::EndDisabled();
-
 		Row("Fullscreen");
 		changed |= Widgets::Toggle("##fullscreen", &launch.fullscreen);
+
+		Row("Custom window size", "Off uses Minecraft's default size (854 x 480).");
+		ImGui::BeginDisabled(launch.fullscreen);
+		bool customSize = launch.windowWidth > 0 && launch.windowHeight > 0;
+		if (Widgets::Toggle("##custom_size", &customSize)) {
+			launch.windowWidth = customSize ? 1280 : 0;
+			launch.windowHeight = customSize ? 720 : 0;
+			changed = true;
+		}
+		if (customSize) {
+			ImGui::SameLine(0.0f, S(16.0f));
+			const float half = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x * 2.0f -
+				ImGui::CalcTextSize("x").x) * 0.5f;
+			ImGui::SetNextItemWidth(half);
+			if (ImGui::InputInt("##width", &launch.windowWidth, 0)) {
+				launch.windowWidth = std::max(kMinWindowSide, launch.windowWidth);
+				changed = true;
+			}
+			ImGui::SameLine();
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextDisabled("x");
+			ImGui::SameLine();
+			ImGui::SetNextItemWidth(half);
+			if (ImGui::InputInt("##height", &launch.windowHeight, 0)) {
+				launch.windowHeight = std::max(kMinWindowSide, launch.windowHeight);
+				changed = true;
+			}
+		}
+		ImGui::EndDisabled();
 
 		Row("When the game starts");
 		const char* options[] = { "Keep the launcher open", "Minimize the launcher", "Close the launcher" };
@@ -297,6 +316,11 @@ bool DrawMinecraft(Settings& settings, const SettingsPageContext& context)
 		if (ImGui::Combo("##after_launch", &afterLaunch, options, 3)) {
 			launch.afterLaunch = static_cast<AfterLaunch>(afterLaunch);
 			changed = true;
+		}
+		if (launch.afterLaunch == AfterLaunch::Minimize) {
+			ImGui::PushFont(nullptr, Theme::kFontSmall);
+			ImGui::TextDisabled("The launcher comes back when Minecraft closes.");
+			ImGui::PopFont();
 		}
 		EndRows();
 	}
@@ -309,17 +333,15 @@ bool DrawMinecraft(Settings& settings, const SettingsPageContext& context)
 	return changed;
 }
 
-void DrawAccount()
+bool DrawAccount(Settings& settings, const SettingsPageContext& context)
 {
-	Notice("Signing in isn't available yet. A Microsoft account that owns Minecraft: Java Edition will be needed to play.",
-		Theme::C().info);
-
+	bool changed = false;
 	BeginCard("account_card");
-	CardTitle("Microsoft account");
+	CardTitle("Current account");
 	const ImVec2 pos = ImGui::GetCursorScreenPos();
 	const float avatar = S(56.0f);
 	ImDrawList* drawList = ImGui::GetWindowDrawList();
-	// Steve-ish placeholder head made of blocks.
+	// Steve-style head made of blocks.
 	const float px = avatar / 8.0f;
 	for (int y = 0; y < 8; ++y) {
 		for (int x = 0; x < 8; ++x) {
@@ -336,14 +358,23 @@ void DrawAccount()
 	ImGui::SameLine(0.0f, S(16.0f));
 	ImGui::BeginGroup();
 	ImGui::PushFont(Theme::GetFonts().bold, 0.0f);
-	ImGui::TextUnformatted("Not signed in");
+	ImGui::TextUnformatted(context.accountName.empty() ? "Not signed in" : context.accountName.c_str());
 	ImGui::PopFont();
-	ImGui::TextDisabled("Sign in to play online and use your skin.");
-	ImGui::BeginDisabled(true);
-	ImGui::Button("Sign in with Microsoft");
-	ImGui::EndDisabled();
+	ImGui::TextDisabled("%s", context.accountKind.c_str());
+	ImGui::TextDisabled("Sign in, play offline, or sign out from the ACCOUNT section of the sidebar.");
 	ImGui::EndGroup();
 	EndCard();
+
+	BeginCard("microsoft_card");
+	CardTitle("Microsoft sign-in", "Signing in with Microsoft needs an Azure app (client) ID that Mojang has approved for the "
+		"Minecraft API. Without one, only offline mode is available.");
+	if (BeginRows("microsoft_rows")) {
+		Row("Azure client ID", "Takes effect the next time you sign in.");
+		changed |= ImGui::InputTextWithHint("##client_id", "00000000-0000-0000-0000-000000000000", &settings.microsoftClientId);
+		EndRows();
+	}
+	EndCard();
+	return changed;
 }
 
 bool DrawDownloads(Settings& settings, const SettingsPageContext& context)
@@ -365,6 +396,8 @@ bool DrawDownloads(Settings& settings, const SettingsPageContext& context)
 		const std::filesystem::path root(context.dataFolder);
 		FolderRow("Downloads", "Downloaded .mrpack files.", (root / "downloads").string());
 		FolderRow("Installs", "Extracted packs.", (root / "installs").string());
+		FolderRow("Instances", "Each pack's game folder: mods, config, saves, logs.", (root / "instances").string());
+		FolderRow("Minecraft files", "Shared versions, libraries, assets and Java runtimes.", (root / "minecraft").string());
 		EndRows();
 	}
 	EndCard();
@@ -424,7 +457,7 @@ bool DrawSettingsPage(Settings& settings, const SettingsPageContext& context)
 	switch (g_tab) {
 	case Tab::Appearance: changed = DrawAppearance(settings); break;
 	case Tab::Minecraft: changed = DrawMinecraft(settings, context); break;
-	case Tab::Account: DrawAccount(); break;
+	case Tab::Account: changed = DrawAccount(settings, context); break;
 	case Tab::Downloads: changed = DrawDownloads(settings, context); break;
 	case Tab::About: DrawAbout(context); break;
 	}

@@ -8,6 +8,12 @@
 
 using json = nlohmann::json;
 
+// Window sizes: 0 (Minecraft's default) or at least kMinWindowSide.
+static int ClampWindowSide(int value)
+{
+	return value <= 0 ? 0 : std::max(kMinWindowSide, value);
+}
+
 Settings LoadSettings(const std::string& path)
 {
 	Settings settings;
@@ -22,15 +28,18 @@ Settings LoadSettings(const std::string& path)
 		settings.reduceMotion = j.value("reduceMotion", settings.reduceMotion);
 		settings.showGalleryBanners = j.value("showGalleryBanners", settings.showGalleryBanners);
 		settings.searchLimit = std::clamp(j.value("searchLimit", settings.searchLimit), kMinSearchLimit, kMaxSearchLimit);
+		settings.microsoftClientId = j.value("microsoftClientId", settings.microsoftClientId);
 
-		const json launch = j.value("launch", json::object());
 		LaunchSettings& l = settings.launch;
-		l.maxMemoryMb = std::max(kMinMemoryMb, launch.value("maxMemoryMb", l.maxMemoryMb));
-		l.minMemoryMb = std::clamp(launch.value("minMemoryMb", l.minMemoryMb), kMinMemoryMb, l.maxMemoryMb);
+		// Before the Settings page, memory was a top-level key.
+		l.maxMemoryMb = j.value("maxMemoryMb", l.maxMemoryMb);
+		const json launch = j.value("launch", json::object());
+		l.maxMemoryMb = std::clamp(launch.value("maxMemoryMb", l.maxMemoryMb), kMinMemoryMb, kMaxMemoryMb);
+		l.minMemoryMb = std::clamp(launch.value("minMemoryMb", l.minMemoryMb), 0, l.maxMemoryMb);
 		l.javaPath = launch.value("javaPath", l.javaPath);
 		l.jvmArgs = launch.value("jvmArgs", l.jvmArgs);
-		l.windowWidth = std::max(kMinWindowSide, launch.value("windowWidth", l.windowWidth));
-		l.windowHeight = std::max(kMinWindowSide, launch.value("windowHeight", l.windowHeight));
+		l.windowWidth = ClampWindowSide(launch.value("windowWidth", l.windowWidth));
+		l.windowHeight = ClampWindowSide(launch.value("windowHeight", l.windowHeight));
 		l.fullscreen = launch.value("fullscreen", l.fullscreen);
 		l.afterLaunch = static_cast<AfterLaunch>(std::clamp(launch.value("afterLaunch", 0), 0, 2));
 	}
@@ -52,6 +61,7 @@ bool SaveSettings(const std::string& path, const Settings& settings)
 	j["reduceMotion"] = settings.reduceMotion;
 	j["showGalleryBanners"] = settings.showGalleryBanners;
 	j["searchLimit"] = settings.searchLimit;
+	j["microsoftClientId"] = settings.microsoftClientId;
 	j["launch"] = {
 		{ "minMemoryMb", l.minMemoryMb },
 		{ "maxMemoryMb", l.maxMemoryMb },

@@ -38,6 +38,11 @@ installs/
 app.log
 imgui.ini
 settings.json
+library.json
+downloads.json
+account.dat
+minecraft/
+instances/
 
 # Modpack archives
 *.mrpack

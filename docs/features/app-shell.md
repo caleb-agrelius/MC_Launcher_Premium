@@ -19,7 +19,7 @@ Window, rendering loop, navigation, theme, and logging.
 
 ## Layout
 One full-window ImGui window with no title bar, split into:
-- **Sidebar** (230px, scaled): a grass-block logo drawn from small squares, "MC Launcher" with a "PREMIUM · JAVA" tag, the **BROWSE** entries **Discover**, **My Library**, and **Downloads**, and the **LAUNCHER** entry **Settings** (`Widgets::NavItem`; the selected one has an accent bar and bold text). Downloads shows a count badge while downloads or extractions are running. The footer holds the **UI scale** control (`-`, the current percentage, which resets to 100% when clicked, and `+`) and a "Launching: coming soon" note.
+- **Sidebar** (230px, scaled): a grass-block logo drawn from small squares, "MC Launcher" with a "PREMIUM · JAVA" tag, the **BROWSE** entries **Discover**, **My Library**, and **Downloads**, the **LAUNCHER** entry **Settings** (`Widgets::NavItem`; the selected one has an accent bar and bold text), then the **ACCOUNT** section (see [accounts.md](accounts.md)). Downloads shows a count badge while downloads or extractions are running. The footer holds the **UI scale** control (`-`, the current percentage, which resets to 100% when clicked, and `+`).
 - **Main content:** a header (an accent breadcrumb such as "MINECRAFT / MODPACKS" or "LAUNCHER / SETTINGS", a large bold page title, and a subtitle), then the active page.
 
 Navigation state is the `Page` enum (`Discover`, `Library`, `Downloads`, `Settings`). Discover is the default.
@@ -46,4 +46,4 @@ Themes, fonts, and scaling live in `src/UI/Theme.{h,cpp}`. See [ui-theme.md](ui-
 - `PackIconItem(pack, images, size)` lays out a pack icon as an item.
 
 ## Runtime files (gitignored, created in the data folder)
-`app.log`, `imgui.ini` (ImGui layout persistence), `settings.json` (see [settings.md](settings.md)), `downloads/`, `installs/`.
+`app.log`, `imgui.ini` (ImGui layout persistence), `settings.json` (see [settings.md](settings.md)), `library.json` (My Library, see [library.md](library.md)), `downloads.json` (finished downloads, see [downloads.md](downloads.md)), `account.dat` (see [accounts.md](accounts.md)), `minecraft/` and `instances/` (see [launching.md](launching.md)), `downloads/`, `installs/`.

@@ -10,12 +10,12 @@ Each tab is a set of cards with a label (and hint) on the left and the control o
 | Tab | Contents |
 |---|---|
 | **Appearance** | Theme picker (a grid of `ThemeCard`s, applied on click); UI scale slider (75–200%) with **Reset**; **Reduce motion** and **Gallery banners** toggles |
-| **Minecraft** | A notice that launching isn't available yet. **Memory:** maximum (`-Xmx`) and minimum (`-Xms`) sliders in 0.5 GB steps, up to the PC's RAM, with a warning above 75% of it. **Java:** executable path (empty = automatic) and extra JVM arguments. **Game window:** resolution, fullscreen, and what the launcher does when the game starts. **Reset Minecraft settings to defaults** |
-| **Account** | A placeholder: a notice, a block-art avatar, "Not signed in", and a disabled **Sign in with Microsoft** button |
-| **Downloads** | Results per search (10–100); the `downloads/` and `installs/` paths with **Open** buttons |
+| **Minecraft** | Defaults used for every pack when Play is pressed (see [launching.md](launching.md)). **Memory:** maximum (`-Xmx`, 1 GB up to the PC's RAM, warning above 75% of it) and starting (`-Xms`, Automatic or a fixed amount) sliders in 0.5 GB steps. **Java:** executable path (empty = Mojang's runtime; a red note appears if the path doesn't exist) and extra JVM arguments. **Game window:** fullscreen, custom window size (off = Minecraft's 854 x 480), and what the launcher does when the game starts. **Reset Minecraft settings to defaults** |
+| **Account** | The current account (name and type, or "Not signed in") with a pointer to the sidebar's ACCOUNT section, and the **Azure client ID** used for Microsoft sign-in (`microsoftClientId`, see [accounts.md](accounts.md)) |
+| **Downloads** | Results per search (10–100); the `downloads/`, `installs/`, `instances/` and `minecraft/` paths with **Open** buttons |
 | **About** | Version, Windows display scaling, system memory, the data folder (with **Open**), keyboard shortcuts, and a Modrinth / not-affiliated note |
 
-`SettingsPageContext` passes in the app version (`kAppVersion` in `main.cpp`), the data folder, total RAM (`Platform::SystemMemoryMb`), and the DPI scale. **Open** buttons use `Platform::OpenFolder`, which creates the folder if needed and opens it in Explorer.
+`SettingsPageContext` passes in the app version (`kAppVersion` in `main.cpp`), the data folder, total RAM (`Platform::SystemMemoryMb`), the DPI scale, and the current account's name and type. **Open** buttons use `Platform::OpenFolder`, which creates the folder if needed and opens it in Explorer.
 
 ## `settings.json`
 Saved in the data folder (gitignored). A missing or invalid file gives the defaults. Values are clamped on load.
@@ -27,12 +27,13 @@ Saved in the data folder (gitignored). A missing or invalid file gives the defau
 | `reduceMotion` | false | No image fade-ins or toast animations |
 | `showGalleryBanners` | true | When false, pack banners don't load gallery images |
 | `searchLimit` | 30 | Modrinth results per search, 10–100 |
-| `launch.minMemoryMb` | 2048 | At least 512, at most `maxMemoryMb` |
-| `launch.maxMemoryMb` | 4096 | At least 512 |
-| `launch.javaPath` | `""` | Empty = automatic |
-| `launch.jvmArgs` | `""` | |
-| `launch.windowWidth` / `windowHeight` | 1280 / 720 | At least 320 |
+| `microsoftClientId` | `""` | Azure app ID for Microsoft sign-in; empty disables it |
+| `launch.minMemoryMb` | 0 | `-Xms`; 0 = let Java decide; at most `maxMemoryMb` |
+| `launch.maxMemoryMb` | 4096 | `-Xmx`; 1024–32768. A top-level `maxMemoryMb` (older files) is read into this |
+| `launch.javaPath` | `""` | Empty = Mojang's runtime for the Minecraft version |
+| `launch.jvmArgs` | `""` | Extra JVM arguments |
+| `launch.windowWidth` / `windowHeight` | 0 / 0 | 0 = Minecraft's default size; otherwise at least 320 |
 | `launch.fullscreen` | false | |
 | `launch.afterLaunch` | 0 | 0 keep open, 1 minimize, 2 close (`AfterLaunch`) |
 
-The `launch` values aren't used yet. See [planned.md](planned.md).
+How the `launch` values are applied is described in [launching.md](launching.md).

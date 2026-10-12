@@ -11,6 +11,8 @@ struct SettingsPageContext {
 	std::string dataFolder;            // absolute path of the folder with settings.json, downloads/, installs/
 	std::uint64_t systemMemoryMb = 0;  // 0 if unknown
 	float dpiScale = 1.0f;
+	std::string accountName;           // empty when signed out
+	std::string accountKind;           // e.g. "Microsoft account", "Offline (singleplayer)"
 };
 
 // Draws the Settings page into the current window. Edits settings in place and returns
