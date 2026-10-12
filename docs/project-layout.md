@@ -22,7 +22,7 @@
 | `src/Storage/Account.*` | `account.dat` |
 | `src/Game/GameFiles.*` | Minecraft versions, libraries, assets, Java runtimes |
 | `src/Game/Loaders.*` | Fabric, Quilt, Forge, and NeoForge installation |
-| `src/Game/PackInstance.*` | `.mrpack` index to `instances/<pack>/` |
+| `src/Game/PackInstance.*` | `.mrpack` index to the version's game folder (`instances/<pack>@<version>/`) |
 | `src/Game/GameOptions.*` | `options.txt` defaults applied to every pack |
 | `src/Game/Launcher.*` | Play: preparation, command line, process launch |
 | `src/Game/ServerSetup.*` | Dedicated server setup, properties, EULA and launch commands |

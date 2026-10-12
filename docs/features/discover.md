@@ -43,10 +43,10 @@ Browse modpacks and start downloads and installs. UI code is the `Page::Discover
   - **Whole-pack sources:** the dropdown replaces the version name on the install card, and is disabled while an install runs. **Install pack** installs the picked version; the button reads **Install pack** again when My Library has a different version.
 - **Install** (sources with whole-pack installs, e.g. CurseForge) shows one card for the chosen version (the newest release until another is picked):
   - The version dropdown, Minecraft version and loaders, then **Install pack**. The button reads **Retry** after a failure and **Reinstall** once installed.
-  - Once installed (or when My Library has the same version), a green "Installed" line follows, with the game folder `installs/<pack id>/minecraft`.
+  - Once installed (when My Library has this version, `FindInstalledVersion`), a green "Installed" line follows, with that version's game folder. Each version has its own install entry (`pack:<id>@<version key>`), so several versions can install at once and side by side.
   - While installing: the stage ("Downloading pack archive", "Resolving mod files", "Downloading files 120 / 312", "Extracting pack files") and a thin progress bar.
   - **ATLauncher packs** first load the version's optional mods (`FetchOptionalMods`). If it has any, an **Optional mods** dialog lists them with checkboxes and descriptions, pre-checked with the author's picks (`selected` or `recommended`), or with the choices saved in My Library when reinstalling. Checking a mod also checks the mods it depends on and unchecks others in its group ("pick one: <group>"); unchecking it unchecks mods that need it. **Install** passes the chosen names on the pack (`Modpack::optionalMods`); **Cancel** installs nothing. If the list can't be loaded, the button becomes **Install without optional mods**. Packs without optional mods install right away.
-  - Clicking it runs `startPlanInstall()` in `src/main.cpp`: `BuildInstallPlan`, then `RunInstallPlan` into `installs/<pack id>/` (see [pack-sources.md](pack-sources.md)), on a worker thread. On success the pack is added to My Library.
+  - Clicking it runs `startPlanInstall()` in `src/main.cpp`: `BuildInstallPlan`, then `RunInstallPlan` into the version's install folder (see [library.md](library.md#installed-versions)), on a worker thread (see [pack-sources.md](pack-sources.md)). On success the version is added to the pack in My Library and becomes its active version; other installed versions stay.
   - Afterwards, a failed install shows "Install failed: ...". Files that must be downloaded by hand are listed with a **download page** link, and the plan's notes appear as "Note: ...".
 - **Pack files** (Modrinth and local packs) shows each file as a card with its name in bold, its formatted size, and an action on the right that depends on its state:
 
@@ -61,7 +61,7 @@ Browse modpacks and start downloads and installs. UI code is the `Page::Discover
 | Extraction failed | **Install files** again, plus a red "Extraction failed: ..." message |
 
 - **Download** and **Retry** start a background download. See [downloads.md](downloads.md).
-- **Install files** extracts the downloaded file into `installs/<pack id>/` (see [installation.md](installation.md)). When extraction succeeds, the pack is added to My Library (see [library.md](library.md)).
-- A large **PLAY** button sits at the bottom. It's enabled when the pack is in My Library and isn't already being prepared or played; clicking it starts playing and switches to My Library. Otherwise it's disabled, with a hint to install the pack's files. See [launching.md](launching.md).
+- **Install files** extracts the downloaded file into the version's install folder (see [library.md](library.md#installed-versions)) (see [installation.md](installation.md)). When extraction succeeds, the version is added to the pack in My Library and becomes active; other installed versions stay.
+- A large **PLAY** button sits at the bottom. It's enabled when the pack is in My Library and isn't already being prepared or played; clicking it starts playing and switches to My Library. If the version shown is installed, it becomes the active version first; if it isn't, a note says PLAY starts the installed active version instead. Otherwise it's disabled, with a hint to install the pack's files. See [launching.md](launching.md).
 
 If nothing is selected, the pane shows "No modpacks match your search."
