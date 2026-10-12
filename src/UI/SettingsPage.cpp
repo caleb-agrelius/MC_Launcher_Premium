@@ -63,16 +63,12 @@ void TabStrip()
 void BeginCard(const char* id)
 {
 	Widgets::BeginEntrance(g_cardsShownAt, g_cardIndex++);
-	ImGui::PushStyleColor(ImGuiCol_ChildBg, Theme::C().cardBg);
-	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(22.0f), S(18.0f)));
-	ImGui::BeginChild(id, ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
-	ImGui::PopStyleVar();
+	Widgets::BeginCard(id, ImVec2(S(22.0f), S(18.0f)));
 }
 
 void EndCard()
 {
-	ImGui::EndChild();
-	ImGui::PopStyleColor();
+	Widgets::EndCard();
 	Widgets::EndEntrance();
 	ImGui::Dummy(ImVec2(0.0f, S(6.0f)));
 }

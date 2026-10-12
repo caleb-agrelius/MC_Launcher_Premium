@@ -7,7 +7,7 @@ The UI calls these functions with a `PackSource`, and they call that source's cl
 
 | Function | What it does |
 |---|---|
-| `OnlineSources()` | The sources in sidebar order: Modrinth, CurseForge, FTB, Technic, ATLauncher |
+| `OnlineSources()` | The sources in filter order: Modrinth, CurseForge, FTB, Technic, ATLauncher |
 | `GetSourceCapabilities(source)` | Which filters and sorts the source supports, its search hint, its list heading, and `installsPacks` |
 | `IsSourceAvailable(source, reason)` | False with a reason when a source can't be used (CurseForge without an API key) |
 | `SearchPacks(http, source, query, filters, limit, out, err, cancel)` | Searches; results have `filesLoaded = false` |

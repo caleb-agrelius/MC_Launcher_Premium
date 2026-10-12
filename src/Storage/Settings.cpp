@@ -24,7 +24,7 @@ Settings LoadSettings(const std::string& path)
 		json j;
 		ifs >> j;
 		settings.uiScale = std::clamp(j.value("uiScale", settings.uiScale), kMinUiScale, kMaxUiScale);
-		settings.discoverSource = j.value("discoverSource", settings.discoverSource);
+		settings.discoverSources = j.value("discoverSources", settings.discoverSources);
 		settings.theme = j.value("theme", settings.theme);
 		settings.reduceMotion = j.value("reduceMotion", settings.reduceMotion);
 		settings.showGalleryBanners = j.value("showGalleryBanners", settings.showGalleryBanners);
@@ -54,6 +54,15 @@ Settings LoadSettings(const std::string& path)
 				settings.gameOptions.values[key] = value.get<std::string>();
 		}
 
+		const json window = j.value("window", json::object());
+		WindowPlacement& w = settings.window;
+		w.width = window.value("width", 0);
+		w.height = window.value("height", 0);
+		w.x = window.value("x", 0);
+		w.y = window.value("y", 0);
+		w.maximized = window.value("maximized", false);
+		w.saved = w.width >= 200 && w.height >= 150;
+
 		for (const auto& item : j.value("customThemes", json::array())) {
 			CustomTheme theme;
 			theme.id = item.value("id", "");
@@ -78,7 +87,7 @@ bool SaveSettings(const std::string& path, const Settings& settings)
 	const LaunchSettings& l = settings.launch;
 	json j;
 	j["uiScale"] = std::round(settings.uiScale * 100.0) / 100.0; // 1.1, not 1.100000023841858
-	j["discoverSource"] = settings.discoverSource;
+	j["discoverSources"] = settings.discoverSources;
 	j["theme"] = settings.theme;
 	j["reduceMotion"] = settings.reduceMotion;
 	j["showGalleryBanners"] = settings.showGalleryBanners;
@@ -107,6 +116,10 @@ bool SaveSettings(const std::string& path, const Settings& settings)
 		themes.push_back({ { "id", theme.id }, { "name", theme.name }, { "light", theme.light }, { "colors", colors } });
 	}
 	j["customThemes"] = themes;
+	if (settings.window.saved) {
+		const WindowPlacement& w = settings.window;
+		j["window"] = { { "x", w.x }, { "y", w.y }, { "width", w.width }, { "height", w.height }, { "maximized", w.maximized } };
+	}
 	ofs << j.dump(2) << "\n";
 	return ofs.good();
 }

@@ -18,7 +18,7 @@ static bool IsSafeRelativePath(const fs::path& path)
 	return !normalized.empty() && *normalized.begin() != "..";
 }
 
-bool ReadMrpackIndex(const fs::path& extractedDir, MrpackIndex& out, std::string* err)
+bool ReadMrpackIndex(const fs::path& extractedDir, MrpackIndex& out, std::string* err, bool forServer)
 {
 	out = MrpackIndex{};
 	const fs::path path = extractedDir / "modrinth.index.json";
@@ -58,7 +58,7 @@ bool ReadMrpackIndex(const fs::path& extractedDir, MrpackIndex& out, std::string
 
 		for (const auto& file : j.value("files", json::array())) {
 			const json env = file.value("env", json::object());
-			if (env.value("client", "required") == "unsupported")
+			if (env.value(forServer ? "server" : "client", "required") == "unsupported")
 				continue;
 			const fs::path relative = fs::u8path(file.value("path", ""));
 			if (!IsSafeRelativePath(relative)) {

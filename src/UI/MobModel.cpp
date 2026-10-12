@@ -1,4 +1,4 @@
-#include "FoxModel.h"
+#include "MobModel.h"
 
 #include "Theme.h"
 
@@ -263,22 +263,22 @@ bool AccessorView(const json& document, std::size_t accessorIndex,
 	const auto& accessors = document.at("accessors");
 	const auto& views = document.at("bufferViews");
 	if (!CheckIndex(accessors, accessorIndex)) {
-		if (error) *error = "Fox model references an invalid accessor.";
+		if (error) *error = "Mob model references an invalid accessor.";
 		return false;
 	}
 	const json& accessor = accessors[accessorIndex];
 	if (accessor.contains("sparse") || !accessor.contains("bufferView")) {
-		if (error) *error = "Fox model uses an unsupported sparse accessor.";
+		if (error) *error = "Mob model uses an unsupported sparse accessor.";
 		return false;
 	}
 	const std::size_t viewIndex = accessor.at("bufferView").get<std::size_t>();
 	if (!CheckIndex(views, viewIndex)) {
-		if (error) *error = "Fox model references an invalid buffer view.";
+		if (error) *error = "Mob model references an invalid buffer view.";
 		return false;
 	}
 	const json& view = views[viewIndex];
 	if (view.value("buffer", 0) != 0) {
-		if (error) *error = "Fox model uses an unsupported external buffer.";
+		if (error) *error = "Mob model uses an unsupported external buffer.";
 		return false;
 	}
 	componentType = accessor.at("componentType").get<std::uint32_t>();
@@ -286,21 +286,21 @@ bool AccessorView(const json& document, std::size_t accessorIndex,
 	const std::size_t componentSize = componentType == 5126 || componentType == 5125 ? 4
 		: componentType == 5123 ? 2 : componentType == 5121 ? 1 : 0;
 	if (componentSize == 0) {
-		if (error) *error = "Fox model uses an unsupported accessor component type.";
+		if (error) *error = "Mob model uses an unsupported accessor component type.";
 		return false;
 	}
 	const std::size_t componentCount = accessor.at("type") == "VEC3" ? 3
 		: accessor.at("type") == "VEC2" ? 2
 		: accessor.at("type") == "SCALAR" ? 1 : 0;
 	if (componentCount == 0 || (accessor.at("type") == "VEC3" && componentType != 5126)) {
-		if (error) *error = "Fox model uses an unsupported vertex attribute format.";
+		if (error) *error = "Mob model uses an unsupported vertex attribute format.";
 		return false;
 	}
 	const std::size_t elementSize = componentSize * componentCount;
 	const std::size_t viewOffset = view.value("byteOffset", std::size_t{ 0 });
 	const std::size_t accessorOffset = accessor.value("byteOffset", std::size_t{ 0 });
 	if (viewOffset > binary.size() || accessorOffset > binary.size() - viewOffset) {
-		if (error) *error = "Fox model accessor points outside its binary data.";
+		if (error) *error = "Mob model accessor points outside its binary data.";
 		return false;
 	}
 	const std::size_t offset = viewOffset + accessorOffset;
@@ -308,7 +308,7 @@ bool AccessorView(const json& document, std::size_t accessorIndex,
 	if (stride < elementSize || (count > 0 &&
 		(count - 1 > (std::numeric_limits<std::size_t>::max() - offset - elementSize) / stride ||
 		 offset + (count - 1) * stride + elementSize > binary.size()))) {
-		if (error) *error = "Fox model accessor exceeds its binary data.";
+		if (error) *error = "Mob model accessor exceeds its binary data.";
 		return false;
 	}
 	data = binary.data() + offset;
@@ -345,12 +345,57 @@ bool ReadIndex(const unsigned char* source, std::uint32_t componentType, std::ui
 
 } // namespace
 
-FoxModel::~FoxModel()
+MobModel::~MobModel()
 {
 	Shutdown();
 }
 
-bool FoxModel::Load(const std::string& path, std::string* error)
+bool MobModel::CreateProgram(std::string* error)
+{
+	const char* vertexSource =
+		"#version 130\n"
+		"in vec3 aPosition; in vec3 aNormal;\n"
+		"uniform mat4 uMvp; uniform mat4 uModel;\n"
+		"out vec3 vNormal;\n"
+		"void main(){ gl_Position=uMvp*vec4(aPosition,1.0); vNormal=mat3(uModel)*aNormal; }\n";
+	const char* fragmentSource =
+		"#version 130\n"
+		"uniform vec4 uColor; in vec3 vNormal; out vec4 fragColor;\n"
+		"void main(){ vec3 n=normalize(vNormal); vec3 l=normalize(vec3(-0.35,0.75,0.55));"
+		"float d=max(dot(n,l),0.0); float light=0.38+0.62*d;"
+		"fragColor=vec4(uColor.rgb*light,uColor.a); }\n";
+	std::string shaderError;
+	const unsigned int vertexShader = CompileShader(GL_VERTEX_SHADER, vertexSource, &shaderError);
+	const unsigned int fragmentShader = CompileShader(GL_FRAGMENT_SHADER, fragmentSource, &shaderError);
+	if (!vertexShader || !fragmentShader) {
+		if (vertexShader) glDeleteShader(vertexShader);
+		if (fragmentShader) glDeleteShader(fragmentShader);
+		if (error) *error = "Could not compile mob model shader: " + shaderError;
+		return false;
+	}
+	m_program = glCreateProgram();
+	glAttachShader(m_program, vertexShader);
+	glAttachShader(m_program, fragmentShader);
+	glBindAttribLocation(m_program, 0, "aPosition");
+	glBindAttribLocation(m_program, 1, "aNormal");
+	glLinkProgram(m_program);
+	glDeleteShader(vertexShader);
+	glDeleteShader(fragmentShader);
+	int linked = GL_FALSE;
+	glGetProgramiv(m_program, GL_LINK_STATUS, &linked);
+	if (!linked) {
+		if (error) *error = "Could not link mob model shader: " + ProgramLog(m_program);
+		Shutdown();
+		return false;
+	}
+	m_modelViewProjectionLocation = glGetUniformLocation(m_program, "uMvp");
+	m_modelLocation = glGetUniformLocation(m_program, "uModel");
+	m_colorLocation = glGetUniformLocation(m_program, "uColor");
+
+	return true;
+}
+
+bool MobModel::Load(const std::string& path, std::string* error)
 {
 	Shutdown();
 	if (error)
@@ -359,19 +404,19 @@ bool FoxModel::Load(const std::string& path, std::string* error)
 	try {
 		std::ifstream file(path, std::ios::binary);
 		if (!file) {
-			if (error) *error = "Could not open fox model: " + path;
+			if (error) *error = "Could not open mob model: " + path;
 			return false;
 		}
 		std::uint32_t magic = 0, version = 0, totalLength = 0;
 		if (!ReadU32(file, magic) || !ReadU32(file, version) || !ReadU32(file, totalLength) ||
 			magic != kGlbMagic || version != 2) {
-			if (error) *error = "Fox model is not a valid glTF binary (GLB 2.0) file.";
+			if (error) *error = "Mob model is not a valid glTF binary (GLB 2.0) file.";
 			return false;
 		}
 		file.seekg(0, std::ios::end);
 		const std::streamoff fileSize = file.tellg();
 		if (fileSize < 20 || totalLength > static_cast<std::uint64_t>(fileSize)) {
-			if (error) *error = "Fox model has an invalid GLB length.";
+			if (error) *error = "Mob model has an invalid GLB length.";
 			return false;
 		}
 		file.seekg(12, std::ios::beg);
@@ -381,20 +426,20 @@ bool FoxModel::Load(const std::string& path, std::string* error)
 			std::uint32_t chunkLength = 0, chunkType = 0;
 			if (!ReadU32(file, chunkLength) || !ReadU32(file, chunkType) ||
 				chunkLength > totalLength - static_cast<std::uint64_t>(file.tellg())) {
-				if (error) *error = "Fox model contains an invalid GLB chunk.";
+				if (error) *error = "Mob model contains an invalid GLB chunk.";
 				return false;
 			}
 			if (chunkType == kJsonChunk) {
 				std::string source(chunkLength, '\0');
 				if (!file.read(source.data(), chunkLength)) {
-					if (error) *error = "Could not read fox model metadata.";
+					if (error) *error = "Could not read mob model metadata.";
 					return false;
 				}
 				document = json::parse(source);
 			} else if (chunkType == kBinChunk) {
 				binary.resize(chunkLength);
 				if (!file.read(reinterpret_cast<char*>(binary.data()), chunkLength)) {
-					if (error) *error = "Could not read fox model geometry.";
+					if (error) *error = "Could not read mob model geometry.";
 					return false;
 				}
 			} else {
@@ -404,49 +449,12 @@ bool FoxModel::Load(const std::string& path, std::string* error)
 		if (!document.is_object() || binary.empty() || !document.contains("nodes") ||
 			!document.contains("meshes") || !document.contains("accessors") ||
 			!document.contains("bufferViews")) {
-			if (error) *error = "Fox GLB is missing its scene or geometry.";
+			if (error) *error = "Mob model is missing its scene or geometry.";
 			return false;
 		}
 
-		const char* vertexSource =
-			"#version 130\n"
-			"in vec3 aPosition; in vec3 aNormal;\n"
-			"uniform mat4 uMvp; uniform mat4 uModel;\n"
-			"out vec3 vNormal;\n"
-			"void main(){ gl_Position=uMvp*vec4(aPosition,1.0); vNormal=mat3(uModel)*aNormal; }\n";
-		const char* fragmentSource =
-			"#version 130\n"
-			"uniform vec4 uColor; in vec3 vNormal; out vec4 fragColor;\n"
-			"void main(){ vec3 n=normalize(vNormal); vec3 l=normalize(vec3(-0.35,0.75,0.55));"
-			"float d=max(dot(n,l),0.0); float light=0.38+0.62*d;"
-			"fragColor=vec4(uColor.rgb*light,uColor.a); }\n";
-		std::string shaderError;
-		const unsigned int vertexShader = CompileShader(GL_VERTEX_SHADER, vertexSource, &shaderError);
-		const unsigned int fragmentShader = CompileShader(GL_FRAGMENT_SHADER, fragmentSource, &shaderError);
-		if (!vertexShader || !fragmentShader) {
-			if (vertexShader) glDeleteShader(vertexShader);
-			if (fragmentShader) glDeleteShader(fragmentShader);
-			if (error) *error = "Could not compile fox model shader: " + shaderError;
+		if (!CreateProgram(error))
 			return false;
-		}
-		m_program = glCreateProgram();
-		glAttachShader(m_program, vertexShader);
-		glAttachShader(m_program, fragmentShader);
-		glBindAttribLocation(m_program, 0, "aPosition");
-		glBindAttribLocation(m_program, 1, "aNormal");
-		glLinkProgram(m_program);
-		glDeleteShader(vertexShader);
-		glDeleteShader(fragmentShader);
-		int linked = GL_FALSE;
-		glGetProgramiv(m_program, GL_LINK_STATUS, &linked);
-		if (!linked) {
-			if (error) *error = "Could not link fox model shader: " + ProgramLog(m_program);
-			Shutdown();
-			return false;
-		}
-		m_modelViewProjectionLocation = glGetUniformLocation(m_program, "uMvp");
-		m_modelLocation = glGetUniformLocation(m_program, "uModel");
-		m_colorLocation = glGetUniformLocation(m_program, "uColor");
 
 		std::vector<std::size_t> meshPartOffsets;
 		const auto& meshes = document.at("meshes");
@@ -456,7 +464,7 @@ bool FoxModel::Load(const std::string& path, std::string* error)
 			for (const json& primitive : mesh.at("primitives")) {
 				if (primitive.value("mode", 4) != 4 || !primitive.contains("attributes") ||
 					!primitive["attributes"].contains("POSITION")) {
-					if (error) *error = "Fox model contains a primitive format the launcher cannot render.";
+					if (error) *error = "Mob model contains a primitive format the launcher cannot render.";
 					Shutdown();
 					return false;
 				}
@@ -468,7 +476,7 @@ bool FoxModel::Load(const std::string& path, std::string* error)
 						vertexCount, positionType, error))
 					return false;
 				if (positionType != 5126 || document.at("accessors")[positionAccessor].at("type") != "VEC3") {
-					if (error) *error = "Fox model positions must be 32-bit vectors.";
+					if (error) *error = "Mob model positions must be 32-bit vectors.";
 					return false;
 				}
 				std::vector<Vertex> vertices(vertexCount);
@@ -482,7 +490,7 @@ bool FoxModel::Load(const std::string& path, std::string* error)
 					return false;
 				if (hasNormals && (normalCount != vertexCount || normalType != 5126 ||
 						document.at("accessors")[primitive["attributes"]["NORMAL"].get<std::size_t>()].at("type") != "VEC3")) {
-					if (error) *error = "Fox model has an invalid normal attribute.";
+					if (error) *error = "Mob model has an invalid normal attribute.";
 					return false;
 				}
 				for (std::size_t i = 0; i < vertexCount; ++i) {
@@ -507,14 +515,14 @@ bool FoxModel::Load(const std::string& path, std::string* error)
 						return false;
 					if (document.at("accessors")[primitive["indices"].get<std::size_t>()].at("type") != "SCALAR" ||
 						(indexComponent != 5121 && indexComponent != 5123 && indexComponent != 5125)) {
-						if (error) *error = "Fox model uses an unsupported index format.";
+						if (error) *error = "Mob model uses an unsupported index format.";
 						return false;
 					}
 					indices.resize(indexCount);
 					for (std::size_t i = 0; i < indexCount; ++i) {
 						if (!ReadIndex(indexData + i * indexStride, indexComponent, indices[i]) ||
 							indices[i] >= vertexCount) {
-							if (error) *error = "Fox model contains an invalid mesh index.";
+							if (error) *error = "Mob model contains an invalid mesh index.";
 							return false;
 						}
 					}
@@ -580,7 +588,7 @@ bool FoxModel::Load(const std::string& path, std::string* error)
 		std::function<bool(std::size_t, const Mat4&)> visit =
 			[&](std::size_t nodeIndex, const Mat4& parent) {
 				if (!CheckIndex(nodes, nodeIndex) || visited[nodeIndex]) {
-					if (error) *error = "Fox model contains an invalid or cyclic scene hierarchy.";
+					if (error) *error = "Mob model contains an invalid or cyclic scene hierarchy.";
 					return false;
 				}
 				visited[nodeIndex] = true;
@@ -588,12 +596,13 @@ bool FoxModel::Load(const std::string& path, std::string* error)
 				const Mat4 local = NodeTransform(node);
 				const Mat4 world = Multiply(parent, local);
 				m_nodeMatrices[nodeIndex] = world;
-				if (node.contains("name") && node["name"] == "Cube_0")
-					m_headNode = nodeIndex;
+				const bool isHead = node.contains("name") && node["name"] == "Cube_0";
+				if (isHead)
+					m_headPivot = { world[12], world[13], world[14] };
 				if (node.contains("mesh")) {
 					const std::size_t meshIndex = node["mesh"].get<std::size_t>();
 					if (!CheckIndex(meshes, meshIndex)) {
-						if (error) *error = "Fox model node references an invalid mesh.";
+						if (error) *error = "Mob model node references an invalid mesh.";
 						return false;
 					}
 					std::size_t partIndex = meshPartOffsets[meshIndex];
@@ -617,7 +626,7 @@ bool FoxModel::Load(const std::string& path, std::string* error)
 								maximum[axis] = std::max(maximum[axis], transformed[axis]);
 							}
 						}
-						m_drawParts.push_back({ partIndex++, nodeIndex });
+						m_drawParts.push_back({ partIndex++, nodeIndex, isHead });
 					}
 				}
 				if (node.contains("children"))
@@ -632,42 +641,112 @@ bool FoxModel::Load(const std::string& path, std::string* error)
 				return false;
 			}
 		if (m_drawParts.empty()) {
-			if (error) *error = "Fox model scene has no renderable meshes.";
+			if (error) *error = "Mob model scene has no renderable meshes.";
 			Shutdown();
 			return false;
 		}
-		for (int axis = 0; axis < 3; ++axis)
-			m_center[axis] = (minimum[axis] + maximum[axis]) * 0.5f;
-		const float largestExtent = std::max({ maximum[0] - minimum[0],
-			maximum[1] - minimum[1], maximum[2] - minimum[2] });
-		if (largestExtent <= 0.0f) {
-			if (error) *error = "Fox model has no measurable geometry.";
-			Shutdown();
-			return false;
-		}
-		m_scale = 2.4f / largestExtent;
-		if (!CreateRenderTarget(error)) {
-			Shutdown();
-			return false;
-		}
-		m_loaded = true;
-		return true;
+		return Finish(minimum, maximum, error);
 	}
 	catch (const std::exception& exception) {
 		Shutdown();
-		if (error) *error = std::string("Could not load fox model: ") + exception.what();
+		if (error) *error = std::string("Could not load mob model: ") + exception.what();
 		return false;
 	}
 }
 
-void FoxModel::SetReduceMotion(bool reduce)
+bool MobModel::Finish(const std::array<float, 3>& minimum, const std::array<float, 3>& maximum, std::string* error)
+{
+	for (int axis = 0; axis < 3; ++axis)
+		m_center[axis] = (minimum[axis] + maximum[axis]) * 0.5f;
+	const float largestExtent = std::max({ maximum[0] - minimum[0],
+		maximum[1] - minimum[1], maximum[2] - minimum[2] });
+	if (largestExtent <= 0.0f) {
+		if (error) *error = "Mob model has no measurable geometry.";
+		Shutdown();
+		return false;
+	}
+	m_scale = 2.4f / largestExtent;
+	if (!CreateRenderTarget(error)) {
+		Shutdown();
+		return false;
+	}
+	m_loaded = true;
+	return true;
+}
+
+bool MobModel::LoadBoxes(const std::vector<MobBox>& boxes, const std::array<float, 3>& headPivot, std::string* error)
+{
+	Shutdown();
+	if (error)
+		error->clear();
+	if (boxes.empty()) {
+		if (error) *error = "Mob has no boxes.";
+		return false;
+	}
+	if (!CreateProgram(error))
+		return false;
+
+	// Each face gets its own four vertices so it can have a flat normal.
+	struct Face { int axis; float sign; };
+	const Face faces[] = { { 0, 1.0f }, { 0, -1.0f }, { 1, 1.0f }, { 1, -1.0f }, { 2, 1.0f }, { 2, -1.0f } };
+	std::array<float, 3> minimum{ std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max() };
+	std::array<float, 3> maximum{ std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest() };
+	m_nodeMatrices.assign(1, Identity());
+	m_headPivot = headPivot;
+	for (const MobBox& box : boxes) {
+		std::vector<Vertex> vertices;
+		std::vector<std::uint32_t> indices;
+		for (const Face& face : faces) {
+			const int u = (face.axis + 1) % 3;
+			const int v = (face.axis + 2) % 3;
+			const float fixed = face.sign > 0.0f ? box.max[face.axis] : box.min[face.axis];
+			const std::uint32_t base = static_cast<std::uint32_t>(vertices.size());
+			for (int corner = 0; corner < 4; ++corner) {
+				Vertex vertex{};
+				vertex.position[face.axis] = fixed;
+				vertex.position[u] = (corner == 1 || corner == 2) ? box.max[u] : box.min[u];
+				vertex.position[v] = (corner >= 2) ? box.max[v] : box.min[v];
+				vertex.normal[face.axis] = face.sign;
+				vertices.push_back(vertex);
+			}
+			indices.insert(indices.end(), { base, base + 1, base + 2, base, base + 2, base + 3 });
+		}
+		for (int axis = 0; axis < 3; ++axis) {
+			minimum[axis] = std::min(minimum[axis], box.min[axis]);
+			maximum[axis] = std::max(maximum[axis], box.max[axis]);
+		}
+
+		Part part;
+		part.color = box.color;
+		part.indexCount = static_cast<int>(indices.size());
+		part.indexType = GL_UNSIGNED_INT;
+		glGenVertexArrays(1, &part.vertexArray);
+		glBindVertexArray(part.vertexArray);
+		glGenBuffers(1, &part.vertexBuffer);
+		glBindBuffer(GL_ARRAY_BUFFER, part.vertexBuffer);
+		glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(vertices.size() * sizeof(Vertex)), vertices.data(), GL_STATIC_DRAW);
+		glGenBuffers(1, &part.indexBuffer);
+		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, part.indexBuffer);
+		glBufferData(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(indices.size() * sizeof(std::uint32_t)), indices.data(), GL_STATIC_DRAW);
+		glEnableVertexAttribArray(0);
+		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void*>(offsetof(Vertex, position)));
+		glEnableVertexAttribArray(1);
+		glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void*>(offsetof(Vertex, normal)));
+		glBindVertexArray(0);
+		m_drawParts.push_back({ m_parts.size(), 0, box.head });
+		m_parts.push_back(part);
+	}
+	return Finish(minimum, maximum, error);
+}
+
+void MobModel::SetReduceMotion(bool reduce)
 {
 	m_reduceMotion = reduce;
 	if (reduce)
 		m_hopTime = -1.0f;
 }
 
-bool FoxModel::CreateRenderTarget(std::string* error)
+bool MobModel::CreateRenderTarget(std::string* error)
 {
 	GLint previousFramebuffer = 0;
 	GLint previousTexture = 0;
@@ -699,18 +778,21 @@ bool FoxModel::CreateRenderTarget(std::string* error)
 	glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previousTexture));
 	glBindRenderbuffer(GL_RENDERBUFFER, static_cast<GLuint>(previousRenderbuffer));
 	if (!complete) {
-		if (error) *error = "Could not create the transparent fox render target.";
+		if (error) *error = "Could not create the mob render target.";
 		return false;
 	}
 	return true;
 }
 
-void FoxModel::Draw(float size)
+bool MobModel::Draw(float size, const char* tooltip)
 {
 	const ImVec2 itemSize(size, size);
 	const ImVec2 minimum = ImGui::GetCursorScreenPos();
-	ImGui::InvisibleButton("##fox_mascot", itemSize);
+	ImGui::InvisibleButton("##mob_mascot", itemSize, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
 	const bool hovered = ImGui::IsItemHovered();
+	const bool reroll = hovered && ImGui::IsItemClicked(ImGuiMouseButton_Right);
+	if (tooltip && hovered)
+		ImGui::SetTooltip("%s", tooltip);
 	const ImGuiIO& io = ImGui::GetIO();
 	const float cursorX = (io.MousePos.x - (minimum.x + size * 0.5f)) / (size * 4.0f);
 	const float cursorY = (io.MousePos.y - (minimum.y + size * 0.5f)) / (size * 4.0f);
@@ -728,16 +810,17 @@ void FoxModel::Draw(float size)
 			ImGui::GetColorU32(Theme::C().cardBg), Theme::S(6.0f));
 		if (!m_loadError.empty())
 			ImGui::GetWindowDrawList()->AddText(ImVec2(minimum.x, maximum.y + Theme::S(2.0f)),
-				ImGui::GetColorU32(Theme::C().error), "Fox model unavailable");
+				ImGui::GetColorU32(Theme::C().error), "Mob model unavailable");
 		ImGui::Dummy(ImVec2(0.0f, 0.0f));
-		return;
+		return reroll;
 	}
 	const ImVec2 maximum(minimum.x + size, minimum.y + size);
 	ImGui::GetWindowDrawList()->AddImage(static_cast<ImTextureID>(m_colorTexture),
 		minimum, maximum, ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
+	return reroll;
 }
 
-bool FoxModel::Render(std::string* error)
+bool MobModel::Render(std::string* error)
 {
 	if (!m_loaded || !m_framebuffer)
 		return false;
@@ -752,8 +835,10 @@ bool FoxModel::Render(std::string* error)
 		if (m_hopTime >= 0.48f)
 			m_hopTime = -1.0f;
 	}
-	const float hop = m_hopTime < 0.0f ? 0.0f
+	float hop = m_hopTime < 0.0f ? 0.0f
 		: std::sin(m_hopTime / 0.48f * kPi) * 0.3f;
+	if (!m_reduceMotion && m_idleBob > 0.0f)
+		hop += std::sin(static_cast<float>(ImGui::GetTime()) * 3.0f) * m_idleBob / std::max(m_scale, 0.0001f);
 
 	GLint previousFramebuffer = 0, previousProgram = 0, previousVertexArray = 0;
 	GLint previousArrayBuffer = 0, previousRenderbuffer = 0, previousActiveTexture = 0;
@@ -786,15 +871,15 @@ bool FoxModel::Render(std::string* error)
 	const Mat4 view = LookAt(0.0f, 1.0f, 5.0f, 0.0f, 0.0f, 0.0f);
 	const Mat4 orientation = Multiply(RotationY(-0.65f + m_bodyYaw), RotationX(m_bodyPitch));
 	const Mat4 modelRoot = Multiply(orientation,
-		Multiply(Scaling(m_scale, m_scale, m_scale),
+		Multiply(Scaling(m_scale * m_sizeFactor, m_scale * m_sizeFactor, m_scale * m_sizeFactor),
 			Translation(-m_center[0], -m_center[1] + hop, -m_center[2])));
 	glUseProgram(m_program);
 	for (const DrawPart& drawPart : m_drawParts) {
 		const Part& part = m_parts[drawPart.part];
 		Mat4 node = m_nodeMatrices[drawPart.node];
-		if (drawPart.node == m_headNode) {
-			const Mat4 pivot = Translation(node[12], node[13], node[14]);
-			const Mat4 inversePivot = Translation(-node[12], -node[13], -node[14]);
+		if (drawPart.head) {
+			const Mat4 pivot = Translation(m_headPivot[0], m_headPivot[1], m_headPivot[2]);
+			const Mat4 inversePivot = Translation(-m_headPivot[0], -m_headPivot[1], -m_headPivot[2]);
 			const Mat4 aim = Multiply(RotationY(m_headYaw), RotationZ(m_headPitch));
 			node = Multiply(pivot, Multiply(aim, Multiply(inversePivot, node)));
 		}
@@ -823,7 +908,7 @@ bool FoxModel::Render(std::string* error)
 	return true;
 }
 
-void FoxModel::DestroyRenderTarget()
+void MobModel::DestroyRenderTarget()
 {
 	if (m_framebuffer) glDeleteFramebuffers(1, &m_framebuffer);
 	if (m_depthBuffer) glDeleteRenderbuffers(1, &m_depthBuffer);
@@ -834,7 +919,7 @@ void FoxModel::DestroyRenderTarget()
 	m_renderSize = 0;
 }
 
-void FoxModel::Shutdown()
+void MobModel::Shutdown()
 {
 	DestroyRenderTarget();
 	for (Part& part : m_parts) {
@@ -849,5 +934,5 @@ void FoxModel::Shutdown()
 		glDeleteProgram(m_program);
 	m_program = 0;
 	m_loaded = false;
-	m_headNode = static_cast<std::size_t>(-1);
+	m_headPivot = { 0.0f, 0.0f, 0.0f };
 }

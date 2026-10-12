@@ -36,6 +36,8 @@ The Downloads page shows the stage with its counts and a progress bar, then "Ins
 - The UI copies state under the lock, then draws from the copy.
 
 ## Downloads page (`Page::Downloads`)
+Cards use the same measured height, padding, 56px icons and heading-size pack names as My Library. Their heights are retained while offscreen and when revisiting the page. Long text wraps, and actions move to a new row when necessary.
+
 Shows one card per entry in `downloads`, with the pack icon, the pack name, and the file name (`fileName`). Each card shows one of these statuses:
 - "Downloading..." plus bytes so far / total and a thin progress bar, once the total is known
 - "Download failed: ..."

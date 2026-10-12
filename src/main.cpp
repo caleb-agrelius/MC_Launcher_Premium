@@ -5,6 +5,9 @@
 #include "imgui_impl_opengl3.h"
 
 #include "Game/Launcher.h"
+#include "Game/ServerSetup.h"
+#include "Util/Process.h"
+#include "imgui_stdlib.h"
 #include "Model/Modpack.h"
 #include "Platform.h"
 #include "Network/HttpClient.h"
@@ -17,7 +20,8 @@
 #include "Storage/Installer.h"
 #include "Storage/Library.h"
 #include "Storage/Settings.h"
-#include "UI/FoxModel.h"
+#include "UI/MobModel.h"
+#include "UI/Mobs.h"
 #include "UI/ImageCache.h"
 #include "UI/SettingsPage.h"
 #include "UI/Theme.h"
@@ -69,6 +73,7 @@ static const char* kDownloadsFile = "downloads.json";
 static const char* kAccountFile = "account.dat";
 static const char* kGameRoot = "minecraft";      // shared Minecraft versions, libraries, assets, Java
 static const char* kInstancesRoot = "instances"; // one game directory per pack
+static const char* kServersRoot = "servers";     // one dedicated server per pack
 static constexpr float kUiScaleStep = 0.1f;
 static constexpr double kSearchDelaySeconds = 0.4; // pause after typing before searching
 
@@ -137,11 +142,48 @@ enum class Page {
 	Discover,
 	Library,
 	Downloads,
+	Servers,
 	Settings
 };
 
-// One Discover sub-page: a source's search box, filters, results and selection.
-// Each source keeps its own state, so switching sub-pages doesn't lose a search.
+// A pack's dedicated server (Servers page). UI thread only, except the setup fields,
+// which the setup worker updates under serversMutex.
+struct ServerState {
+	bool loaded = false; // the fields below have been read from disk
+	bool ready = false;  // server files are installed (.mclp-server.json exists)
+	ServerInfo info;
+	ServerProperties props;
+	bool eula = false;
+	int memoryMb = 4096;
+	std::unique_ptr<ServerProcess> process;
+	bool running = false;        // as of last frame, to notice when the server stops
+	double stopRequestedAt = -1.0;
+	char command[256] = "";
+	std::uint64_t seenLines = 0; // console lines when last drawn, to auto-scroll on new output
+	// Setup, written by the worker under serversMutex.
+	bool busy = false;
+	std::string step;
+	double progress = -1.0;
+	std::string error;
+	std::shared_ptr<std::atomic<bool>> cancel = std::make_shared<std::atomic<bool>>(false);
+};
+
+// Per-server memory, kept next to the server so it survives reinstalls of the launcher.
+static int LoadServerMemory(const fs::path& serverDir, int fallback)
+{
+	std::ifstream in(serverDir / ".mclp-memory");
+	int memory = 0;
+	return (in >> memory && memory >= 1024) ? memory : fallback;
+}
+
+static void SaveServerMemory(const fs::path& serverDir, int memoryMb)
+{
+	std::error_code ec;
+	fs::create_directories(serverDir, ec);
+	std::ofstream(serverDir / ".mclp-memory", std::ios::trunc) << memoryMb << "\n";
+}
+
+// One source's query, filters and results for Discover's combined search.
 struct SourceView {
 	PackSource source = PackSource::Modrinth;
 	SourceCapabilities caps;
@@ -160,7 +202,45 @@ struct SourceView {
 	double resultsAt = -1000.0; // ImGui::GetTime() when the current results arrived
 	std::string searchStatus;
 	bool searchFailed = false;
+	std::uint64_t totalHits = 0;
+	int revision = 0; // bumped whenever packs is replaced, so Discover re-merges
 };
+
+// Discover's combined search: one query and set of filters, sent to every selected
+// source at once. Each source's results stay in its SourceView; the list shown is
+// merged from them (see `merged`).
+struct DiscoverState {
+	char search[128] = "";
+	char gameVersion[32] = "";
+	std::string loader; // "" = any, else "forge", "neoforge", "fabric" or "quilt"
+	std::set<PackSource> sources; // the source filter; empty = every source
+	// With one source: that source's sort index. With several: 0 best match
+	// (the sources' results interleaved by rank), 1 most downloads, 2 name.
+	int sort = 0;
+	bool searchPending = true;
+	double lastSearchEdit = -1.0;
+	std::vector<PackSource> activeSources; // what the last search was sent to
+	std::vector<std::string> skippedSources; // and why the others weren't, for the status line
+	std::vector<std::pair<PackSource, std::size_t>> merged; // (source view, index into its packs)
+	std::string mergedKey; // the sort and source revisions merged was built from
+	std::string selectedId;
+};
+
+// Each source's brand color, for its filter chip and result tags.
+static ImVec4 SourceColor(PackSource source)
+{
+	switch (source) {
+	case PackSource::Modrinth: return ImVec4(0.11f, 0.85f, 0.42f, 1.0f);
+	case PackSource::CurseForge: return ImVec4(0.95f, 0.39f, 0.21f, 1.0f);
+	case PackSource::FTB: return ImVec4(0.86f, 0.24f, 0.26f, 1.0f);
+	case PackSource::Technic: return ImVec4(0.25f, 0.6f, 0.95f, 1.0f);
+	case PackSource::ATLauncher: return ImVec4(0.6f, 0.82f, 0.27f, 1.0f);
+	default: return ImVec4(0.6f, 0.6f, 0.6f, 1.0f);
+	}
+}
+
+static const char* const kLoaderKeys[] = { "forge", "neoforge", "fabric", "quilt" };
+static const char* const kCombinedSorts[] = { "Best match", "Most downloads", "Name" };
 
 static const char* LoaderLabel(const char* loader)
 {
@@ -299,6 +379,24 @@ static void OpenUrl(const std::string& url)
 #endif
 }
 
+// True when a saved window's title bar would be on a connected monitor, so a window
+// saved on a monitor that's been unplugged doesn't open off screen.
+static bool WindowFitsOnAMonitor(const WindowPlacement& placement)
+{
+	int count = 0;
+	GLFWmonitor** monitors = glfwGetMonitors(&count);
+	for (int i = 0; i < count; ++i) {
+		int x = 0, y = 0, width = 0, height = 0;
+		glfwGetMonitorWorkarea(monitors[i], &x, &y, &width, &height);
+		const int titleX = placement.x + std::min(placement.width / 2, 100);
+		const int titleY = placement.y + 10;
+		if (titleX >= x && titleX < x + width && titleY >= y && titleY < y + height &&
+			placement.width <= width + 40 && placement.height <= height + 40)
+			return true;
+	}
+	return false;
+}
+
 // Rounds to the nearest 5% and keeps the scale within the supported range.
 static float NormalizeUiScale(float scale)
 {
@@ -310,7 +408,10 @@ static void AlignRightForButton(const char* label)
 {
 	const float width = ImGui::CalcTextSize(label, nullptr, true).x + ImGui::GetStyle().FramePadding.x * 2.0f;
 	const float x = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - width;
-	ImGui::SameLine(std::max(ImGui::GetCursorPosX(), x));
+	if (ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x <= ImGui::GetWindowPos().x + x)
+		ImGui::SameLine(x);
+	else
+		ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), x));
 }
 
 // Moves the cursor so a row of buttons with these labels ends at the right edge.
@@ -322,22 +423,14 @@ static void AlignRightForButtons(std::initializer_list<const char*> labels)
 		width += ImGui::CalcTextSize(label, nullptr, true).x + style.FramePadding.x * 2.0f;
 	width += style.ItemSpacing.x * static_cast<float>(labels.size() - 1);
 	const float x = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - width;
-	ImGui::SameLine(std::max(ImGui::GetCursorPosX(), x));
+	if (ImGui::GetItemRectMax().x + style.ItemSpacing.x <= ImGui::GetWindowPos().x + x)
+		ImGui::SameLine(x);
+	else
+		ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), x));
 }
 
-// Starts a card: a bordered child with the card background color that grows to fit
-// its contents. Pair with EndCard().
-static void BeginCard(const char* id)
-{
-	ImGui::PushStyleColor(ImGuiCol_ChildBg, Theme::C().cardBg);
-	ImGui::BeginChild(id, ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY);
-}
-
-static void EndCard()
-{
-	ImGui::EndChild();
-	ImGui::PopStyleColor();
-}
+using Widgets::BeginCard;
+using Widgets::EndCard;
 
 // Draws a pack icon at the cursor and leaves the cursor beside it, ready for SameLine text.
 static void PackIconItem(const Modpack& pack, ImageCache& images, float size)
@@ -368,19 +461,38 @@ int main(int argc, char** argv)
 			return -1;
 		}
 
+		Settings settings = LoadSettings(kSettingsFile);
+
 		const char* glsl_version = "#version 130";
 		glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
 		glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
 		glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
-		// Size the window in logical pixels, so it isn't tiny on high-DPI (e.g. 4K at 150%) monitors.
-		glfwWindowHint(GLFW_SCALE_TO_MONITOR, GLFW_TRUE);
+		// The last window size is restored as-is (it's in real pixels). The first time, the
+		// default size is in logical pixels, so it isn't tiny on high-DPI (e.g. 4K at 150%) monitors.
+		const bool restoreWindow = settings.window.saved && WindowFitsOnAMonitor(settings.window);
+		glfwWindowHint(GLFW_SCALE_TO_MONITOR, restoreWindow ? GLFW_FALSE : GLFW_TRUE);
+		glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE); // shown once it's in place
 
-		GLFWwindow* window = glfwCreateWindow(1360, 840, "MC Launcher Premium", nullptr, nullptr);
+		GLFWwindow* window = restoreWindow
+			? glfwCreateWindow(settings.window.width, settings.window.height, "MC Launcher Premium", nullptr, nullptr)
+			: glfwCreateWindow(1360, 840, "MC Launcher Premium", nullptr, nullptr);
 		if (window == nullptr) {
 			log << "glfwCreateWindow failed\n";
 			glfwTerminate();
 			return -1;
 		}
+		WindowPlacement lastPlacement;
+		if (restoreWindow) {
+			glfwSetWindowPos(window, settings.window.x, settings.window.y);
+		}
+		glfwGetWindowPos(window, &lastPlacement.x, &lastPlacement.y);
+		glfwGetWindowSize(window, &lastPlacement.width, &lastPlacement.height);
+		if (restoreWindow) {
+			if (settings.window.maximized)
+				glfwMaximizeWindow(window);
+		}
+		glfwShowWindow(window);
+		// The size and position to save: the last ones seen while not maximized or minimized.
 		glfwMakeContextCurrent(window);
 		glfwSwapInterval(1);
 
@@ -398,7 +510,6 @@ int main(int argc, char** argv)
 
 		// UI scale = monitor DPI scale (from Windows display settings) x the user's UI scale setting.
 		// Theme, scale and DPI are re-applied at the start of a frame whenever one of them changes.
-		Settings settings = LoadSettings(kSettingsFile);
 		bool settingsDirty = false; // saved once no widget is being edited
 		float dpiScale = 1.0f;
 		glfwGetWindowContentScale(window, &dpiScale, nullptr);
@@ -433,7 +544,7 @@ int main(int argc, char** argv)
 		const std::vector<Modpack> localPacks = LoadIndex(kIndexRelativePath.string());
 		log << "Loaded " << localPacks.size() << " local modpack(s)\n";
 		log.flush();
-		// One Discover sub-page per online source. std::map keeps references stable,
+		// One view per online source. std::map keeps references stable,
 		// so background tasks can hold a SourceView& safely.
 		std::map<PackSource, SourceView> views;
 		for (PackSource source : OnlineSources()) {
@@ -441,13 +552,15 @@ int main(int argc, char** argv)
 			view.source = source;
 			view.caps = GetSourceCapabilities(source);
 		}
-		PackSource discoverSource = PackSourceFromKey(settings.discoverSource);
-		if (views.count(discoverSource) == 0)
-			discoverSource = OnlineSources().front();
+		DiscoverState discover;
+		for (const std::string& key : settings.discoverSources) {
+			const PackSource source = PackSourceFromKey(key);
+			if (views.count(source))
+				discover.sources.insert(source);
+		}
 		Page page = Page::Discover;
 		bool focusSearch = false; // Ctrl+F
-		bool sourcesExpanded = true; // Discover's source list in the sidebar
-		// Entrance animations: when the shown page (or Discover source) and the pack in the
+		// Entrance animations: when the shown page and the pack in the
 		// details pane last changed.
 		int shownPageKey = -1;
 		double pageShownAt = 0.0;
@@ -455,15 +568,36 @@ int main(int argc, char** argv)
 		double detailsShownAt = 0.0;
 		HttpClient http;
 		ImageCache images(http);
-		FoxModel fox;
-		fox.SetReduceMotion(settings.reduceMotion);
-		std::string foxError;
-		if (!dataRoot.empty() &&
-			fox.Load((dataRoot / "src" / "assets" / "minecraft_fox.glb").string(), &foxError))
-			log << "Loaded interactive fox model\n";
-		else
-			log << "Fox model unavailable: "
-				<< (foxError.empty() ? "data folder could not be located" : foxError) << "\n";
+		// The sidebar mascot: a random mob each launch; right-click it for another.
+		MobModel mascot;
+		Mob mascotMob = Mob::Count;
+		std::string mascotTooltip;
+		auto rollMascot = [&]() {
+			for (int attempt = 0; attempt < 3; ++attempt) {
+				const Mob mob = RandomMob(mascotMob);
+				mascotMob = mob; // a failed mob isn't picked again on the next attempt
+				std::string error;
+				bool loaded = false;
+				if (mob == Mob::Fox) {
+					loaded = !dataRoot.empty() &&
+						mascot.Load((dataRoot / "src" / "assets" / "minecraft_fox.glb").string(), &error);
+				} else {
+					std::vector<MobBox> boxes;
+					std::array<float, 3> pivot{};
+					loaded = BuildMobBoxes(mob, boxes, pivot) && mascot.LoadBoxes(boxes, pivot, &error);
+				}
+				if (loaded) {
+					mascot.SetReduceMotion(settings.reduceMotion);
+					mascot.SetIdleBob(MobIdleBob(mob));
+					mascot.SetSizeFactor(MobSizeFactor(mob));
+					mascotTooltip = std::string(MobName(mob)) + "\nClick to make it hop. Right-click for another mob.";
+					log << "Mascot: " << MobName(mob) << "\n";
+					return;
+				}
+				log << "Mascot " << MobName(mob) << " unavailable: " << (error.empty() ? "model file not found" : error) << "\n";
+			}
+		};
+		rollMascot();
 		std::map<std::string, DownloadState> downloads;
 		std::mutex downloadsMutex;
 		std::vector<Worker> workers;
@@ -627,6 +761,67 @@ int main(int argc, char** argv)
 		std::mutex playsMutex;
 		std::string stopConfirmPackId; // pack whose "Stop game" confirmation is open
 
+		// ---- Servers ----
+		std::map<std::string, ServerState> servers; // keyed by pack id; entries only added on the UI thread
+		std::mutex serversMutex;
+		std::string serverPackId; // selected on the Servers page
+		const std::string lanAddress = Platform::LocalNetworkAddress();
+
+		auto startServerSetup = [&](const Modpack& pack) {
+			auto cancel = std::make_shared<std::atomic<bool>>(false);
+			{
+				std::lock_guard<std::mutex> lock(serversMutex);
+				ServerState& state = servers[pack.id];
+				state.busy = true;
+				state.step = "Starting";
+				state.progress = -1.0;
+				state.error.clear();
+				state.cancel = cancel;
+			}
+			ServerSetupRequest request;
+			request.gameRoot = fs::absolute(kGameRoot);
+			request.extractedDir = fs::absolute(fs::path("installs") / pack.id);
+			request.serverDir = fs::absolute(fs::path(kServersRoot) / pack.id);
+			request.javaPath = settings.launch.javaPath;
+			const std::string packId = pack.id;
+			const std::string packName = pack.name;
+			log << "Setting up server for " << packId << "\n";
+			StartWorker(workers, [&http, &uiQueue, &servers, &serversMutex, &log, request, packId, packName, cancel]() {
+				auto progress = [&](const std::string& step, double fraction) {
+					std::lock_guard<std::mutex> lock(serversMutex);
+					ServerState& state = servers.at(packId);
+					state.step = step;
+					state.progress = fraction;
+				};
+				ServerInfo info;
+				std::string error;
+				bool ok = false;
+				try {
+					ok = SetupServer(http, request, info, progress, &error, cancel.get());
+				} catch (const std::exception& ex) {
+					error = std::string("Server setup failed: ") + ex.what();
+				}
+				const bool cancelled = cancel->load();
+				uiQueue.Post([&servers, &serversMutex, &log, packId, packName, ok, cancelled, info, error]() {
+					std::lock_guard<std::mutex> lock(serversMutex);
+					ServerState& state = servers.at(packId);
+					state.busy = false;
+					state.error = (ok || cancelled) ? std::string() : error;
+					if (ok) {
+						state.ready = true;
+						state.info = info;
+						state.props = ReadServerProperties(fs::path(kServersRoot) / packId);
+						state.eula = EulaAccepted(fs::path(kServersRoot) / packId);
+						log << "Server for " << packId << " ready: " << info.loader << " " << info.minecraftVersion << "\n";
+						Toasts::Push(Toasts::Kind::Success, "Server files ready", packName + " can now be started.");
+					} else if (!cancelled) {
+						log << "Server setup for " << packId << " failed: " << error << "\n";
+						Toasts::Push(Toasts::Kind::Error, "Server setup failed", packName + ": " + error);
+					}
+				});
+			});
+		};
+
 		// Play reads the modrinth.index.json of an extracted .mrpack. Packs installed from a
 		// source's install plan (CurseForge, FTB, ...) have no such index yet.
 		auto canPlay = [](const Modpack& pack) {
@@ -744,6 +939,8 @@ int main(int argc, char** argv)
 					const char* sourceName = PackSourceName(view.source);
 					view.searching = false;
 					view.searchFailed = !ok;
+					view.totalHits = ok ? result.totalHits : 0;
+					++view.revision;
 					if (ok) {
 						view.packs = result.packs;
 						view.resultsAt = ImGui::GetTime();
@@ -904,7 +1101,13 @@ int main(int argc, char** argv)
 				settingsContext.dpiScale = dpiScale;
 			}
 			Widgets::SetReduceMotion(settings.reduceMotion);
-			fox.SetReduceMotion(settings.reduceMotion);
+			if (!glfwGetWindowAttrib(window, GLFW_ICONIFIED))
+				lastPlacement.maximized = glfwGetWindowAttrib(window, GLFW_MAXIMIZED) != 0;
+			if (!glfwGetWindowAttrib(window, GLFW_MAXIMIZED) && !glfwGetWindowAttrib(window, GLFW_ICONIFIED)) {
+				glfwGetWindowPos(window, &lastPlacement.x, &lastPlacement.y);
+				glfwGetWindowSize(window, &lastPlacement.width, &lastPlacement.height);
+			}
+			mascot.SetReduceMotion(settings.reduceMotion);
 			// Save after edits, but not on every keystroke or slider step.
 			if (settingsDirty && !ImGui::IsAnyItemActive()) {
 				settingsDirty = false;
@@ -946,7 +1149,8 @@ int main(int argc, char** argv)
 				ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 			{
 				// Transparent interactive GLB fox mascot, then the launcher name.
-				fox.Draw(S(56.0f));
+				if (mascot.Draw(S(56.0f), mascotTooltip.c_str()))
+					rollMascot();
 				ImGui::SameLine(0.0f, S(8.0f));
 				ImGui::BeginGroup();
 				Widgets::Text(fonts.bold, Theme::kFontHeading, Theme::C().text, "MC Launcher");
@@ -956,25 +1160,8 @@ int main(int argc, char** argv)
 			}
 			ImGui::Dummy(ImVec2(0.0f, S(14.0f)));
 			Widgets::SectionLabel("BROWSE");
-			// Discover heads a collapsible list of sources. Clicking it while on Discover
-			// toggles the list; arriving from another page opens it.
-			if (Widgets::NavGroupItem("Discover", page == Page::Discover, sourcesExpanded)) {
-				sourcesExpanded = page == Page::Discover ? !sourcesExpanded : true;
+			if (Widgets::NavItem("Discover", page == Page::Discover))
 				page = Page::Discover;
-			}
-			// One sub-page per source. The choice is remembered in settings.json.
-			if (sourcesExpanded) {
-				for (PackSource source : OnlineSources()) {
-					if (Widgets::SubNavItem(PackSourceName(source), page == Page::Discover && discoverSource == source)) {
-						page = Page::Discover;
-						if (discoverSource != source) {
-							discoverSource = source;
-							settings.discoverSource = PackSourceKey(source);
-							settingsDirty = true;
-						}
-					}
-				}
-			}
 			if (Widgets::NavItem("My Library", page == Page::Library))
 				page = Page::Library;
 			int activeDownloads = 0;
@@ -987,6 +1174,13 @@ int main(int argc, char** argv)
 			}
 			if (Widgets::NavItem("Downloads", page == Page::Downloads, activeDownloads))
 				page = Page::Downloads;
+			int runningServers = 0;
+			for (const auto& [packId, server] : servers) {
+				if (server.running)
+					++runningServers;
+			}
+			if (Widgets::NavItem("Servers", page == Page::Servers, runningServers))
+				page = Page::Servers;
 			ImGui::Dummy(ImVec2(0.0f, S(10.0f)));
 			Widgets::SectionLabel("LAUNCHER");
 			if (Widgets::NavItem("Settings", page == Page::Settings))
@@ -1067,7 +1261,7 @@ int main(int argc, char** argv)
 			ImGui::BeginChild("main_content", ImVec2(0.0f, 0.0f), ImGuiChildFlags_AlwaysUseWindowPadding,
 				ImGuiWindowFlags_NoScrollWithMouse);
 			ImGui::PopStyleVar();
-			const int pageKey = static_cast<int>(page) * 100 + (page == Page::Discover ? static_cast<int>(discoverSource) : 0);
+			const int pageKey = static_cast<int>(page);
 			if (pageKey != shownPageKey) {
 				shownPageKey = pageKey;
 				pageShownAt = ImGui::GetTime();
@@ -1075,18 +1269,21 @@ int main(int argc, char** argv)
 			Widgets::BeginEntrance(pageShownAt);
 			const char* breadcrumb = page == Page::Discover ? "MINECRAFT  /  MODPACKS"
 				: page == Page::Library ? "MINECRAFT  /  LIBRARY"
-				: page == Page::Downloads ? "MINECRAFT  /  DOWNLOADS" : "LAUNCHER  /  SETTINGS";
+				: page == Page::Downloads ? "MINECRAFT  /  DOWNLOADS"
+				: page == Page::Servers ? "MINECRAFT  /  SERVERS" : "LAUNCHER  /  SETTINGS";
 			Widgets::Text(fonts.bold, Theme::kFontSmall, Theme::C().accent, breadcrumb);
 			if (page == Page::Discover) {
-				Widgets::Text(fonts.bold, Theme::kFontTitle, Theme::C().text,
-					(std::string("Discover on ") + PackSourceName(discoverSource)).c_str());
-				ImGui::TextDisabled("Find a pack, download its files, and prepare it for Minecraft.");
+				Widgets::Text(fonts.bold, Theme::kFontTitle, Theme::C().text, "Discover modpacks");
+				ImGui::TextDisabled("Search Modrinth, CurseForge, FTB, Technic and ATLauncher at once.");
 			} else if (page == Page::Library) {
 				Widgets::Text(fonts.bold, Theme::kFontTitle, Theme::C().text, "My library");
 				ImGui::TextDisabled("Modpack files you have extracted are listed here.");
 			} else if (page == Page::Downloads) {
 				Widgets::Text(fonts.bold, Theme::kFontTitle, Theme::C().text, "Downloads");
 				ImGui::TextDisabled("Track downloads and extraction progress.");
+			} else if (page == Page::Servers) {
+				Widgets::Text(fonts.bold, Theme::kFontTitle, Theme::C().text, "Servers");
+				ImGui::TextDisabled("Host a modpack for your friends in one click.");
 			} else {
 				Widgets::Text(fonts.bold, Theme::kFontTitle, Theme::C().text, "Settings");
 				ImGui::TextDisabled("Themes, Minecraft launch defaults, and more.");
@@ -1094,13 +1291,31 @@ int main(int argc, char** argv)
 			ImGui::Spacing();
 
 			if (page == Page::Discover) {
-				SourceView& view = views[discoverSource];
-				const SourceCapabilities& caps = view.caps;
-				const char* sourceName = PackSourceName(view.source);
-				std::string unavailableReason;
-				const bool sourceAvailable = IsSourceAvailable(view.source, &unavailableReason);
+				// Which sources the search covers: the source filter (empty = all), minus sources
+				// that can't be used and, when a loader is chosen, sources that can't filter by it.
+				std::vector<PackSource> active;
+				std::vector<std::string> skipped;
+				for (PackSource source : OnlineSources()) {
+					if (!discover.sources.empty() && discover.sources.count(source) == 0)
+						continue;
+					std::string reason;
+					if (!IsSourceAvailable(source, &reason)) {
+						skipped.push_back(std::string(PackSourceName(source)) + ": " + reason);
+						continue;
+					}
+					if (!discover.loader.empty() && !views[source].caps.loaderFilter) {
+						skipped.push_back(std::string(PackSourceName(source)) + " can't filter by loader");
+						continue;
+					}
+					active.push_back(source);
+				}
+				const bool single = active.size() == 1;
+				const SourceCapabilities* singleCaps = single ? &views[active.front()].caps : nullptr;
+				const int sortCount = single ? static_cast<int>(singleCaps->sorts.size()) : 3;
+				if (discover.sort >= sortCount)
+					discover.sort = 0;
 
-				// Search box, then this source's filters on one row.
+				// Search box.
 				ImGui::SetNextItemWidth(-1.0f);
 				if (focusSearch) {
 					ImGui::SetKeyboardFocusHere();
@@ -1108,95 +1323,210 @@ int main(int argc, char** argv)
 				}
 				ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(S(14.0f), S(11.0f)));
 				ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, S(8.0f));
-				ImGui::BeginDisabled(!sourceAvailable);
-				if (ImGui::InputTextWithHint("##search", caps.searchHint, view.search, sizeof(view.search))) {
-					view.searchPending = true;
-					view.lastSearchEdit = ImGui::GetTime();
+				const char* hint = single ? singleCaps->searchHint : "Search modpacks on every source...";
+				if (ImGui::InputTextWithHint("##search", hint, discover.search, sizeof(discover.search))) {
+					discover.searchPending = true;
+					discover.lastSearchEdit = ImGui::GetTime();
 				}
-				ImGui::EndDisabled();
 				ImGui::PopStyleVar(2);
 
-				bool filtersChanged = false; // combos search right away; text waits for typing to pause
-				ImGui::BeginDisabled(!sourceAvailable);
-				if (caps.gameVersionFilter) {
-					ImGui::SetNextItemWidth(S(170.0f));
-					if (ImGui::InputTextWithHint("##mcversion", "Minecraft version", view.gameVersion, sizeof(view.gameVersion))) {
-						view.searchPending = true;
-						view.lastSearchEdit = ImGui::GetTime();
-					}
-					ImGui::SetItemTooltip("Only packs for this Minecraft version, e.g. 1.20.1");
-					ImGui::SameLine();
+				// Source filter chips.
+				bool filtersChanged = false; // chips and combos search right away; text waits for typing to pause
+				ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(S(12.0f), S(5.0f))); // the chips' padding
+				ImGui::AlignTextToFramePadding();
+				ImGui::PopStyleVar();
+				ImGui::TextDisabled("Sources");
+				ImGui::SameLine();
+				if (Widgets::ToggleChip("All", discover.sources.empty(), Theme::C().accent) && !discover.sources.empty()) {
+					discover.sources.clear();
+					filtersChanged = true;
 				}
-				if (caps.loaderFilter) {
-					ImGui::SetNextItemWidth(S(150.0f));
-					const char* preview = view.loader == 0 ? "Any loader" : LoaderLabel(caps.loaders[static_cast<std::size_t>(view.loader - 1)]);
-					if (ImGui::BeginCombo("##loader", preview)) {
-						if (Widgets::ListItem("Any loader", view.loader == 0)) {
-							view.loader = 0;
+				for (PackSource source : OnlineSources()) {
+					std::string reason;
+					const bool available = IsSourceAvailable(source, &reason);
+					const bool on = discover.sources.empty() || discover.sources.count(source) > 0;
+					ImGui::SameLine();
+					if (Widgets::ToggleChip(PackSourceName(source), on && available, SourceColor(source), available)) {
+						if (discover.sources.empty())
+							discover.sources = { source }; // from "all", a click picks just this one
+						else if (discover.sources.count(source))
+							discover.sources.erase(source);
+						else
+							discover.sources.insert(source);
+						if (discover.sources.size() == OnlineSources().size())
+							discover.sources.clear();
+						filtersChanged = true;
+					}
+					if (!available)
+						ImGui::SetItemTooltip("%s", reason.c_str());
+					else if (discover.sources.empty())
+						ImGui::SetItemTooltip("Show only %s", PackSourceName(source));
+				}
+
+				// Minecraft version, loader, sort.
+				ImGui::SetNextItemWidth(S(170.0f));
+				if (ImGui::InputTextWithHint("##mcversion", "Minecraft version", discover.gameVersion, sizeof(discover.gameVersion))) {
+					discover.searchPending = true;
+					discover.lastSearchEdit = ImGui::GetTime();
+				}
+				ImGui::SetItemTooltip("Only packs for this Minecraft version, e.g. 1.20.1");
+				ImGui::SameLine();
+				ImGui::SetNextItemWidth(S(150.0f));
+				if (ImGui::BeginCombo("##loader", discover.loader.empty() ? "Any loader" : LoaderLabel(discover.loader.c_str()))) {
+					if (Widgets::ListItem("Any loader", discover.loader.empty())) {
+						discover.loader.clear();
+						filtersChanged = true;
+					}
+					for (const char* key : kLoaderKeys) {
+						if (Widgets::ListItem(LoaderLabel(key), discover.loader == key)) {
+							discover.loader = key;
 							filtersChanged = true;
 						}
-						for (std::size_t i = 0; i < caps.loaders.size(); ++i) {
-							if (Widgets::ListItem(LoaderLabel(caps.loaders[i]), view.loader == static_cast<int>(i + 1))) {
-								view.loader = static_cast<int>(i + 1);
-								filtersChanged = true;
-							}
-						}
-						ImGui::EndCombo();
 					}
-					ImGui::SameLine();
+					ImGui::EndCombo();
 				}
-				if (caps.sorts.size() > 1) {
-					ImGui::SetNextItemWidth(S(200.0f));
-					const std::string sortPreview = std::string("Sort: ") + caps.sorts[static_cast<std::size_t>(view.sort)];
-					if (ImGui::BeginCombo("##sort", sortPreview.c_str())) {
-						for (std::size_t i = 0; i < caps.sorts.size(); ++i) {
-							if (Widgets::ListItem(caps.sorts[i], view.sort == static_cast<int>(i))) {
-								view.sort = static_cast<int>(i);
-								filtersChanged = true;
-							}
+				ImGui::SameLine();
+				ImGui::SetNextItemWidth(S(210.0f));
+				const char* sortLabel = single ? singleCaps->sorts[static_cast<std::size_t>(discover.sort)] : kCombinedSorts[discover.sort];
+				if (ImGui::BeginCombo("##sort", (std::string("Sort: ") + sortLabel).c_str())) {
+					for (int i = 0; i < sortCount; ++i) {
+						if (Widgets::ListItem(single ? singleCaps->sorts[static_cast<std::size_t>(i)] : kCombinedSorts[i], discover.sort == i)) {
+							discover.sort = i;
+							filtersChanged = true;
 						}
-						ImGui::EndCombo();
 					}
-					ImGui::SameLine();
+					ImGui::EndCombo();
 				}
-				ImGui::EndDisabled();
+				if (!single)
+					ImGui::SetItemTooltip("Best match mixes each source's top results. Pick one source for its own sort options.");
 				if (filtersChanged) {
-					view.searchPending = true;
-					view.lastSearchEdit = -1.0; // no typing delay
+					discover.searchPending = true;
+					discover.lastSearchEdit = -1.0; // no typing delay
+					settings.discoverSources.clear();
+					for (PackSource source : discover.sources)
+						settings.discoverSources.push_back(PackSourceKey(source));
+					settingsDirty = true;
 				}
-				// The status goes after the filters, or on its own line when it doesn't fit.
-				const std::string& statusText = !sourceAvailable ? unavailableReason : view.searchStatus;
-				if (caps.gameVersionFilter || caps.loaderFilter || caps.sorts.size() > 1) {
-					if (ImGui::CalcTextSize(statusText.c_str()).x + S(30.0f) > ImGui::GetContentRegionAvail().x)
-						ImGui::NewLine();
+
+				// Send the search to every active source.
+				if (discover.searchPending && ImGui::GetTime() - discover.lastSearchEdit >= kSearchDelaySeconds) {
+					discover.searchPending = false;
+					discover.activeSources = active;
+					discover.skippedSources = skipped;
+					for (PackSource source : active) {
+						SourceView& view = views[source];
+						std::snprintf(view.search, sizeof(view.search), "%s", discover.search);
+						std::snprintf(view.gameVersion, sizeof(view.gameVersion), "%s", discover.gameVersion);
+						view.loader = 0;
+						for (std::size_t i = 0; i < view.caps.loaders.size(); ++i) {
+							if (discover.loader == view.caps.loaders[i])
+								view.loader = static_cast<int>(i + 1);
+						}
+						view.sort = single ? discover.sort : 0;
+						startSearch(view);
+					}
+					discover.mergedKey.clear();
 				}
-				ImGui::AlignTextToFramePadding();
-				if (!sourceAvailable) {
-					Widgets::WrappedText(Theme::C().error, unavailableReason.c_str());
-				} else if (view.searching) {
+
+				// Merge the sources' results whenever one of them changes.
+				const bool singleResult = discover.activeSources.size() == 1;
+				std::string mergeKey = std::to_string(discover.sort);
+				for (PackSource source : discover.activeSources)
+					mergeKey += "," + std::to_string(views[source].revision);
+				if (mergeKey != discover.mergedKey) {
+					discover.mergedKey = mergeKey;
+					discover.merged.clear();
+					std::size_t longest = 0;
+					for (PackSource source : discover.activeSources)
+						longest = std::max(longest, views[source].packs.size());
+					for (std::size_t rank = 0; rank < longest; ++rank) {
+						for (PackSource source : discover.activeSources) {
+							if (rank < views[source].packs.size())
+								discover.merged.emplace_back(source, rank);
+						}
+					}
+					if (!singleResult && discover.sort != 0) {
+						auto packOf = [&](const std::pair<PackSource, std::size_t>& ref) -> const Modpack& {
+							return views[ref.first].packs[ref.second];
+						};
+						std::stable_sort(discover.merged.begin(), discover.merged.end(), [&](const auto& a, const auto& b) {
+							if (discover.sort == 1)
+								return packOf(a).downloads > packOf(b).downloads;
+							return ToLower(packOf(a).name) < ToLower(packOf(b).name);
+						});
+					}
+				}
+
+				// Status: searching, or the totals per source.
+				std::vector<std::string> searchingNames;
+				for (PackSource source : discover.activeSources) {
+					if (views[source].searching)
+						searchingNames.push_back(PackSourceName(source));
+				}
+				if (!searchingNames.empty()) {
+					std::string names;
+					for (std::size_t i = 0; i < searchingNames.size(); ++i)
+						names += (i ? ", " : "") + searchingNames[i];
 					Widgets::Spinner(Theme::C().accent);
 					ImGui::SameLine();
-					ImGui::TextDisabled("Searching %s...", sourceName);
-				} else if (view.searchFailed) {
-					Widgets::WrappedText(Theme::C().error, view.searchStatus.c_str());
+					ImGui::TextDisabled("Searching %s...", names.c_str());
+				} else if (discover.activeSources.empty()) {
+					Widgets::WrappedText(Theme::C().error, skipped.empty() ? "Pick at least one source."
+						: ("No source can run this search. " + skipped.front()).c_str());
 				} else {
-					ImGui::TextDisabled("%s", view.searchStatus.c_str());
+					ImGui::AlignTextToFramePadding();
+					ImGui::TextDisabled("%zu results", discover.merged.size());
+					for (PackSource source : discover.activeSources) {
+						const SourceView& view = views[source];
+						ImGui::SameLine(0.0f, S(14.0f));
+						if (view.searchFailed) {
+							ImGui::TextColored(Theme::C().error, "%s failed", PackSourceName(source));
+							ImGui::SetItemTooltip("%s", view.searchStatus.c_str());
+						} else {
+							ImGui::TextColored(Theme::Mix(SourceColor(source), Theme::C().text, 0.3f), "%s", PackSourceName(source));
+							ImGui::SameLine(0.0f, S(5.0f));
+							ImGui::TextDisabled("%s", FormatCount(view.totalHits).c_str());
+						}
+					}
+					if (!discover.skippedSources.empty()) {
+						std::string why;
+						for (const std::string& line : discover.skippedSources)
+							why += (why.empty() ? "" : "\n") + line;
+						ImGui::SameLine(0.0f, S(14.0f));
+						ImGui::TextDisabled("(%zu skipped)", discover.skippedSources.size());
+						ImGui::SetItemTooltip("%s", why.c_str());
+					}
 				}
-				if (sourceAvailable && view.searchPending && ImGui::GetTime() - view.lastSearchEdit >= kSearchDelaySeconds) {
-					view.searchPending = false;
-					startSearch(view);
+
+				// Selection: keep the selected pack across re-merges, else the first result.
+				Modpack* selectedPack = nullptr;
+				PackSource selectedSource = PackSource::Modrinth;
+				for (const auto& ref : discover.merged) {
+					Modpack& item = views[ref.first].packs[ref.second];
+					if (item.id == discover.selectedId) {
+						selectedPack = &item;
+						selectedSource = ref.first;
+						break;
+					}
+				}
+				if (!selectedPack && !discover.merged.empty()) {
+					selectedSource = discover.merged.front().first;
+					selectedPack = &views[selectedSource].packs[discover.merged.front().second];
+					discover.selectedId = selectedPack->id;
 				}
 
 				// Pack list
-				std::vector<Modpack>& packs = view.packs;
-				int& selected = view.selected;
-				const bool browsing = view.search[0] == '\0' && view.gameVersion[0] == '\0' && view.loader == 0 && view.sort == 0;
+				const bool browsing = discover.search[0] == '\0' && discover.gameVersion[0] == '\0' &&
+					discover.loader.empty() && discover.sort == 0;
 				ImGui::BeginChild("pack_list", ImVec2(S(340.0f), 0.0f), ImGuiChildFlags_Borders,
 					ImGuiWindowFlags_NoScrollWithMouse);
-				const double rowsShownAt = std::max(pageShownAt, view.resultsAt);
-				Widgets::SectionLabel(browsing ? caps.browseLabel : "RESULTS");
-				for (std::size_t i = 0; i < packs.size(); ++i) {
-					const Modpack& item = packs[i];
+				double rowsShownAt = pageShownAt;
+				for (PackSource source : discover.activeSources)
+					rowsShownAt = std::max(rowsShownAt, views[source].resultsAt);
+				Widgets::SectionLabel(browsing ? (singleResult ? views[discover.activeSources.front()].caps.browseLabel : "POPULAR") : "RESULTS");
+				for (std::size_t i = 0; i < discover.merged.size(); ++i) {
+					const auto& ref = discover.merged[i];
+					const Modpack& item = views[ref.first].packs[ref.second];
 					std::string meta;
 					if (item.source == PackSource::LocalIndex) {
 						meta = item.version + "  \xC2\xB7  " + std::to_string(item.files.size()) + " files";
@@ -1206,17 +1536,18 @@ int main(int argc, char** argv)
 							meta += (meta.empty() ? "" : "  \xC2\xB7  ") + FormatCount(item.downloads) + " downloads";
 						if (meta.empty())
 							meta = item.author;
-						if (meta.empty())
-							meta = PackSourceName(item.source); // e.g. Technic search results, until selected
 					}
 					ImGui::PushID(static_cast<int>(i));
 					Widgets::BeginEntrance(rowsShownAt, static_cast<int>(i));
-					if (Widgets::PackRow(item, images, selected == static_cast<int>(i), meta))
-						selected = static_cast<int>(i);
+					const bool showTag = !singleResult || item.source == PackSource::LocalIndex;
+					if (Widgets::PackRow(item, images, selectedPack == &item, meta,
+							showTag ? (item.source == PackSource::LocalIndex ? "Offline" : PackSourceName(item.source)) : nullptr,
+							SourceColor(item.source)))
+						discover.selectedId = item.id;
 					Widgets::EndEntrance();
 					ImGui::PopID();
 				}
-				if (packs.empty() && !view.searching && sourceAvailable)
+				if (discover.merged.empty() && searchingNames.empty() && !discover.activeSources.empty())
 					ImGui::TextDisabled("No modpacks found.");
 				Widgets::SmoothScroll();
 				ImGui::EndChild();
@@ -1225,15 +1556,16 @@ int main(int argc, char** argv)
 				// Pack details
 				ImGui::BeginChild("pack_details", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders,
 					ImGuiWindowFlags_NoScrollWithMouse);
-				const std::string shownId = selected >= 0 && selected < static_cast<int>(packs.size())
-					? packs[static_cast<std::size_t>(selected)].id : std::string();
+				const std::string shownId = selectedPack ? selectedPack->id : std::string();
 				if (shownId != detailsPackId) {
 					detailsPackId = shownId;
 					detailsShownAt = ImGui::GetTime();
 				}
 				Widgets::BeginEntrance(std::max(pageShownAt, detailsShownAt));
-				if (selected >= 0 && selected < static_cast<int>(packs.size())) {
-					const Modpack& pack = packs[static_cast<std::size_t>(selected)];
+				if (selectedPack) {
+					SourceView& view = views[selectedSource];
+					const SourceCapabilities& caps = view.caps;
+					const Modpack& pack = *selectedPack;
 					const bool online = pack.source != PackSource::LocalIndex;
 					const bool loadingFiles = filesLoading.count(pack.id) > 0;
 					const auto filesError = filesErrors.find(pack.id);
@@ -1500,14 +1832,14 @@ int main(int argc, char** argv)
 						ImGui::TextDisabled("Download and install the pack's files to play it.");
 					else
 						ImGui::TextDisabled("Progress and errors appear in My Library.");
-				} else if (sourceAvailable && !view.searching) {
+				} else if (searchingNames.empty()) {
 					ImGui::TextDisabled("No modpacks match your search.");
 				}
 				Widgets::EndEntrance();
 				Widgets::SmoothScroll();
 				ImGui::EndChild();
 			} else if (page == Page::Library) {
-				const float iconSize = S(64.0f);
+				const float iconSize = S(56.0f);
 				int cardIndex = 0;
 				for (const auto& [packId, pack] : libraryPacks) {
 					PlayState play;
@@ -1523,6 +1855,7 @@ int main(int argc, char** argv)
 					ImGui::SameLine(0.0f, S(14.0f));
 					ImGui::BeginGroup();
 					const bool playable = canPlay(pack);
+					ImGui::PushTextWrapPos(0.0f);
 					Widgets::Text(fonts.bold, Theme::kFontHeading, Theme::C().text, pack.name.c_str());
 					std::string details = std::string(PackSourceName(pack.source)) + "  \xC2\xB7  " + pack.version;
 					if (!pack.gameVersion.empty())
@@ -1546,6 +1879,7 @@ int main(int argc, char** argv)
 						ImGui::TextDisabled("Ready to play");
 					}
 					ImGui::EndGroup();
+					ImGui::PopTextWrapPos();
 
 					// Actions, right-aligned as one group so nothing runs past the card's edge.
 					ImGui::PushFont(fonts.bold, 0.0f);
@@ -1562,7 +1896,16 @@ int main(int argc, char** argv)
 						if (ImGui::Button("Cancel"))
 							play.cancel->store(true);
 					} else {
-						AlignRightForButtons({ "Open folder", "  PLAY  " });
+						AlignRightForButtons(playable ? std::initializer_list<const char*>{ "Server", "Open folder", "  PLAY  " }
+							: std::initializer_list<const char*>{ "Open folder", "  PLAY  " });
+						if (playable) {
+							if (ImGui::Button("Server")) {
+								serverPackId = pack.id;
+								page = Page::Servers;
+							}
+							ImGui::SetItemTooltip("Host this pack as a server for your friends");
+							ImGui::SameLine();
+						}
 						if (ImGui::Button("Open folder"))
 							Platform::OpenFolder((playable ? fs::path(kInstancesRoot) / pack.id
 								: fs::path("installs") / pack.id / "minecraft").string());
@@ -1588,6 +1931,350 @@ int main(int argc, char** argv)
 				if (libraryPacks.empty() && Widgets::EmptyState("Your library is empty",
 						"Packs you download and install from Discover show up here.", "Browse modpacks"))
 					page = Page::Discover;
+			} else if (page == Page::Servers) {
+				// Keep server states in step with their processes.
+				for (auto& [packId, server] : servers) {
+					const bool running = server.process && server.process->Running();
+					if (server.running && !running) {
+						const int code = server.process ? server.process->ExitCode() : 0;
+						Toasts::Push(code == 0 ? Toasts::Kind::Info : Toasts::Kind::Error, "Server stopped",
+							code == 0 ? libraryPacks.count(packId) ? libraryPacks.at(packId).name : packId
+								: "It exited with code " + std::to_string(code) + ". See the console for details.");
+						server.stopRequestedAt = -1.0;
+					}
+					server.running = running;
+				}
+
+				if (libraryPacks.empty()) {
+					if (Widgets::EmptyState("No servers yet",
+							"Install a modpack first. Then you can turn it into a server for your friends here.", "Browse modpacks"))
+						page = Page::Discover;
+				} else {
+					if (!libraryPacks.count(serverPackId))
+						serverPackId = libraryPacks.begin()->first;
+
+					// Server list: every library pack, with its server status.
+					ImGui::BeginChild("server_list", ImVec2(S(320.0f), 0.0f), ImGuiChildFlags_Borders);
+					Widgets::SectionLabel("YOUR PACKS");
+					for (const auto& [packId, pack] : libraryPacks) {
+						const fs::path dir = fs::path(kServersRoot) / packId;
+						ServerState* serverEntry;
+						{
+							// The setup worker looks servers up; inserting must not race with that.
+							std::lock_guard<std::mutex> lock(serversMutex);
+							serverEntry = &servers[packId];
+						}
+						ServerState& server = *serverEntry;
+						if (!server.loaded) {
+							server.loaded = true;
+							server.ready = LoadServerInfo(dir, server.info);
+							server.props = ReadServerProperties(dir);
+							server.eula = EulaAccepted(dir);
+							server.memoryMb = LoadServerMemory(dir, std::max(4096, settings.launch.maxMemoryMb));
+						}
+						bool busy;
+						{
+							std::lock_guard<std::mutex> lock(serversMutex);
+							busy = server.busy;
+						}
+						const char* tag = server.running ? "Running" : busy ? "Setting up" : server.ready ? "Ready" : nullptr;
+						const ImVec4 tagColor = server.running ? Theme::C().accent : busy ? Theme::C().info : Theme::C().textDim;
+						const std::string meta = CanCreateServer(fs::path("installs") / packId)
+							? (server.ready ? server.info.loader + " " + server.info.minecraftVersion : "No server yet")
+							: std::string(PackSourceName(pack.source)) + " packs can't host yet";
+						ImGui::PushID(packId.c_str());
+						if (Widgets::PackRow(pack, images, packId == serverPackId, meta, tag, tagColor))
+							serverPackId = packId;
+						ImGui::PopID();
+					}
+					ImGui::EndChild();
+					ImGui::SameLine();
+
+					// Details for the selected pack's server.
+					ImGui::BeginChild("server_details", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders);
+					const Modpack& pack = libraryPacks.at(serverPackId);
+					ServerState* serverEntry;
+					{
+						std::lock_guard<std::mutex> lock(serversMutex);
+						serverEntry = &servers[serverPackId];
+					}
+					ServerState& server = *serverEntry;
+					const fs::path serverDir = fs::path(kServersRoot) / serverPackId;
+					const bool supported = CanCreateServer(fs::path("installs") / serverPackId);
+					bool busy;
+					std::string step, setupError;
+					double progress;
+					{
+						std::lock_guard<std::mutex> lock(serversMutex);
+						busy = server.busy;
+						step = server.step;
+						progress = server.progress;
+						setupError = server.error;
+					}
+
+					PackIconItem(pack, images, S(56.0f));
+					ImGui::SameLine(0.0f, S(14.0f));
+					ImGui::BeginGroup();
+					Widgets::Text(fonts.bold, Theme::kFontHeading, Theme::C().text, pack.name.c_str());
+					if (server.running)
+						ImGui::TextColored(Theme::C().accent, "Running");
+					else if (busy)
+						ImGui::TextDisabled("Setting up...");
+					else if (server.ready)
+						ImGui::TextDisabled("%s %s  \xC2\xB7  Minecraft %s  \xC2\xB7  stopped", server.info.loader.c_str(),
+							server.info.loaderVersion.c_str(), server.info.minecraftVersion.c_str());
+					else
+						ImGui::TextDisabled("No server yet");
+					ImGui::EndGroup();
+					ImGui::Spacing();
+
+					if (!supported) {
+						Widgets::WrappedText(Theme::C().textDim, (std::string("One-click servers work with Modrinth packs for now. ") +
+							PackSourceName(pack.source) + " packs aren't supported yet.").c_str());
+					} else {
+						// 1. Server files.
+						BeginCard("server_files");
+						Widgets::SectionLabel("SERVER FILES");
+						if (busy) {
+							Widgets::Spinner(Theme::C().accent);
+							ImGui::SameLine();
+							ImGui::TextDisabled("%s", step.c_str());
+							AlignRightForButton("Cancel");
+							if (ImGui::Button("Cancel##setup")) {
+								std::lock_guard<std::mutex> lock(serversMutex);
+								server.cancel->store(true);
+							}
+							if (progress >= 0.0)
+								Widgets::ThinProgressBar(static_cast<float>(progress));
+						} else {
+							const char* label = server.ready ? "Update server files" : "Create server files";
+							// Wrap the description short of the buttons on its right.
+							float buttonsWidth = ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+							if (server.ready)
+								buttonsWidth += ImGui::CalcTextSize("Open folder").x + ImGui::GetStyle().FramePadding.x * 2.0f +
+									ImGui::GetStyle().ItemSpacing.x;
+							ImGui::AlignTextToFramePadding();
+							ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - buttonsWidth - S(16.0f));
+							ImGui::TextDisabled(server.ready ? "Installed in servers/%s" : "Downloads the pack's server mods, its loader's server and Java.",
+								serverPackId.c_str());
+							ImGui::PopTextWrapPos();
+							AlignRightForButtons(server.ready ? std::initializer_list<const char*>{ "Open folder", label }
+								: std::initializer_list<const char*>{ label });
+							if (server.ready) {
+								if (ImGui::Button("Open folder##server"))
+									Platform::OpenFolder(serverDir.string());
+								ImGui::SameLine();
+							}
+							ImGui::BeginDisabled(server.running);
+							if (ImGui::Button(label))
+								startServerSetup(pack);
+							ImGui::EndDisabled();
+							if (server.running)
+								ImGui::SetItemTooltip("Stop the server first");
+							if (!setupError.empty())
+								Widgets::WrappedText(Theme::C().error, setupError.c_str());
+						}
+						EndCard();
+						ImGui::Spacing();
+
+						// 2. Settings (server.properties and memory).
+						BeginCard("server_settings");
+						Widgets::SectionLabel("SETTINGS");
+						ServerProperties& props = server.props;
+						bool propsChanged = false;
+						const float labelWidth = S(170.0f);
+						auto label = [&](const char* text) {
+							ImGui::AlignTextToFramePadding();
+							ImGui::TextUnformatted(text);
+							ImGui::SameLine(labelWidth);
+							ImGui::SetNextItemWidth(-FLT_MIN);
+						};
+						label("Message of the day");
+						propsChanged |= ImGui::InputText("##motd", &props.motd);
+						label("Port");
+						if (ImGui::InputInt("##port", &props.port, 0)) {
+							props.port = std::clamp(props.port, 1024, 65535);
+							propsChanged = true;
+						}
+						label("Max players");
+						propsChanged |= ImGui::SliderInt("##players", &props.maxPlayers, 1, 100);
+						label("Game mode");
+						const char* modes[] = { "survival", "creative", "adventure", "spectator" };
+						int mode = 0;
+						for (int i = 0; i < 4; ++i) if (props.gamemode == modes[i]) mode = i;
+						if (ImGui::Combo("##gamemode", &mode, "Survival\0Creative\0Adventure\0Spectator\0")) {
+							props.gamemode = modes[mode];
+							propsChanged = true;
+						}
+						label("Difficulty");
+						const char* difficulties[] = { "peaceful", "easy", "normal", "hard" };
+						int difficulty = 2;
+						for (int i = 0; i < 4; ++i) if (props.difficulty == difficulties[i]) difficulty = i;
+						if (ImGui::Combo("##difficulty", &difficulty, "Peaceful\0Easy\0Normal\0Hard\0")) {
+							props.difficulty = difficulties[difficulty];
+							propsChanged = true;
+						}
+						label("View distance");
+						propsChanged |= ImGui::SliderInt("##view", &props.viewDistance, 3, 32, "%d chunks");
+						label("PvP");
+						propsChanged |= Widgets::Toggle("##pvp", &props.pvp);
+						label("Whitelist");
+						propsChanged |= Widgets::Toggle("##whitelist", &props.whitelist);
+						ImGui::SameLine(0.0f, S(12.0f));
+						ImGui::TextDisabled("Only players you add with \"whitelist add <name>\" can join");
+						label("Online mode");
+						propsChanged |= Widgets::Toggle("##online", &props.onlineMode);
+						ImGui::SameLine(0.0f, S(12.0f));
+						if (props.onlineMode)
+							ImGui::TextDisabled("Players need a Microsoft account that owns Minecraft");
+						else
+							ImGui::TextColored(Theme::C().error, "Anyone can join with any name. Use a whitelist.");
+						label("Memory");
+						float memoryGb = server.memoryMb / 1024.0f;
+						if (ImGui::SliderFloat("##server_memory", &memoryGb, 1.0f,
+								std::max(2.0f, Platform::SystemMemoryMb() / 1024.0f), "%.1f GB")) {
+							server.memoryMb = std::max(1024, static_cast<int>(std::lround(memoryGb * 2.0f)) * 512);
+						}
+						if (ImGui::IsItemDeactivatedAfterEdit())
+							SaveServerMemory(serverDir, server.memoryMb);
+						if (propsChanged) {
+							std::string error;
+							if (!WriteServerProperties(serverDir, props, &error))
+								log << error << "\n";
+						}
+						if (server.running)
+							ImGui::TextDisabled("Changes apply the next time the server starts.");
+						EndCard();
+						ImGui::Spacing();
+
+						// 3. Run.
+						BeginCard("server_run");
+						Widgets::SectionLabel("RUN");
+						bool eula = server.eula;
+						ImGui::BeginDisabled(server.eula);
+						if (Widgets::Toggle("##eula", &eula) && eula) {
+							std::string error;
+							if (AcceptEula(serverDir, &error))
+								server.eula = true;
+							else
+								log << error << "\n";
+						}
+						ImGui::EndDisabled();
+						ImGui::SameLine(0.0f, S(12.0f));
+						ImGui::AlignTextToFramePadding();
+						ImGui::TextUnformatted("I agree to the");
+						ImGui::SameLine(0.0f, S(4.0f));
+						ImGui::TextLinkOpenURL("Minecraft EULA", "https://aka.ms/MinecraftEULA");
+						ImGui::PushFont(fonts.bold, 0.0f);
+						if (!server.running) {
+							ImGui::BeginDisabled(!server.ready || !server.eula || busy);
+							ImGui::PushStyleColor(ImGuiCol_Button, Theme::C().accent);
+							ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Theme::Mix(Theme::C().accent, Theme::C().text, 0.15f));
+							ImGui::PushStyleColor(ImGuiCol_Text, Theme::C().windowBg);
+							if (ImGui::Button("  Start server  ", ImVec2(0.0f, S(44.0f)))) {
+								server.process = std::make_unique<ServerProcess>();
+								std::string error;
+								const std::vector<std::string> command = ServerCommand(server.info, server.memoryMb);
+								if (server.process->Start(command, fs::absolute(serverDir), fs::absolute(serverDir / "logs" / "launcher-console.log"), &error)) {
+									server.running = true;
+									server.seenLines = 0;
+									log << "Started server " << serverPackId << "\n";
+								} else {
+									Toasts::Push(Toasts::Kind::Error, "Couldn't start the server", error);
+									server.process.reset();
+								}
+							}
+							ImGui::PopStyleColor(3);
+							ImGui::EndDisabled();
+							if (!server.ready)
+								ImGui::SetItemTooltip("Create the server files first");
+							else if (!server.eula)
+								ImGui::SetItemTooltip("Agree to the Minecraft EULA first");
+						} else {
+							if (ImGui::Button("  Stop server  ", ImVec2(0.0f, S(44.0f)))) {
+								server.process->Send("stop");
+								server.stopRequestedAt = ImGui::GetTime();
+							}
+							ImGui::SameLine();
+							ImGui::PushStyleColor(ImGuiCol_Button, Theme::Mix(Theme::C().cardBg, Theme::C().error, 0.55f));
+							if (ImGui::Button("Force stop", ImVec2(0.0f, S(44.0f))))
+								server.process->Kill();
+							ImGui::PopStyleColor();
+							ImGui::SetItemTooltip("Kill the server without saving");
+						}
+						ImGui::PopFont();
+						if (server.stopRequestedAt >= 0.0 && server.running) {
+							ImGui::SameLine();
+							Widgets::Spinner(Theme::C().accent);
+							ImGui::SameLine();
+							ImGui::TextDisabled("Saving and stopping...");
+						}
+						// Where players join.
+						ImGui::Spacing();
+						ImGui::TextDisabled("Join from this PC:");
+						ImGui::SameLine();
+						const std::string localAddress = "localhost:" + std::to_string(server.props.port);
+						ImGui::TextUnformatted(localAddress.c_str());
+						if (!lanAddress.empty()) {
+							ImGui::TextDisabled("Friends on your network:");
+							ImGui::SameLine();
+							const std::string address = lanAddress + ":" + std::to_string(server.props.port);
+							ImGui::TextUnformatted(address.c_str());
+							ImGui::SameLine();
+							if (ImGui::SmallButton("Copy"))
+								ImGui::SetClipboardText(address.c_str());
+						}
+						ImGui::TextDisabled("Friends over the internet need port %d forwarded on your router to this PC.", server.props.port);
+						EndCard();
+
+						// 4. Console.
+						if (server.process) {
+							ImGui::Spacing();
+							Widgets::SectionLabel("CONSOLE");
+							std::uint64_t total = 0;
+							const std::vector<std::string> lines = server.process->Lines(&total);
+							ImGui::PushStyleColor(ImGuiCol_ChildBg, Theme::Mix(Theme::C().windowBg, Theme::C().cardBg, 0.4f));
+							ImGui::BeginChild("server_console", ImVec2(0.0f, S(300.0f)), ImGuiChildFlags_Borders,
+								ImGuiWindowFlags_HorizontalScrollbar);
+							const bool atBottom = ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - S(4.0f);
+							ImGuiListClipper clipper;
+							clipper.Begin(static_cast<int>(lines.size()));
+							while (clipper.Step()) {
+								for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i) {
+									const std::string& line = lines[static_cast<std::size_t>(i)];
+									const bool warn = line.find("WARN") != std::string::npos;
+									const bool bad = line.find("ERROR") != std::string::npos || line.find("Exception") != std::string::npos;
+									if (bad || warn)
+										ImGui::PushStyleColor(ImGuiCol_Text, bad ? Theme::C().error : Theme::Mix(Theme::C().error, Theme::C().text, 0.5f));
+									ImGui::TextUnformatted(line.c_str());
+									if (bad || warn)
+										ImGui::PopStyleColor();
+								}
+							}
+							if (total != server.seenLines && atBottom)
+								ImGui::SetScrollHereY(1.0f);
+							server.seenLines = total;
+							ImGui::EndChild();
+							ImGui::PopStyleColor();
+							ImGui::BeginDisabled(!server.running);
+							ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize("Send").x -
+								ImGui::GetStyle().FramePadding.x * 2.0f - ImGui::GetStyle().ItemSpacing.x);
+							const bool entered = ImGui::InputTextWithHint("##server_command", "Type a command, e.g. op <name>, say hi, time set day",
+								server.command, sizeof(server.command), ImGuiInputTextFlags_EnterReturnsTrue);
+							ImGui::SameLine();
+							if ((ImGui::Button("Send") || entered) && server.command[0] != '\0') {
+								std::string command = server.command;
+								if (!command.empty() && command[0] == '/')
+									command.erase(0, 1);
+								server.process->Send(command);
+								server.command[0] = '\0';
+								ImGui::SetKeyboardFocusHere(-1);
+							}
+							ImGui::EndDisabled();
+						}
+					}
+					ImGui::EndChild();
+				}
 			} else if (page == Page::Downloads) {
 				std::vector<std::pair<std::string, DownloadState>> snapshot;
 				{
@@ -1606,7 +2293,8 @@ int main(int argc, char** argv)
 					PackIconItem(state.pack, images, iconSize);
 					ImGui::SameLine(0.0f, S(14.0f));
 					ImGui::BeginGroup();
-					Widgets::Text(fonts.bold, Theme::kFontBody, Theme::C().text,
+					ImGui::PushTextWrapPos(0.0f);
+					Widgets::Text(fonts.bold, Theme::kFontHeading, Theme::C().text,
 						state.pack.name.empty() ? state.fileName.c_str() : state.pack.name.c_str());
 					if (!state.pack.name.empty())
 						ImGui::TextDisabled("%s", state.fileName.c_str());
@@ -1643,6 +2331,7 @@ int main(int argc, char** argv)
 						ImGui::TextDisabled("Downloaded - ready to extract.");
 					}
 					ImGui::EndGroup();
+					ImGui::PopTextWrapPos();
 					if (!state.active && !state.outPath.empty() && !state.installing && !state.installed) {
 						AlignRightForButton("Install files");
 						if (ImGui::Button("Install files"))
@@ -1667,9 +2356,9 @@ int main(int argc, char** argv)
 				if (DrawSettingsPage(settings, settingsContext)) {
 					settingsDirty = true;
 					SetCurseForgeApiKey(settings.curseForgeApiKey);
-					// A new key: search CurseForge again next time its sub-page is shown.
+					// A new key: refresh Discover's search on the next visit.
 					if (CurseForgeApiKey() != oldCurseForgeKey && views.count(PackSource::CurseForge) > 0)
-						views[PackSource::CurseForge].searchPending = true;
+						discover.searchPending = true;
 				}
 			}
 
@@ -1718,6 +2407,20 @@ int main(int argc, char** argv)
 			glfwSwapBuffers(window);
 		}
 
+		// Running servers get "stop" (they save their worlds), then a few seconds before being killed.
+		for (auto& [packId, server] : servers) {
+			if (server.process && server.process->Running()) {
+				log << "Stopping server " << packId << "\n";
+				server.process->Send("stop");
+			}
+		}
+		for (auto& [packId, server] : servers) {
+			if (server.process && !server.process->WaitForExit(20000))
+				server.process->Kill();
+			std::lock_guard<std::mutex> lock(serversMutex);
+			server.cancel->store(true);
+		}
+
 		// Ask in-flight downloads/extractions to stop, then wait for them.
 		shuttingDown.store(true);
 		signInCancel->store(true);
@@ -1733,10 +2436,13 @@ int main(int argc, char** argv)
 		}
 		uiQueue.Drain(); // saves downloads/extractions that finished during shutdown
 
-		if (settingsDirty)
-			SaveSettings(kSettingsFile, settings);
+		// Remember the window for next time (and any unsaved settings).
+		lastPlacement.saved = lastPlacement.width >= 200 && lastPlacement.height >= 150;
+		settings.window = lastPlacement;
+		if (!SaveSettings(kSettingsFile, settings))
+			log << "Could not save " << kSettingsFile << "\n";
 		images.Shutdown(); // frees textures while the GL context still exists
-		fox.Shutdown();
+		mascot.Shutdown();
 		ImGui_ImplOpenGL3_Shutdown();
 		ImGui_ImplGlfw_Shutdown();
 		ImGui::DestroyContext();

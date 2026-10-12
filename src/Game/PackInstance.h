@@ -20,8 +20,10 @@ struct MrpackIndex {
 	std::vector<DownloadJob> files; // client files, paths relative to the instance
 };
 
-// extractedDir is installs/<pack id>/ (the unzipped .mrpack).
-bool ReadMrpackIndex(const std::filesystem::path& extractedDir, MrpackIndex& out, std::string* err);
+// extractedDir is installs/<pack id>/ (the unzipped .mrpack). files lists what the client
+// needs, or with forServer what a dedicated server needs (each file's env.client / env.server).
+bool ReadMrpackIndex(const std::filesystem::path& extractedDir, MrpackIndex& out, std::string* err,
+					 bool forServer = false);
 
 // Fills instanceDir (the game directory) with the pack's mods and overrides.
 // Files listed in the index are downloaded if missing. overrides/ and

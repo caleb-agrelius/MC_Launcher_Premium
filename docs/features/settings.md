@@ -28,7 +28,8 @@ Saved in the data folder (gitignored). A missing or invalid file gives the defau
 | `reduceMotion` | false | No page transitions, bubbling lists, image fade-ins, toast animations or smooth scrolling |
 | `showGalleryBanners` | true | When false, pack banners don't load gallery images |
 | `searchLimit` | 30 | Results per search, 10–100 (CurseForge caps it at 50) |
-| `discoverSource` | `"modrinth"` | The last Discover sub-page, a source key (see [discover.md](discover.md)). Unknown keys fall back to the first source |
+| `discoverSources` | `[]` | Discover source filters (source keys); empty selects all sources. Unknown keys are ignored |
+| `window` | omitted | Last normal launcher size and position (`width`, `height`, `x`, `y`, in screen pixels) and `maximized`; saved at shutdown |
 | `microsoftClientId` | `""` | Azure app ID for Microsoft sign-in; empty disables it |
 | `curseForgeApiKey` | `""` | CurseForge API key, stored in plain text; empty uses `MCLP_CURSEFORGE_API_KEY` |
 | `launch.minMemoryMb` | 0 | `-Xms`; 0 = let Java decide; at most `maxMemoryMb` |

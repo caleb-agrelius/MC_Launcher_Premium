@@ -32,6 +32,7 @@ add_executable(MC_Launcher_Premium
   src/Game/Launcher.cpp
   src/Game/Loaders.cpp
   src/Game/PackInstance.cpp
+  src/Game/ServerSetup.cpp
   src/Model/Modpack.cpp
   src/Network/AtLauncher.cpp
   src/Network/CurseForge.cpp
@@ -46,7 +47,8 @@ add_executable(MC_Launcher_Premium
   src/Storage/Installer.cpp
   src/Storage/Library.cpp
   src/Storage/Settings.cpp
-  src/UI/FoxModel.cpp
+  src/UI/MobModel.cpp
+  src/UI/Mobs.cpp
   src/UI/ImageCache.cpp
   src/UI/SettingsPage.cpp
   src/UI/Theme.cpp
@@ -91,3 +93,34 @@ set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT M
 set_target_properties(MC_Launcher_Premium PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
 message(STATUS "Configured MC_Launcher_Premium project (vcpkg mode)")
+
+include(CTest)
+if (BUILD_TESTING)
+  add_executable(launcher_checks
+    tests/LauncherChecks.cpp
+    src/Game/GameFiles.cpp
+    src/Game/GameOptions.cpp
+    src/Game/Loaders.cpp
+    src/Game/PackInstance.cpp
+    src/Game/ServerSetup.cpp
+    src/Model/Modpack.cpp
+    src/Network/HttpClient.cpp
+    src/Storage/Installer.cpp
+    src/Storage/Settings.cpp
+    src/UI/ImageCache.cpp
+    src/UI/Theme.cpp
+    src/UI/Widgets.cpp
+    src/Util/Paths.cpp
+    src/Util/Process.cpp
+    src/Util/Sha1.cpp
+  )
+  get_target_property(launcher_includes MC_Launcher_Premium INCLUDE_DIRECTORIES)
+  get_target_property(launcher_libraries MC_Launcher_Premium LINK_LIBRARIES)
+  target_include_directories(launcher_checks PRIVATE ${launcher_includes})
+  target_link_libraries(launcher_checks PRIVATE ${launcher_libraries})
+  if (WIN32)
+    target_compile_definitions(launcher_checks PRIVATE _CRT_SECURE_NO_WARNINGS GLFW_INCLUDE_NONE)
+  endif()
+  add_test(NAME launcher_checks COMMAND launcher_checks)
+  set_tests_properties(launcher_checks PROPERTIES TIMEOUT 30)
+endif()

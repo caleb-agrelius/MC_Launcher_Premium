@@ -2,6 +2,17 @@
 
 Debugging, logs, and troubleshooting. Build steps are in the [README](../README.md#build).
 
+## Regression checks
+
+`BUILD_TESTING` defaults to `ON`. After building Debug, run:
+
+```powershell
+ctest --test-dir build -C Debug --output-on-failure
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/WindowSmoke.ps1
+```
+
+The CTest checks cover window settings, server file filtering and setup, preserved configuration, card heights, and console commands using local fixtures. The Windows smoke test launches the app with isolated data and checks window resize, close, reopen, maximization and minimization. Fixtures are kept under gitignored `tests/out/` folders.
+
 ## Visual Studio
 
 1. Configure the project once, then open `build\MC_Launcher_Premium.sln`.

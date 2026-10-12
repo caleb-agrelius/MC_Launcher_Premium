@@ -12,4 +12,6 @@ Lists modpacks whose files have been extracted, including ones from earlier sess
 - **Open folder** opens the pack's game folder in Explorer: `instances/<pack id>/`, or `installs/<pack id>/minecraft` for whole-pack installs.
 - If no packs are installed, the page shows an empty state with a **Browse modpacks** button that opens Discover.
 - You can't uninstall from here yet.
+- Modrinth pack cards also offer **Server**, which opens the pack on [Servers](servers.md) for dedicated hosting.
+- Cards share measured heights, padding, 56px icons and heading-size pack names with Downloads; long text wraps, and actions move to a new row when necessary.
 - Packs extracted before `library.json` existed aren't detected from `installs/` alone. Install them again to list them.

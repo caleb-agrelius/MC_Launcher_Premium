@@ -5,7 +5,7 @@ Window, rendering loop, navigation, theme, and logging.
 ## Startup and shutdown (`main()` in `src/main.cpp`)
 1. Finds the **data folder** (`FindDataRoot`): the first of the working directory, the executable's folder, or any parent of the executable's folder that contains `resources/index.json`. The app then makes that folder the working directory, so launching `build/Debug/MC_Launcher_Premium.exe` directly still uses the repo root. If none is found, the working directory stays as-is and the pack list is empty.
 2. Opens `app.log` in the data folder (append mode). It logs startup, the data folder (or that none was found), the number of local packs loaded, each search (with its source) and version lookup (result count or error), each pack install, failures, and unhandled exceptions.
-3. Initializes GLFW and creates a resizable 1360x840 window with an OpenGL 3.0 context (GLSL `#version 130`) and vsync. `GLFW_SCALE_TO_MONITOR` makes that size logical, so the window is 1.5x larger at 150% Windows display scaling. On Windows the title bar follows the theme (`ApplyTitleBarColors`): dark or light mode on Windows 10/11, plus the theme's background and text colors on Windows 11. The minimum window size is 900x600, scaled.
+3. Loads settings before initializing GLFW and creating a resizable OpenGL 3.0 window with vsync. First launch uses 1360x840 scaled to the monitor DPI. Later launches restore the saved normal size, position and maximized state from `settings.window`, in screen pixels. Placements outside connected monitors' work areas fall back to the default. The window is positioned before being shown. The title bar follows the theme on Windows. The minimum size is 900x600, scaled.
 4. Loads GL functions via glad, then creates the ImGui context with keyboard navigation. It loads `settings.json` (see [settings.md](settings.md)), the fonts, and the themed, scaled style (see [ui-theme.md](ui-theme.md)), colors the title bar to match the theme, then starts the GLFW + OpenGL3 backends and the `ImageCache` (see [images.md](images.md)).
 5. Loads the modpack index (see [modpack-index.md](modpack-index.md)) and creates the `downloads/` and `installs/` folders.
 6. Runs the frame loop until the window is closed. Each frame:
@@ -15,19 +15,20 @@ Window, rendering loop, navigation, theme, and logging.
    - uploads newly decoded images (`ImageCache::Update`)
    - handles the shortcuts: Ctrl +, Ctrl -, Ctrl 0 (UI scale) and Ctrl F (go to Discover and focus the search box)
    - after the main window, draws toast notifications (`Toasts::Draw`)
-7. On exit, saves `settings.json` if it has unsaved changes, sets `shuttingDown` so in-flight downloads and extractions cancel, and joins the remaining workers. It then stops the image cache (freeing its textures while the GL context still exists) and tears down ImGui and GLFW.
+7. On exit, asks running servers to save and stop, cancels setup/download work, joins remaining workers, and drains `UiQueue` to save completed work. It saves settings and the last normal window size/position and maximized state. A minimized window keeps its prior placement. It then stops the image cache and mascot and tears down ImGui and GLFW.
 
 ## Layout
 One full-window ImGui window with no title bar, split into:
-- **Sidebar** (230px, scaled): a grass-block logo drawn from small squares, "MC Launcher" with a "PREMIUM · JAVA" tag, the **BROWSE** entries **Discover**, **My Library**, and **Downloads**, the **LAUNCHER** entry **Settings** (`Widgets::NavItem`; the selected one has an accent bar and bold text), then the **ACCOUNT** section (see [accounts.md](accounts.md)). **Discover** is a collapsible group (`Widgets::NavGroupItem`, with a chevron): under it is one smaller entry per pack source (`Widgets::SubNavItem`, with a dot in the accent color when selected; see [discover.md](discover.md)). Clicking Discover while on Discover collapses or expands the list; arriving from another page expands it. It starts expanded. The sidebar never scrolls (`NoScrollbar | NoScrollWithMouse`). Downloads shows a count badge while downloads or extractions are running. The UI scale is set in Settings > Appearance, not in the sidebar.
+- **Sidebar** (230px, scaled): grass-block logo, launcher title, Discover, My Library, Downloads, Servers, Settings, account controls and an interactive mob mascot. Downloads shows an active-work badge. The sidebar never scrolls. Discover uses source filter chips within the page.
 - **Main content:** a padded panel (24 x 18 px, scaled) with a header (an accent breadcrumb such as "MINECRAFT / MODPACKS" or "LAUNCHER / SETTINGS", a large bold page title, and a subtitle), then the active page. Switching pages or Discover sources fades the content in as it rises into place, list items bubble in after it, and the mouse wheel scrolls smoothly (see Motion in [ui-theme.md](ui-theme.md)).
 
-Navigation state is the `Page` enum (`Discover`, `Library`, `Downloads`, `Settings`) plus `discoverSource`, the selected Discover sub-page. Discover is the default page, and the sub-page is restored from `settings.json`.
+Navigation state is the `Page` enum (`Discover`, `Library`, `Downloads`, `Servers`, `Settings`). Discover is the default page and contains one combined search with source filter chips, saved in `discoverSources`. The sidebar lists these pages without source sub-pages, and includes a random interactive mob mascot; see [ui-theme.md](ui-theme.md).
 
 ## Pages
 - Discover: [discover.md](discover.md)
 - My Library: [library.md](library.md)
 - Downloads: [downloads.md](downloads.md)
+- Servers: [servers.md](servers.md)
 - Settings: [settings.md](settings.md)
 
 ## Theme

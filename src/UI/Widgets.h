@@ -14,6 +14,14 @@ namespace Theme { struct ThemeInfo; }
 // and are scaled with Theme::S().
 namespace Widgets {
 
+// A bordered card in the card color that is as tall as its contents. Pair with EndCard().
+// The height is measured each frame and remembered (per id, in the parent window), so
+// cards don't collapse and re-grow when a page is shown again. Cards never take the
+// mouse wheel: scrolling over one scrolls the page around it.
+// padding < 0 uses the style's window padding.
+void BeginCard(const char* id, ImVec2 padding = ImVec2(-1.0f, -1.0f));
+void EndCard();
+
 // When true, images appear without fading in.
 void SetReduceMotion(bool reduce);
 
@@ -65,7 +73,12 @@ void DrawPackIcon(ImDrawList* drawList, const LoadedImage* image, const Modpack&
 				  ImVec2 min, float size, float rounding);
 
 // Selectable row for the pack list: icon, name, and a metadata line. Returns true when clicked.
-bool PackRow(const Modpack& pack, ImageCache& images, bool selected, const std::string& meta);
+// tag (optional) is drawn as a small pill in tagColor before the metadata, e.g. the source.
+bool PackRow(const Modpack& pack, ImageCache& images, bool selected, const std::string& meta,
+	const char* tag = nullptr, const ImVec4& tagColor = ImVec4(0, 0, 0, 0));
+
+// A pill-shaped on/off filter button with a colored dot. Returns true when clicked.
+bool ToggleChip(const char* label, bool on, const ImVec4& color, bool enabled = true);
 
 // Wide banner for the selected pack: gallery image (or a pattern in the pack's color),
 // a gradient into the panel color, and the icon, name, author and tags on top.

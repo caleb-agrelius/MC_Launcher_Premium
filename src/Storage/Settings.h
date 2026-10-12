@@ -39,12 +39,22 @@ struct CustomTheme {
 	std::vector<float> colors; // 11 colors x 3 channels
 };
 
+// Where the launcher window was when it last closed, in screen pixels.
+struct WindowPlacement {
+	bool saved = false; // false until the launcher has closed once
+	int x = 0;
+	int y = 0;
+	int width = 0;
+	int height = 0;
+	bool maximized = false;
+};
+
 // User preferences, saved as JSON in the data folder.
 struct Settings {
 	// Multiplies the monitor's DPI scale. 1.0 = the size Windows display scaling asks for.
 	float uiScale = 1.0f;
-	// Discover sub-page shown at startup (a PackSourceKey, e.g. "modrinth").
-	std::string discoverSource = "modrinth";
+	// Discover's source filter (PackSourceKeys, e.g. "modrinth"). Empty = every source.
+	std::vector<std::string> discoverSources;
 	std::string theme = "grass"; // Theme::ThemeInfo::id
 	bool reduceMotion = false;   // no image fade-ins or toast slide-ins
 	bool showGalleryBanners = true;
@@ -57,6 +67,7 @@ struct Settings {
 	LaunchSettings launch;
 	GameOptionsSettings gameOptions;
 	std::vector<CustomTheme> customThemes;
+	WindowPlacement window;
 };
 
 static constexpr float kMinUiScale = 0.75f;

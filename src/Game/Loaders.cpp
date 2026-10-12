@@ -106,9 +106,9 @@ static bool ForgeAlreadyInstalled(const fs::path& root, const std::string& id)
 	return true;
 }
 
-static bool InstallForgeLike(HttpClient& http, const fs::path& root, LoaderKind kind, const std::string& minecraftVersion,
-	const std::string& loaderVersion, const fs::path& javaExe, std::string& versionId, const ProgressFn& progress,
-	std::string* err, const std::atomic<bool>* cancel)
+bool DownloadForgeInstaller(HttpClient& http, const fs::path& root, LoaderKind kind, const std::string& minecraftVersion,
+	const std::string& loaderVersion, fs::path& installer, const ProgressFn& progress, std::string* err,
+	const std::atomic<bool>* cancel)
 {
 	std::string url;
 	std::string fileName;
@@ -129,7 +129,16 @@ static bool InstallForgeLike(HttpClient& http, const fs::path& root, LoaderKind 
 	DownloadJob job;
 	job.url = url;
 	job.path = root / "installers" / fileName;
-	if (!DownloadAll(http, { job }, std::string("Downloading ") + LoaderName(kind) + " installer", progress, err, cancel))
+	installer = job.path;
+	return DownloadAll(http, { job }, std::string("Downloading ") + LoaderName(kind) + " installer", progress, err, cancel);
+}
+
+static bool InstallForgeLike(HttpClient& http, const fs::path& root, LoaderKind kind, const std::string& minecraftVersion,
+	const std::string& loaderVersion, const fs::path& javaExe, std::string& versionId, const ProgressFn& progress,
+	std::string* err, const std::atomic<bool>* cancel)
+{
+	DownloadJob job;
+	if (!DownloadForgeInstaller(http, root, kind, minecraftVersion, loaderVersion, job.path, progress, err, cancel))
 		return false;
 	if (!ReadInstallerVersionId(job.path, versionId, err))
 		return false;

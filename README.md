@@ -11,12 +11,15 @@ A Minecraft: Java Edition modpack launcher for Windows, written in C++ with Dear
 
 ## Features
 
-- Search modpacks from Modrinth, CurseForge, FTB, Technic, and ATLauncher, with Minecraft version, loader, and sort filters where the source supports them. CurseForge requires an API key (see [CurseForge API key](#curseforge-api-key)). Modrinth search falls back to `resources/index.json` when offline.
+- Search Modrinth, CurseForge, FTB, Technic, and ATLauncher together, with source, Minecraft version, loader, and sort filters. CurseForge requires an API key (see [CurseForge API key](#curseforge-api-key)). Modrinth search falls back to `resources/index.json` when offline.
 - Download and extract Modrinth `.mrpack` files.
 - Install complete packs from CurseForge, FTB, Technic, and ATLauncher, with hash-checked mod downloads.
 - Play Modrinth packs: installs Minecraft, a Mojang Java runtime, and the mod loader (Fabric, Quilt, Forge, or NeoForge), then launches the game. Packs from other sources cannot be played yet.
 - Microsoft account sign-in or offline play. Microsoft sign-in requires an Entra app client ID approved for the Minecraft API; see [docs/features/account-sign-in.md](docs/features/account-sign-in.md).
 - Color themes, UI scaling, launch and game-option defaults on the Settings page.
+- Host installed Modrinth packs from **Servers** or My Library's **Server** button, with setup, settings and a built-in console. See [server controls](docs/features/servers.md).
+- Consistent Library and Downloads cards, plus window size, position and maximized state remembered across closes.
+- A random interactive Minecraft mob mascot in the sidebar. Click to hop; right-click for another mob.
 
 The sidebar fox model is by [Aarols32](https://sketchfab.com/3d-models/minecraft-fox-1bb01070f46b430695f96c0d7fb58aec), licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 
@@ -53,7 +56,7 @@ Re-run the configure command after adding source files or editing `CMakeLists.tx
 
 ## CurseForge API key
 
-CurseForge requires each application to use its own API key. Without one, the CurseForge page is disabled; other sources are unaffected.
+CurseForge requires each application to use its own API key. Without one, searches skip CurseForge; other sources are unaffected.
 
 1. Request a key in the [CurseForge for Studios console](https://console.curseforge.com/) and accept the [third-party API terms](https://support.curseforge.com/en/support/solutions/articles/9000207405-curse-forge-3rd-party-api-terms-and-conditions).
 2. Provide the key in one of two ways. Do not commit it.

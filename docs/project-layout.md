@@ -25,18 +25,20 @@
 | `src/Game/PackInstance.*` | `.mrpack` index to `instances/<pack>/` |
 | `src/Game/GameOptions.*` | `options.txt` defaults applied to every pack |
 | `src/Game/Launcher.*` | Play: preparation, command line, process launch |
+| `src/Game/ServerSetup.*` | Dedicated server setup, properties, EULA and launch commands |
 | `src/UI/Theme.*` | Color themes, fonts, DPI and UI scaling |
 | `src/UI/Widgets.*` | Shared widgets and animations |
 | `src/UI/SettingsPage.*` | Settings page |
 | `src/UI/Toasts.*` | Toast notifications |
 | `src/UI/ImageCache.*` | Asynchronous icon and banner loading (PNG, JPEG, GIF, WebP) |
-| `src/UI/FoxModel.*` | Sidebar fox model renderer |
+| `src/UI/MobModel.*`, `src/UI/Mobs.*` | Sidebar mob rendering and randomly selected box-built mobs |
 | `src/Util/Hash.*`, `src/Util/Sha1.*` | SHA-1 and MD5 |
 | `src/Util/Paths.*` | Long (260+ character) Windows paths |
-| `src/Util/Process.*` | Process launching |
+| `src/Util/Process.*` | Process launching and interactive server console |
 | `src/assets/` | `minecraft_fox.glb` |
 | `resources/index.json` | Offline fallback pack list |
 | `docs/features/` | Feature documentation, indexed in `CLAUDE.md` |
+| `tests/` | Regression checks and Windows window smoke test |
 | `mcdebug.cmd` | Build and run helper (see the [README](../README.md#mcdebug)) |
 
 ## Data folder
@@ -55,3 +57,4 @@ The app runs from the repository root (the folder containing `resources\index.js
 | `installs\<pack>\` | Extracted pack files; whole-pack installs use `minecraft\` and `pack.json` |
 | `minecraft\` | Shared Minecraft versions, libraries, assets, and Java runtimes |
 | `instances\<pack>\` | Game directory for each played pack (mods, config, saves, logs) |
+| `servers\<pack>\` | Dedicated server files, world, configuration and console logs |

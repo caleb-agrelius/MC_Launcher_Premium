@@ -10,9 +10,9 @@
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <vector>
 #include <cstdio>
 #include <functional>
-#include <vector>
 
 namespace Widgets {
 
@@ -398,7 +398,8 @@ void DrawPackIcon(ImDrawList* drawList, const LoadedImage* image, const Modpack&
 	drawList->AddRect(min, max, OutlineColor(0.08f), rounding);
 }
 
-bool PackRow(const Modpack& pack, ImageCache& images, bool selected, const std::string& meta)
+bool PackRow(const Modpack& pack, ImageCache& images, bool selected, const std::string& meta,
+	const char* tag, const ImVec4& tagColor)
 {
 	const float height = S(68.0f);
 	const bool clicked = RoundedSelectable("##row", selected, ImVec2(0.0f, height), S(10.0f));
@@ -422,8 +423,44 @@ bool PackRow(const Modpack& pack, ImageCache& images, bool selected, const std::
 	const float textTop = min.y + (height - (nameSize + metaSize + S(4.0f))) * 0.5f;
 	DrawClippedText(drawList, fonts.bold, nameSize, ImVec2(textX, textTop), max.x - pad,
 		ImGui::GetColorU32(Theme::C().text), pack.name);
-	DrawClippedText(drawList, fonts.regular, metaSize, ImVec2(textX, textTop + nameSize + S(4.0f)), max.x - pad,
+	float metaX = textX;
+	const float metaY = textTop + nameSize + S(4.0f);
+	if (tag && tag[0] != '\0') {
+		// Small colored source tag before the metadata, e.g. "CurseForge".
+		const float tagSize = metaSize * 0.92f;
+		const float tagWidth = fonts.bold->CalcTextSizeA(tagSize, FLT_MAX, 0.0f, tag).x + S(10.0f);
+		const ImVec2 tagMin(metaX, metaY - S(1.0f));
+		const ImVec2 tagMax(metaX + tagWidth, metaY + metaSize + S(1.0f));
+		drawList->AddRectFilled(tagMin, tagMax, ImGui::GetColorU32(Theme::WithAlpha(tagColor, 0.22f)), S(4.0f));
+		drawList->AddText(fonts.bold, tagSize, ImVec2(tagMin.x + S(5.0f), tagMin.y + (tagMax.y - tagMin.y - tagSize) * 0.5f),
+			ImGui::GetColorU32(Theme::Mix(tagColor, Theme::C().text, Theme::C().light ? 0.0f : 0.35f)), tag);
+		metaX = tagMax.x + S(6.0f);
+	}
+	DrawClippedText(drawList, fonts.regular, metaSize, ImVec2(metaX, metaY), max.x - pad,
 		ImGui::GetColorU32(Theme::C().textDim), meta);
+	return clicked;
+}
+
+bool ToggleChip(const char* label, bool on, const ImVec4& color, bool enabled)
+{
+	const Theme::Palette& p = Theme::C();
+	ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, S(14.0f));
+	ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(S(12.0f), S(5.0f)));
+	ImGui::PushStyleColor(ImGuiCol_Button, on ? Theme::Mix(p.cardBg, color, 0.32f) : p.frameBg);
+	ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Theme::Mix(p.cardBg, color, on ? 0.45f : 0.2f));
+	ImGui::PushStyleColor(ImGuiCol_ButtonActive, Theme::Mix(p.cardBg, color, 0.55f));
+	ImGui::PushStyleColor(ImGuiCol_Text, on ? p.text : p.textDim);
+	ImGui::BeginDisabled(!enabled);
+	// A colored dot before the label.
+	const ImVec2 pos = ImGui::GetCursorScreenPos();
+	const std::string padded = std::string("    ") + label;
+	const bool clicked = ImGui::Button(padded.c_str());
+	const float radius = S(4.0f);
+	ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(pos.x + S(14.0f), pos.y + ImGui::GetItemRectSize().y * 0.5f), radius,
+		ImGui::GetColorU32(on ? color : Theme::WithAlpha(color, 0.45f)));
+	ImGui::EndDisabled();
+	ImGui::PopStyleColor(4);
+	ImGui::PopStyleVar(2);
 	return clicked;
 }
 
@@ -713,6 +750,47 @@ bool NewThemeCard(float width)
 	if (hovered)
 		ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
 	return clicked;
+}
+
+}
+
+namespace Widgets {
+
+namespace {
+struct OpenCard {
+	ImGuiID id = 0;
+	float bottomPadding = 0.0f;
+};
+std::vector<OpenCard> g_openCards;
+}
+
+void BeginCard(const char* id, ImVec2 padding)
+{
+	const ImGuiID key = ImGui::GetID(id);
+	const float remembered = ImGui::GetStateStorage()->GetFloat(key, 0.0f);
+	const ImVec2 pad = padding.x >= 0.0f ? padding : ImGui::GetStyle().WindowPadding;
+	// First time only: a guess, corrected on the next frame.
+	const float height = remembered > 0.0f ? remembered : pad.y * 2.0f + ImGui::GetFrameHeightWithSpacing() * 2.0f;
+	ImGui::PushStyleColor(ImGuiCol_ChildBg, Theme::C().cardBg);
+	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, pad);
+	ImGui::BeginChild(key, ImVec2(0.0f, height), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding,
+		ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+	ImGui::PopStyleVar();
+	g_openCards.push_back({ key, pad.y });
+}
+
+void EndCard()
+{
+	const OpenCard card = g_openCards.back();
+	g_openCards.pop_back();
+	// The cursor sits one item-spacing below the last item.
+	const float contentBottom = ImGui::GetCursorPosY() + ImGui::GetScrollY() - ImGui::GetStyle().ItemSpacing.y;
+	const float height = std::ceil(contentBottom + card.bottomPadding);
+	const bool measured = !ImGui::GetCurrentWindow()->SkipItems;
+	ImGui::EndChild();
+	ImGui::PopStyleColor();
+	if (measured)
+		ImGui::GetStateStorage()->SetFloat(card.id, height);
 }
 
 }

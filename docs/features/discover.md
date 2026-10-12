@@ -2,38 +2,33 @@
 
 Browse modpacks and start downloads and installs. UI code is the `Page::Discover` branch in `src/main.cpp`.
 
-## Sub-pages
-- Discover has one sub-page per source, listed under **Discover** in the sidebar (`Widgets::SubNavItem`): **Modrinth**, **CurseForge**, **FTB**, **Technic** and **ATLauncher** (see [pack-sources.md](pack-sources.md)).
-- The page title is "Discover on <source>".
-- Each sub-page keeps its own state in a `SourceView`: search text, filters, results, selection, and search status. Switching sub-pages and back keeps a search.
-- A sub-page's first search runs the first time it is shown.
-- The last sub-page used is saved as `discoverSource` in `settings.json` and reopened at startup.
+## Combined search
+- Discover searches **Modrinth**, **CurseForge**, **FTB**, **Technic** and **ATLauncher** together (see [pack-sources.md](pack-sources.md)). Source chips select one or several sources, or **All sources**.
+- `DiscoverState` holds the shared query, filters, sort, merged result references and selected pack id. Each `SourceView` holds one source's results, status and revision.
+- The source filter is saved as `discoverSources` in `settings.json`; an empty list means all sources.
 
 ## Search
-- A full-width, taller text box of up to 127 characters, with the source's hint (e.g. "Search Modrinth modpacks...").
-- Results come live from the selected source. Typing schedules a search that runs once the text has been unchanged for 0.4 s (`kSearchDelaySeconds`). An empty search lists the source's default list (Modrinth: most downloaded).
-- **Filters** sit on one row under the box, showing only those the source supports (see [pack-sources.md](pack-sources.md)):
+- A full-width text box holds up to 127 characters. Typing searches each active source after a 0.4 s pause (`kSearchDelaySeconds`). An empty query fetches default lists.
+- **Filters** sit under the box (see [pack-sources.md](pack-sources.md)):
   - a **Minecraft version** text box (searches after typing pauses)
   - a **loader** combo (Any loader, Forge, NeoForge, Fabric, Quilt)
   - a **Sort** combo
 
   Changing a combo searches immediately.
-- When a source isn't available (CurseForge without an API key), the search box and filters are disabled and the status line explains why. No search is sent.
-- A status line follows the filters, or wraps to its own line when it doesn't fit. Errors wrap. It shows one of:
-  - a spinner with "Searching <source>..."
-  - the total match count ("18.8K modpacks on Modrinth")
-  - a red error. For Modrinth this is "Modrinth unavailable (...) - showing local packs".
+- Sources without required credentials or support for the current filter are skipped with explanations. Other sources continue searching.
+- The status line shows searching source names, displayed results, per-source totals and errors, and skipped-source reasons in a tooltip.
+- With several sources, **Best match** interleaves results by source rank; **Most downloads** and **Name** sort the combined list. With one source, its native sorts are available.
 - **Offline fallback (Modrinth only):** if the search fails, the list shows packs from `resources/index.json` whose name or description contains the query (case-insensitive). See [modpack-index.md](modpack-index.md).
 - Each search shows up to `settings.searchLimit` results (30 by default, 10–100, set in Settings > Downloads). CurseForge caps a page at 50. There is no paging yet.
-- **Ctrl F** opens Discover and puts the cursor in the current source's search box.
+- **Ctrl F** opens Discover and focuses the shared search box.
 
 ## Pack list (left, 340px, scaled)
-- The heading is the source's browse label (Modrinth: "MOST DOWNLOADED") when there's no query, filter or sort, and "RESULTS" otherwise.
+- The heading is **POPULAR** for unfiltered combined browsing, the source's browse label for single-source browsing, and **RESULTS** otherwise.
 - Each pack is a row (`Widgets::PackRow`) with its icon (see [images.md](images.md)), its name in bold (shortened with "..." if too long), and a dimmed line:
   - Online packs: newest supported Minecraft version and download count (e.g. `26.3 · 18.4M downloads`), whichever the source provides, else the author, else the source name (Technic search results until the pack is selected)
   - Local packs: version and file count
 - The selected row has a rounded highlight with a green bar inside its left edge (see [ui-theme.md](ui-theme.md)). Rows scrolled out of view don't request their icons.
-- Clicking a row selects it. The first result is selected after each search. "No modpacks found." appears when a search returns nothing.
+- Clicking a row selects it. The selected pack id survives result re-merges if still present; otherwise the first result is selected. Combined rows include a source tag. "No modpacks found." appears when a search returns nothing.
 
 ## Pack details (right)
 - **Hero banner** (`Widgets::HeroBanner`), sized to about a third of the pane width (200–340px, scaled):

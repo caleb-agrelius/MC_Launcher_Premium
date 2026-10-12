@@ -76,7 +76,7 @@ Color themes, fonts, DPI and UI scaling, shared drawing helpers, and toast notif
 - `Theme::C()` returns a copy of the palette made by the last `Apply()`, so editing or deleting a custom theme never leaves it pointing at a removed entry.
 
 ## Settings (`src/Storage/Settings.{h,cpp}`)
-- `settings.json` in the data folder is gitignored. Its fields, including `uiScale` and `discoverSource` (the last Discover sub-page, a source key such as `"modrinth"`), are listed in [settings.md](settings.md).
+- `settings.json` in the data folder is gitignored. Its fields, including `uiScale`, `discoverSources` and the saved launcher window placement, are listed in [settings.md](settings.md).
 - `LoadSettings` returns the defaults if the file is missing or invalid, and clamps the scale to its range.
 - `SaveSettings` writes the scale rounded to two decimals.
 
@@ -84,6 +84,7 @@ Color themes, fonts, DPI and UI scaling, shared drawing helpers, and toast notif
 
 | Widget | What it draws |
 |---|---|
+| `BeginCard` / `EndCard` | A full-width bordered card with a measured, remembered height; offscreen cards keep their height, and the mouse wheel scrolls the surrounding page |
 | `Text(font, size, color, text)` | Text in a given font, size, and color |
 | `SectionLabel` | Small bold dimmed heading, e.g. "PACK FILES (1)" |
 | `Spinner` | A rotating arc the height of a text line |
@@ -102,6 +103,10 @@ Color themes, fonts, DPI and UI scaling, shared drawing helpers, and toast notif
 | `DrawPackIcon` | The pack icon, or a placeholder tile in the pack's color with its first letter, shown until the icon loads or if it fails |
 
 Images fade in over 0.25 s (`FadeAlpha`), unless **Reduce motion** is on (`Widgets::SetReduceMotion`).
+
+Library and Downloads share card padding, 56px icons and heading-size pack names. Long text wraps, and action buttons move below it when there is insufficient room on the same row. Settings uses the same card measurement with its own padding.
+
+The sidebar mascot uses `MobModel` and `Mobs`: a bundled fox model or box-built pig, creeper, cow, chicken, sheep, slime or bee, chosen randomly at startup. Clicking makes it hop; right-clicking chooses another. Reduced motion disables hopping and idle bobbing.
 
 ## Motion
 All of this is off when **Reduce motion** is on.

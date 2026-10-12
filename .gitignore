@@ -35,6 +35,7 @@ _deps/
 # Application-generated data (also matches copies next to the exe)
 downloads/
 installs/
+servers/
 app.log
 imgui.ini
 settings.json

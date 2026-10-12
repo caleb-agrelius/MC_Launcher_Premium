@@ -13,4 +13,8 @@ bool OpenFolder(const std::string& path);
 // Total physical memory in MB, or 0 if unknown.
 std::uint64_t SystemMemoryMb();
 
+// This PC's IPv4 address on the local network (e.g. "192.168.1.20"), or empty if unknown.
+// Used to tell friends on the same network where to join a server.
+std::string LocalNetworkAddress();
+
 }

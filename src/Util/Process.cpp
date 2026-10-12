@@ -6,6 +6,8 @@
 #include <windows.h>
 #endif
 
+#include <fstream>
+
 namespace fs = std::filesystem;
 
 #ifdef _WIN32
@@ -136,4 +138,187 @@ bool RunProcess(const std::vector<std::string>& args,
 	if (err) *err = "Launching programs is only implemented on Windows";
 	return false;
 #endif
+}
+
+ServerProcess::~ServerProcess()
+{
+	if (Running())
+		Kill();
+#ifdef _WIN32
+	if (m_input)
+		CloseHandle(static_cast<HANDLE>(m_input));
+	m_input = nullptr;
+#endif
+	if (m_reader.joinable())
+		m_reader.join();
+#ifdef _WIN32
+	if (m_output)
+		CloseHandle(static_cast<HANDLE>(m_output));
+	if (m_process)
+		CloseHandle(static_cast<HANDLE>(m_process));
+#endif
+}
+
+bool ServerProcess::Start(const std::vector<std::string>& args, const fs::path& workDir, const fs::path& logFile,
+	std::string* err)
+{
+#ifdef _WIN32
+	if (m_process) {
+		if (err) *err = "This server process has already been started";
+		return false;
+	}
+	if (args.empty()) {
+		if (err) *err = "No program to run";
+		return false;
+	}
+	std::wstring commandLine;
+	for (const std::string& arg : args)
+		AppendQuoted(commandLine, Widen(arg));
+
+	SECURITY_ATTRIBUTES inherit{ sizeof(inherit), nullptr, TRUE };
+	HANDLE inputRead = nullptr, inputWrite = nullptr, outputRead = nullptr, outputWrite = nullptr;
+	if (!CreatePipe(&inputRead, &inputWrite, &inherit, 0) || !CreatePipe(&outputRead, &outputWrite, &inherit, 0)) {
+		if (err) *err = LastErrorText("Couldn't create pipes");
+		if (inputRead) CloseHandle(inputRead);
+		if (inputWrite) CloseHandle(inputWrite);
+		return false;
+	}
+	// Our ends must not be inherited by the child.
+	SetHandleInformation(inputWrite, HANDLE_FLAG_INHERIT, 0);
+	SetHandleInformation(outputRead, HANDLE_FLAG_INHERIT, 0);
+
+	STARTUPINFOW startup{};
+	startup.cb = sizeof(startup);
+	startup.dwFlags = STARTF_USESTDHANDLES;
+	startup.hStdInput = inputRead;
+	startup.hStdOutput = outputWrite;
+	startup.hStdError = outputWrite;
+	PROCESS_INFORMATION process{};
+	const std::wstring dir = workDir.wstring();
+	const BOOL started = CreateProcessW(nullptr, commandLine.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW,
+		nullptr, dir.empty() ? nullptr : dir.c_str(), &startup, &process);
+	const std::string startError = started ? std::string() : LastErrorText("Couldn't start " + args[0]);
+	CloseHandle(inputRead);
+	CloseHandle(outputWrite);
+	if (!started) {
+		CloseHandle(inputWrite);
+		CloseHandle(outputRead);
+		if (err) *err = startError;
+		return false;
+	}
+	CloseHandle(process.hThread);
+	m_process = process.hProcess;
+	m_input = inputWrite;
+	m_output = outputRead;
+	m_logFile = logFile;
+	std::error_code ec;
+	fs::create_directories(logFile.parent_path(), ec);
+	m_reader = std::thread([this]() { ReadOutput(); });
+	return true;
+#else
+	(void)args; (void)workDir; (void)logFile;
+	if (err) *err = "Running servers is only implemented on Windows";
+	return false;
+#endif
+}
+
+void ServerProcess::ReadOutput()
+{
+#ifdef _WIN32
+	std::ofstream log(m_logFile, std::ios::app | std::ios::binary);
+	std::string pending;
+	char buffer[4096];
+	DWORD read = 0;
+	while (ReadFile(static_cast<HANDLE>(m_output), buffer, sizeof(buffer), &read, nullptr) && read > 0) {
+		log.write(buffer, read);
+		log.flush();
+		pending.append(buffer, read);
+		std::size_t newline;
+		while ((newline = pending.find('\n')) != std::string::npos) {
+			std::string line = pending.substr(0, newline);
+			pending.erase(0, newline + 1);
+			if (!line.empty() && line.back() == '\r')
+				line.pop_back();
+			std::lock_guard<std::mutex> lock(m_mutex);
+			m_lines.push_back(std::move(line));
+			++m_totalLines;
+			if (m_lines.size() > kMaxLines)
+				m_lines.pop_front();
+		}
+	}
+	if (!pending.empty()) {
+		std::lock_guard<std::mutex> lock(m_mutex);
+		m_lines.push_back(pending);
+		++m_totalLines;
+		if (m_lines.size() > kMaxLines)
+			m_lines.pop_front();
+	}
+#endif
+}
+
+bool ServerProcess::Running() const
+{
+#ifdef _WIN32
+	return m_process && WaitForSingleObject(static_cast<HANDLE>(m_process), 0) == WAIT_TIMEOUT;
+#else
+	return false;
+#endif
+}
+
+int ServerProcess::ExitCode() const
+{
+#ifdef _WIN32
+	DWORD code = 0;
+	if (m_process && GetExitCodeProcess(static_cast<HANDLE>(m_process), &code))
+		return static_cast<int>(code);
+#endif
+	return -1;
+}
+
+void ServerProcess::Send(const std::string& line)
+{
+#ifdef _WIN32
+	if (!m_input || !Running())
+		return;
+	const std::string text = line + "\n";
+	DWORD written = 0;
+	WriteFile(static_cast<HANDLE>(m_input), text.data(), static_cast<DWORD>(text.size()), &written, nullptr);
+	std::lock_guard<std::mutex> lock(m_mutex);
+	m_lines.push_back("> " + line);
+	++m_totalLines;
+	if (m_lines.size() > kMaxLines)
+		m_lines.pop_front();
+#else
+	(void)line;
+#endif
+}
+
+void ServerProcess::Kill()
+{
+#ifdef _WIN32
+	if (m_process && Running()) {
+		TerminateProcess(static_cast<HANDLE>(m_process), 1);
+		WaitForSingleObject(static_cast<HANDLE>(m_process), 5000);
+	}
+#endif
+}
+
+bool ServerProcess::WaitForExit(int timeoutMs)
+{
+#ifdef _WIN32
+	if (!m_process)
+		return true;
+	return WaitForSingleObject(static_cast<HANDLE>(m_process), static_cast<DWORD>(timeoutMs)) != WAIT_TIMEOUT;
+#else
+	(void)timeoutMs;
+	return true;
+#endif
+}
+
+std::vector<std::string> ServerProcess::Lines(std::uint64_t* total) const
+{
+	std::lock_guard<std::mutex> lock(m_mutex);
+	if (total)
+		*total = m_totalLines;
+	return std::vector<std::string>(m_lines.begin(), m_lines.end());
 }
