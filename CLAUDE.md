@@ -2,6 +2,8 @@
 
 A C++ Dear ImGui desktop app (GLFW + OpenGL3) for browsing, downloading, and extracting Minecraft Java modpacks. Dependencies come from vcpkg: glfw3, glad, imgui, nlohmann-json, curl, miniz, libwebp, and stb. Build with CMake (see README.md).
 
+Other docs: [docs/development.md](docs/development.md) (debugging, logs, troubleshooting) and [docs/project-layout.md](docs/project-layout.md) (source files, data folder).
+
 ## Feature docs
 
 `docs/features/` describes what the launcher currently does, with one file per area. **Read a doc only when your task needs information about that area.** Don't load them all up front.
