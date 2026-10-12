@@ -25,7 +25,7 @@ Saved in the data folder (gitignored). A missing or invalid file gives the defau
 |---|---|---|
 | `uiScale` | 1.0 | 0.75–2.0, saved rounded to 2 decimals |
 | `theme` | `"grass"` | A theme id from [ui-theme.md](ui-theme.md). Unknown ids fall back to Grass Block |
-| `reduceMotion` | false | No image fade-ins or toast animations |
+| `reduceMotion` | false | No page transitions, bubbling lists, image fade-ins, toast animations or smooth scrolling |
 | `showGalleryBanners` | true | When false, pack banners don't load gallery images |
 | `searchLimit` | 30 | Results per search, 10–100 (CurseForge caps it at 50) |
 | `discoverSource` | `"modrinth"` | The last Discover sub-page, a source key (see [discover.md](discover.md)). Unknown keys fall back to the first source |

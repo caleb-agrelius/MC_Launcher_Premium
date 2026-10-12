@@ -103,6 +103,16 @@ Color themes, fonts, DPI and UI scaling, shared drawing helpers, and toast notif
 
 Images fade in over 0.25 s (`FadeAlpha`), unless **Reduce motion** is on (`Widgets::SetReduceMotion`).
 
+## Motion
+All of this is off when **Reduce motion** is on.
+- **Entrance** (`Widgets::BeginEntrance(start, index)` / `EndEntrance()`): the item fades in and rises 14 px (scaled) into place over 0.32 s, ease-out cubic. It multiplies the current style alpha and lifts the cursor, then takes the lift back out so items below don't move. `index` delays each list item by 45 ms (at most 10 steps), so lists "bubble" in one after another. Used for:
+  - the main content when the page or Discover source changes (`pageShownAt` in `main.cpp`)
+  - Discover's result rows, when the page opens or new results arrive (`SourceView::resultsAt`)
+  - Discover's details pane, when another pack is selected
+  - My Library and Downloads cards
+  - Settings cards, when the page opens or the tab changes (`SettingsPageContext::shownAt`)
+- **Smooth scrolling** (`Widgets::SmoothScroll()`, called before `EndChild()` of a child created with `ImGuiWindowFlags_NoScrollWithMouse`): each wheel notch moves a target 120 px (scaled) and the view eases toward it (about 70 ms time constant). The target is kept in the window's `ImGuiStorage`. Children end before their parents, so the innermost scrollable window under the mouse takes the wheel. Scrollbar drags, keyboard navigation and `SetScrollHereY` reset the target. Ctrl+wheel is ignored. Used by the main content, Discover's pack list and details pane, and the Settings page. With reduce motion on, the wheel jumps straight to the target.
+
 **Selection highlights:** `NavItem`, `SubNavItem`, `PackRow` and `ListItem` share `RoundedSelectable`, an `InvisibleButton` with its own highlight instead of `ImGui::Selectable`. The highlight is a rounded rectangle (`ImGuiCol_Header` when selected, `HeaderHovered` on hover, `HeaderActive` while pressed). It is drawn inside the content region, so it never reaches the panel's padding or border. The accent selection bar sits just inside the highlight's left edge.
 
 ## Toasts (`src/UI/Toasts.{h,cpp}`)

@@ -14,6 +14,7 @@ struct SettingsPageContext {
 	std::string accountName;           // empty when signed out
 	std::string accountKind;           // e.g. "Microsoft account", "Offline (singleplayer)"
 	bool curseForgeEnvKeySet = false;  // MCLP_CURSEFORGE_API_KEY is set
+	double shownAt = 0.0;              // ImGui::GetTime() when the page was opened (entrance animation)
 };
 
 // Draws the Settings page into the current window. Edits settings in place and returns

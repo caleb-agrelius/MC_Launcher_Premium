@@ -34,6 +34,9 @@ const char* TabName(Tab tab)
 }
 
 Tab g_tab = Tab::Appearance;
+// Cards bubble in from this time: the later of opening the page and switching tabs.
+double g_cardsShownAt = 0.0;
+int g_cardIndex = 0; // cards drawn so far this frame, for the stagger
 
 // Pill-style tab strip that switches g_tab.
 void TabStrip()
@@ -45,8 +48,10 @@ void TabStrip()
 		const bool selected = g_tab == tab;
 		ImGui::PushStyleColor(ImGuiCol_Button, selected ? Theme::C().accentDeep : Theme::C().frameBg);
 		ImGui::PushFont(selected ? Theme::GetFonts().bold : Theme::GetFonts().regular, 0.0f);
-		if (ImGui::Button(TabName(tab)))
+		if (ImGui::Button(TabName(tab)) && g_tab != tab) {
 			g_tab = tab;
+			g_cardsShownAt = ImGui::GetTime();
+		}
 		ImGui::PopFont();
 		ImGui::PopStyleColor();
 		ImGui::SameLine();
@@ -57,6 +62,7 @@ void TabStrip()
 
 void BeginCard(const char* id)
 {
+	Widgets::BeginEntrance(g_cardsShownAt, g_cardIndex++);
 	ImGui::PushStyleColor(ImGuiCol_ChildBg, Theme::C().cardBg);
 	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(22.0f), S(18.0f)));
 	ImGui::BeginChild(id, ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
@@ -67,6 +73,7 @@ void EndCard()
 {
 	ImGui::EndChild();
 	ImGui::PopStyleColor();
+	Widgets::EndEntrance();
 	ImGui::Dummy(ImVec2(0.0f, S(6.0f)));
 }
 
@@ -421,7 +428,7 @@ bool DrawAppearance(Settings& settings)
 		}
 		ImGui::EndDisabled();
 
-		Row("Reduce motion", "Show images and notifications without fading or sliding in.");
+		Row("Reduce motion", "No page transitions, fade-ins, sliding notifications or smooth scrolling.");
 		changed |= Widgets::Toggle("##reduce_motion", &settings.reduceMotion);
 
 		Row("Gallery banners", "Show screenshots behind the selected pack. Turn off to save bandwidth.");
@@ -688,11 +695,13 @@ void DrawAbout(const SettingsPageContext& context)
 
 bool DrawSettingsPage(Settings& settings, const SettingsPageContext& context)
 {
+	g_cardsShownAt = std::max(g_cardsShownAt, context.shownAt);
+	g_cardIndex = 0;
 	TabStrip();
 	ImGui::Spacing();
 
 	bool changed = false;
-	ImGui::BeginChild("settings_scroll", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None);
+	ImGui::BeginChild("settings_scroll", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollWithMouse);
 	switch (g_tab) {
 	case Tab::Appearance: changed = DrawAppearance(settings); break;
 	case Tab::Minecraft: changed = DrawMinecraft(settings, context); break;
@@ -701,6 +710,7 @@ bool DrawSettingsPage(Settings& settings, const SettingsPageContext& context)
 	case Tab::Downloads: changed = DrawDownloads(settings, context); break;
 	case Tab::About: DrawAbout(context); break;
 	}
+	Widgets::SmoothScroll();
 	ImGui::EndChild();
 	return changed;
 }

@@ -17,6 +17,19 @@ namespace Widgets {
 // When true, images appear without fading in.
 void SetReduceMotion(bool reduce);
 
+// Entrance animation: the item fades in and rises into place. start is the
+// ImGui::GetTime() the animation began (e.g. when the page was opened); index staggers
+// list items so they "bubble" in one after another. Pair each call with EndEntrance().
+// Without motion (reduce motion, or once finished) it changes nothing.
+void BeginEntrance(double start, int index = 0);
+void EndEntrance();
+
+// Mouse-wheel scrolling that eases toward its target instead of jumping. Call just
+// before EndChild() of a child created with ImGuiWindowFlags_NoScrollWithMouse. The
+// innermost scrollable window under the mouse takes the wheel. Scrollbar drags and
+// keyboard navigation keep working.
+void SmoothScroll();
+
 // Text in a given font, size (unscaled, see Theme::kFont*) and color.
 void Text(ImFont* font, float size, const ImVec4& color, const char* text);
 // Colored text that wraps at the edge of the window.
