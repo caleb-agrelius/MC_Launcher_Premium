@@ -11,6 +11,7 @@ Other docs: [docs/development.md](docs/development.md) (debugging, logs, trouble
 | Doc | Read when working on |
 |---|---|
 | [architecture.md](docs/architecture.md) | Where code belongs: layers, interfaces, threads and lifetimes, adding a service or page |
+| [debug-harness.md](docs/features/debug-harness.md) | Console tracing of API requests, file operations, processes and `app.log` (`mcdebug debug`, `--debug`, `MCLP_DEBUG`, `src/Util/DebugTrace`, `TracedFs`, `TracingHttpClient`) |
 | [app-shell.md](docs/features/app-shell.md) | Startup/shutdown, window, render loop, sidebar navigation, logging |
 | [ui-theme.md](docs/features/ui-theme.md) | Color themes, fonts, DPI and UI scaling, shared widgets, toasts (`src/UI/Theme`, `src/UI/Widgets`, `src/UI/Toasts`) |
 | [settings.md](docs/features/settings.md) | Settings page, `settings.json` fields, Minecraft launch defaults (`src/UI/Pages/Settings`, `src/Storage/Settings`) |

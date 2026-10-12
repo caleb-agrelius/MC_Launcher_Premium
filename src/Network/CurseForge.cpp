@@ -5,6 +5,7 @@
 
 #include "Storage/Installer.h"
 #include "Util/Hash.h"
+#include "Util/TracedFs.h"
 
 #include <nlohmann/json.hpp>
 
@@ -516,7 +517,7 @@ static bool DownloadPackManifest(IHttpClient& http, const Modpack& pack, const s
 		zipName = "pack-" + pack.sourceVersionId + ".zip";
 	zipPath = (fs::path(workDir) / zipName).string();
 	std::error_code ec;
-	fs::create_directories(workDir, ec);
+	TracedFs::CreateDirectories(workDir, ec);
 	const bool cached = fs::is_regular_file(zipPath, ec) && !zipSha1.empty() && Sha1HexOfFile(zipPath) == zipSha1;
 	if (!cached) {
 		std::string error;
@@ -525,7 +526,7 @@ static bool DownloadPackManifest(IHttpClient& http, const Modpack& pack, const s
 			return false;
 		}
 		if (!zipSha1.empty() && Sha1HexOfFile(zipPath) != zipSha1) {
-			fs::remove(zipPath, ec);
+			TracedFs::Remove(zipPath, ec);
 			if (err) *err = "Pack download failed: SHA-1 mismatch";
 			return false;
 		}

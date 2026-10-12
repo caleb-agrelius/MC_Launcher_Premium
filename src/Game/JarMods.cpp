@@ -1,6 +1,7 @@
 #include "JarMods.h"
 
 #include "Util/ZipArchive.h"
+#include "Util/TracedFs.h"
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -121,7 +122,7 @@ bool BuildPatchedJar(const fs::path& clientJar, const std::vector<fs::path>& jar
 	}
 
 	std::error_code dirError;
-	fs::create_directories(output.parent_path(), dirError);
+	TracedFs::CreateDirectories(output.parent_path(), dirError);
 	const fs::path temp = fs::path(output).concat(".tmp");
 	bool ok = true;
 	{
@@ -141,16 +142,16 @@ bool BuildPatchedJar(const fs::path& clientJar, const std::vector<fs::path>& jar
 		ok = ok && writer.Finalize();
 	} // the writer closes the file before it is renamed
 	if (!ok) {
-		fs::remove(temp, ec);
+		TracedFs::Remove(temp, ec);
 		if (err && err->empty()) *err = "Couldn't write the patched game jar";
 		return false;
 	}
-	fs::rename(temp, output, ec);
+	TracedFs::Rename(temp, output, ec);
 	if (ec) {
-		fs::remove(temp, ec);
+		TracedFs::Remove(temp, ec);
 		if (err) *err = "Couldn't save " + output.string() + ": " + ec.message();
 		return false;
 	}
-	std::ofstream(inputsFile, std::ios::binary | std::ios::trunc) << signature;
+	TracedFs::OpenWrite(inputsFile, std::ios::binary | std::ios::trunc) << signature;
 	return true;
 }

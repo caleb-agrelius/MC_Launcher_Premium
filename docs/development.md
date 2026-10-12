@@ -64,6 +64,10 @@ Install the **C/C++** and **CMake Tools** extensions, build, then add `.vscode/l
 
 Rebuild (`mcdebug build` or `cmake --build build --config Debug`) before each session, or add it as a `preLaunchTask`.
 
+## Debug harness
+
+`mcdebug debug` builds and runs the app in the current console and prints every API request, file change, child process and `app.log` line as it happens. `mcdebug debug http,file` limits it to some channels. See [features/debug-harness.md](features/debug-harness.md) for the channels, the output format and what is hidden.
+
 ## Logs
 
 `app.log` in the repository root records startup, the data folder, packs loaded, each search and version lookup, installs, and errors. A normal start:

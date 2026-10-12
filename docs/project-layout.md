@@ -23,6 +23,7 @@
 | `src/Services/Discover/` | `DiscoverService`, `PackDetailsService`, `OptionalModsService` and the Discover state structs |
 | `src/Model/Modpack.*` | `Modpack` / `PackFile` structs, `resources/index.json` loader |
 | `src/Network/IHttpClient.h` | The network as an interface (`Get`, `Post`, `DownloadToFile`) that everything else depends on |
+| `src/Network/TracingHttpClient.*` | An `IHttpClient` that traces each request on the debug harness, then calls the real client |
 | `src/Network/HttpClient.*` | The libcurl implementation: downloads, GET/POST, headers, cancellation |
 | `src/Network/PackSources.*` | Single entry point for search, versions, and installs across sources |
 | `src/Network/Modrinth.*` | Modrinth API client |
@@ -62,6 +63,8 @@
 | `src/UI/Toasts.*` | Toast notifications |
 | `src/UI/ImageCache.*` | Asynchronous icon and banner loading (PNG, JPEG, GIF, WebP) |
 | `src/UI/MobModel.*`, `src/UI/Mobs.*` | Sidebar mob rendering and randomly selected box-built mobs |
+| `src/Util/DebugTrace.*` | The debug harness: channels, trace lines, secret hiding and the `app.log` tee (see [debug-harness.md](features/debug-harness.md)) |
+| `src/Util/TracedFs.*` | File operations that change the disk, each traced on the harness's file channel |
 | `src/Util/Hash.*`, `src/Util/Sha1.*` | SHA-1 and MD5 |
 | `src/Util/Paths.*` | Long (260+ character) Windows paths |
 | `src/Util/Process.*` | Process launching and interactive server console |

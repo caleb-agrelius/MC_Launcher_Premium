@@ -1,4 +1,5 @@
 #include "Library.h"
+#include "Util/TracedFs.h"
 
 #include <nlohmann/json.hpp>
 
@@ -145,7 +146,7 @@ static json ReadJsonArray(const std::string& path)
 
 static bool WriteJson(const std::string& path, const json& j)
 {
-	std::ofstream ofs(path, std::ios::trunc);
+	auto ofs = TracedFs::OpenWrite(path, std::ios::trunc);
 	if (!ofs.is_open())
 		return false;
 	ofs << j.dump(2) << "\n";

@@ -1,6 +1,7 @@
 #include "Services/Account/AccountService.h"
 
 #include "Network/MicrosoftAuth.h"
+#include "Util/TracedFs.h"
 
 #include <filesystem>
 #include <utility>
@@ -19,7 +20,7 @@ void AccountService::Save()
 	m_active = m_accounts.Active();
 	std::error_code removeError;
 	if (m_accounts.accounts.empty())
-		fs::remove(m_file, removeError);
+		TracedFs::Remove(m_file, removeError);
 	else if (!SaveAccounts(m_file, m_accounts))
 		m_rt.log << "Could not save " << m_file << "\n";
 }

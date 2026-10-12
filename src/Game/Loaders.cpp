@@ -4,6 +4,7 @@
 #include "Util/Process.h"
 
 #include "Util/ZipArchive.h"
+#include "Util/TracedFs.h"
 #include <nlohmann/json.hpp>
 
 #include <cstdlib>
@@ -51,8 +52,8 @@ static bool InstallMetaProfile(IHttpClient& http, const fs::path& root, const st
 	}
 	versionId = profile.value("id", expectedId);
 	const fs::path path = VersionJsonPath(root, versionId);
-	fs::create_directories(path.parent_path(), ec);
-	std::ofstream ofs(path, std::ios::trunc);
+	TracedFs::CreateDirectories(path.parent_path(), ec);
+	auto ofs = TracedFs::OpenWrite(path, std::ios::trunc);
 	ofs << profile.dump(2) << "\n";
 	if (!ofs.good()) {
 		if (err) *err = "Couldn't write " + path.string();
@@ -145,7 +146,7 @@ static bool InstallForgeLike(IHttpClient& http, const fs::path& root, LoaderKind
 	const fs::path profiles = root / "launcher_profiles.json";
 	std::error_code ec;
 	if (!fs::exists(profiles, ec))
-		std::ofstream(profiles) << "{\"profiles\":{}}\n";
+		TracedFs::OpenWrite(profiles) << "{\"profiles\":{}}\n";
 
 	if (progress)
 		progress(std::string("Running the ") + LoaderName(kind) + " installer (this can take a few minutes)", -1.0);
@@ -260,15 +261,15 @@ bool InstallForgeFromJar(const fs::path& root, const fs::path& forgeJar, const s
 
 	std::error_code ec;
 	const fs::path library = root / "libraries" / fs::u8path(MavenPath(forgeLibrary));
-	fs::create_directories(library.parent_path(), ec);
-	fs::copy_file(forgeJar, library, fs::copy_options::overwrite_existing, ec);
+	TracedFs::CreateDirectories(library.parent_path(), ec);
+	TracedFs::CopyFile(forgeJar, library, fs::copy_options::overwrite_existing, ec);
 	if (ec) {
 		if (err) *err = "Couldn't copy Forge into the libraries folder: " + ec.message();
 		return false;
 	}
 	const fs::path path = VersionJsonPath(root, versionId);
-	fs::create_directories(path.parent_path(), ec);
-	std::ofstream ofs(path, std::ios::trunc);
+	TracedFs::CreateDirectories(path.parent_path(), ec);
+	auto ofs = TracedFs::OpenWrite(path, std::ios::trunc);
 	ofs << version.dump(2) << "\n";
 	if (!ofs.good()) {
 		if (err) *err = "Couldn't write " + path.string();

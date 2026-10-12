@@ -4,6 +4,7 @@
 #include "Util/Paths.h"
 #include "Util/PathSafety.h"
 #include "Util/SharedFiles.h"
+#include "Util/TracedFs.h"
 
 #include <filesystem>
 #include <vector>
@@ -77,7 +78,7 @@ void UninstallService::Uninstall(const Modpack& pack, const std::string& version
 		for (const fs::path& dir : folders) {
 			std::error_code ec;
 			// Always the extended-length form: files deep inside can pass 260 characters even when dir doesn't.
-			fs::remove_all(ExtendedPath(fs::absolute(dir, ec)), ec);
+			TracedFs::RemoveAll(ExtendedPath(fs::absolute(dir, ec)), ec);
 			if (ec && failed.empty())
 				failed = dir.string() + ": " + ec.message();
 		}

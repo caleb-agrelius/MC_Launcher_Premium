@@ -6,16 +6,19 @@
 #include "Game/PackInstance.h"
 #include "Game/ServerSetup.h"
 #include "Network/HttpClient.h"
+#include "Network/TracingHttpClient.h"
 #include "Platform/Platform.h"
 #include "Storage/Library.h"
 #include "Storage/Settings.h"
 #include "UI/Theme.h"
 #include "UI/Widgets.h"
+#include "Util/DebugTrace.h"
 #include "Util/Paths.h"
 #include "Util/Process.h"
 #include "Util/Sha1.h"
 #include "Util/SharedFiles.h"
 #include "Util/Text.h"
+#include "Util/TracedFs.h"
 #include "imgui_internal.h"
 
 #include <miniz/miniz.h>
@@ -26,6 +29,7 @@
 #include <cmath>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <thread>
 
@@ -874,6 +878,164 @@ static void PackCreatorChecks(const fs::path& dir)
 		pack.loader == LoaderKind::Vanilla, "A vanilla pack couldn't be read back: " + error);
 }
 
+// An HTTP client that answers from memory, for the tracing checks.
+class FakeHttp final : public IHttpClient {
+public:
+	bool fail = false;
+
+	bool DownloadToFile(const std::string&, const std::string& outPath, std::function<void(double, double)>, std::string* err,
+		const std::atomic<bool>*, const std::vector<std::string>&) override
+	{
+		if (fail) {
+			if (err) *err = "connection refused";
+			return false;
+		}
+		Write(outPath, "12345");
+		return true;
+	}
+	bool Get(const std::string&, std::string& body, std::string* err, const std::atomic<bool>*,
+		const std::vector<std::string>&) override
+	{
+		if (fail) {
+			if (err) *err = "connection refused";
+			return false;
+		}
+		body = "{\"hello\":\n\"world\"}";
+		return true;
+	}
+	bool Post(const std::string&, const std::string&, std::string& body, std::string*, const std::atomic<bool>*,
+		const std::vector<std::string>&) override
+	{
+		body = "posted";
+		return true;
+	}
+	bool Request(const std::string&, const std::vector<std::string>&, const std::string&, std::string& responseBody, long& status,
+		std::string*, const std::atomic<bool>*) override
+	{
+		responseBody = "{}";
+		status = 403;
+		return true;
+	}
+};
+
+static bool Contains(const std::string& text, const std::string& part)
+{
+	return text.find(part) != std::string::npos;
+}
+
+static void DebugTraceChecks(const fs::path& dir, const fs::path& executable)
+{
+	// Channel lists.
+	unsigned mask = 0;
+	std::string unknown;
+	Check(Debug::ParseChannels("http, FILE", mask, &unknown) && mask == (Debug::kHttp | Debug::kFile) && unknown.empty(),
+		"Channel names should be read case-insensitively");
+	mask = 0;
+	Check(Debug::ParseChannels("all", mask) && mask == Debug::kAll && !(mask & Debug::kHttpBody),
+		"\"all\" should not include response bodies");
+	Check(Debug::ParseChannels("body", mask) && (mask & Debug::kHttpBody), "The body channel should be selectable");
+	mask = 0;
+	Check(!Debug::ParseChannels("bogus,process", mask, &unknown) && unknown == "bogus" && mask == Debug::kProcess,
+		"An unknown channel should be reported and the known ones kept");
+	Check(Debug::ChannelNames(Debug::kHttp | Debug::kLog) == "http,log", "Channel names should list the channels in order");
+
+	// What never reaches the console.
+	Check(Debug::RedactUrl("https://x.test/a?key=abc&q=1&access_token=zz") == "https://x.test/a?key=***&q=1&access_token=***",
+		"Secret query values should be hidden: " + Debug::RedactUrl("https://x.test/a?key=abc&q=1&access_token=zz"));
+	Check(Debug::RedactUrl("https://x.test/a") == "https://x.test/a", "A URL without a query should be left alone");
+	const std::string command = Debug::DescribeCommand({ "java", "--accessToken", "SECRET", "--version", "1.2", "a b" });
+	Check(!Contains(command, "SECRET") && Contains(command, "--accessToken ***") && Contains(command, "--version 1.2") &&
+		Contains(command, "\"a b\""), "A command line should hide token values: " + command);
+	Check(Debug::PathText("\\\\?\\C:\\a\\b") == "C:\\a\\b", "The long-path prefix should be dropped");
+
+	std::ostringstream sink;
+	constexpr unsigned kEverything = Debug::kAll | Debug::kHttpBody;
+	Debug::Configure(kEverything, &sink);
+
+	// File operations.
+	const fs::path root = dir / "trace";
+	std::error_code ec;
+	TracedFs::CreateDirectories(root / "a", ec);
+	Write(root / "a" / "one.txt", "x");
+	TracedFs::CopyFile(root / "a" / "one.txt", root / "a" / "two.txt", ec);
+	TracedFs::Rename(root / "a" / "two.txt", root / "a" / "three.txt", ec);
+	TracedFs::CreateHardLink(root / "a" / "one.txt", root / "a" / "link.txt", ec);
+	TracedFs::Remove(root / "a" / "three.txt", ec);
+	TracedFs::RemoveAll(root / "a", ec);
+	TracedFs::NoteWrite(root / "saved.json", 42);
+	const std::string files = sink.str();
+	for (const char* part : { "[FILE ]", "mkdir ", "copy ", "rename ", "hard-link ", "remove ", "remove-all ", "write ", "(42 bytes)" })
+		Check(Contains(files, part), std::string("The file trace should contain \"") + part + "\":\n" + files);
+	Check(!fs::exists(root / "a"), "TracedFs should still do the operation");
+	sink.str("");
+	TracedFs::Remove(root / "missing.txt", ec);
+	Check(sink.str().empty(), "Removing nothing should not be traced");
+	TracedFs::CopyFile(root / "missing.txt", root / "x.txt", ec);
+	Check(Contains(sink.str(), "FAILED"), "A failed operation should say so");
+
+	// app.log lines.
+	sink.str("");
+	std::ostringstream target;
+	{
+		Debug::LogTee tee(target.rdbuf());
+		std::ostream log(&tee);
+		log << "Loaded " << 3 << " pack(s)\n" << "partial";
+		log.flush();
+	}
+	Check(target.str() == "Loaded 3 pack(s)\npartial", "The log tee should pass everything on");
+	Check(Contains(sink.str(), "[LOG  ]") && Contains(sink.str(), "Loaded 3 pack(s)") && !Contains(sink.str(), "partial"),
+		"The log tee should trace each finished line:\n" + sink.str());
+
+	// HTTP.
+	FakeHttp fake;
+	TracingHttpClient http(fake);
+	sink.str("");
+	std::string body, error;
+	Check(http.Get("https://api.test/v1/x?key=secret123&q=1", body, &error, nullptr, { "x-api-key: secret123" }) && body.find("world") != std::string::npos,
+		"The tracing client should return what the real one does");
+	std::string trace = sink.str();
+	Check(Contains(trace, "GET  https://api.test/v1/x?key=***&q=1 [x-api-key]") && Contains(trace, "<- GET ok") && Contains(trace, "ms"),
+		"A GET should be traced:\n" + trace);
+	Check(!Contains(trace, "secret123"), "Secrets must not appear in the trace:\n" + trace);
+	Check(Contains(trace, "[BODY ]") && Contains(trace, "{\"hello\": \"world\"}"), "The body channel should show the response:\n" + trace);
+	sink.str("");
+	long status = 0;
+	Check(http.Request("https://login.test/token", { "Authorization: Bearer abc" }, "grant=secret", body, status) && status == 403,
+		"Request should pass the status through");
+	trace = sink.str();
+	Check(Contains(trace, "POST https://login.test/token [Authorization] (12 bytes sent)") && Contains(trace, "<- HTTP 403") &&
+		!Contains(trace, "abc") && !Contains(trace, "grant"), "A request should be traced without its secrets:\n" + trace);
+	sink.str("");
+	const fs::path downloaded = root / "file.bin";
+	Check(http.DownloadToFile("https://cdn.test/f.bin", downloaded.string()), "A download should pass through");
+	Check(Contains(sink.str(), "DOWNLOAD https://cdn.test/f.bin") && Contains(sink.str(), "<- DOWNLOAD ok, 5 bytes"),
+		"A download should be traced with its size:\n" + sink.str());
+	sink.str("");
+	fake.fail = true;
+	Check(!http.Get("https://api.test/down", body, &error) && error == "connection refused", "A failure should reach the caller");
+	Check(Contains(sink.str(), "<- GET FAILED: connection refused"), "A failed GET should be traced:\n" + sink.str());
+
+	// Child processes: the command, then the exit code, with token values hidden.
+#ifdef _WIN32
+	sink.str("");
+	int exitCode = -1;
+	Check(RunProcess({ executable.string(), "-jar", "--accessToken", "SECRET" }, dir, dir / "proc.log", true, &exitCode) && exitCode == 0,
+		"The fixture process should run");
+	trace = sink.str();
+	Check(Contains(trace, "[PROC ]") && Contains(trace, "start  ") && Contains(trace, "--accessToken ***") && Contains(trace, "exit 0") &&
+		!Contains(trace, "SECRET"), "A process should be traced without its tokens:\n" + trace);
+#endif
+
+	// Off: nothing is written and the calls still work.
+	Debug::Configure(0, &sink);
+	sink.str("");
+	fake.fail = false;
+	Check(http.Get("https://api.test/quiet", body) && sink.str().empty(), "Nothing should be traced with the harness off");
+	TracedFs::CreateDirectories(root / "quiet", ec);
+	Check(sink.str().empty() && fs::exists(root / "quiet"), "File operations should be silent with the harness off");
+	Debug::Configure(0, nullptr);
+}
+
 int main(int argc, char** argv)
 {
 	if (argc > 1 && std::string(argv[1]) == "-jar")
@@ -915,6 +1077,7 @@ int main(int argc, char** argv)
 		JarModChecks(dir);
 		LegacyForgeServerChecks(dir);
 		SharedFileChecks(dir);
+		DebugTraceChecks(dir, executable);
 		std::cout << "Window settings, server setup, cards and console checks passed\n";
 		return 0;
 	} catch (const std::exception& ex) {

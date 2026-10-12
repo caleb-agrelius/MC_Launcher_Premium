@@ -5,6 +5,7 @@
 #include "Util/Paths.h"
 #include "Util/SharedFiles.h"
 #include "Util/Sha1.h"
+#include "Util/TracedFs.h"
 
 #include <algorithm>
 #include <chrono>
@@ -100,7 +101,7 @@ static fs::path UniquePartPath(const fs::path& path)
 static bool DownloadOne(IHttpClient& http, const DownloadJob& job, std::string& error, const std::atomic<bool>* cancel)
 {
 	std::error_code ec;
-	fs::create_directories(LongPath(job.path.parent_path()), ec);
+	TracedFs::CreateDirectories(LongPath(job.path.parent_path()), ec);
 	const fs::path part = UniquePartPath(job.path);
 	// Another pack already has this exact file: link to the shared copy instead.
 	const std::string shareKey = job.share ? SharedFiles::KeyFor(job.sha1) : std::string();
@@ -116,25 +117,25 @@ static bool DownloadOne(IHttpClient& http, const DownloadJob& job, std::string& 
 		}
 		if (!job.sha1.empty() && Sha1File(part.string()) != job.sha1) {
 			error = "Checksum mismatch for " + job.url;
-			fs::remove(LongPath(part), ec);
+			TracedFs::Remove(LongPath(part), ec);
 			continue;
 		}
 		// Replacing an existing file can fail briefly while Windows still has it open (an
 		// antivirus scan, or a Java process that just exited), so retry, then remove it first.
 		std::error_code renameError;
 		for (int tries = 0; tries < 10; ++tries) {
-			fs::rename(LongPath(part), LongPath(job.path), renameError);
+			TracedFs::Rename(LongPath(part), LongPath(job.path), renameError);
 			if (!renameError) {
 				SharedFiles::Add(shareKey, job.path); // let other packs share it
 				return true;
 			}
 			if (tries == 5) {
 				std::error_code removeError;
-				fs::remove(LongPath(job.path), removeError);
+				TracedFs::Remove(LongPath(job.path), removeError);
 			}
 			std::this_thread::sleep_for(std::chrono::milliseconds(200));
 		}
-		fs::remove(LongPath(part), ec);
+		TracedFs::Remove(LongPath(part), ec);
 		if (!NeedsDownload(job))
 			return true; // another downloader put it in place first
 		error = "Couldn't save " + job.path.string() + ": " + renameError.message();
@@ -510,7 +511,7 @@ bool InstallGameFiles(IHttpClient& http, const fs::path& root, const ResolvedVer
 	if (!version.natives.empty() && !fs::exists(nativesMarker, markerError)) {
 		const fs::path nativesDir = NativesDir(root, version);
 		std::error_code ec;
-		fs::create_directories(nativesDir, ec);
+		TracedFs::CreateDirectories(nativesDir, ec);
 		for (const LibraryFile& file : version.natives) {
 			if (progress)
 				progress("Extracting native libraries", -1.0);
@@ -520,8 +521,8 @@ bool InstallGameFiles(IHttpClient& http, const fs::path& root, const ResolvedVer
 				return false;
 			}
 		}
-		fs::remove_all(nativesDir / "META-INF", ec);
-		std::ofstream(nativesMarker) << "ok\n";
+		TracedFs::RemoveAll(nativesDir / "META-INF", ec);
+		TracedFs::OpenWrite(nativesMarker) << "ok\n";
 	}
 
 	// Assets: the index lists every object by hash.
@@ -567,8 +568,8 @@ bool InstallGameFiles(IHttpClient& http, const fs::path& root, const ResolvedVer
 			std::error_code ec;
 			if (fs::exists(target, ec))
 				continue;
-			fs::create_directories(target.parent_path(), ec);
-			fs::copy_file(assetsDir / "objects" / hash.substr(0, 2) / hash, target, ec);
+			TracedFs::CreateDirectories(target.parent_path(), ec);
+			TracedFs::CopyFile(assetsDir / "objects" / hash.substr(0, 2) / hash, target, ec);
 		}
 	}
 	return true;
@@ -623,7 +624,7 @@ bool InstallJavaRuntime(IHttpClient& http, const fs::path& root, const std::stri
 		const std::string type = StringOr(entry, "type");
 		std::error_code ec;
 		if (type == "directory") {
-			fs::create_directories(target, ec);
+			TracedFs::CreateDirectories(target, ec);
 		} else if (type == "file") {
 			const json raw = entry.value("downloads", json::object()).value("raw", json::object());
 			DownloadJob job;
@@ -646,6 +647,6 @@ bool InstallJavaRuntime(IHttpClient& http, const fs::path& root, const std::stri
 		}
 	}
 #endif
-	std::ofstream(marker, std::ios::trunc) << manifestSha1 << "\n";
+	TracedFs::OpenWrite(marker, std::ios::trunc) << manifestSha1 << "\n";
 	return true;
 }

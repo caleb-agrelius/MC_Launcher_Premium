@@ -6,6 +6,7 @@
 #include "Util/Paths.h"
 #include "Util/SharedFiles.h"
 #include "Util/Text.h"
+#include "Util/TracedFs.h"
 
 #include <nlohmann/json.hpp>
 
@@ -100,7 +101,7 @@ static bool WritePackJson(const InstallPlan& plan, const std::string& path, cons
 		{ "notes", plan.notes },
 		{ "clientOnlyFiles", plan.clientOnlyFiles },
 	};
-	std::ofstream ofs(path, std::ios::trunc);
+	auto ofs = TracedFs::OpenWrite(path, std::ios::trunc);
 	if (!ofs.is_open())
 		return false;
 	ofs << j.dump(2) << "\n";
@@ -143,8 +144,8 @@ bool RunInstallPlan(IHttpClient& http,
 	}
 
 	std::error_code ec;
-	fs::create_directories(gameDir, ec);
-	fs::create_directories(cacheDir, ec);
+	TracedFs::CreateDirectories(gameDir, ec);
+	TracedFs::CreateDirectories(cacheDir, ec);
 	if (ec) {
 		if (err) *err = "Could not create " + gameDir.string() + ": " + ec.message();
 		return false;
@@ -187,7 +188,7 @@ bool RunInstallPlan(IHttpClient& http,
 						error = "extract failed: " + error;
 				}
 				std::error_code removeError;
-				fs::remove(zipPath, removeError);
+				TracedFs::Remove(zipPath, removeError);
 			} else {
 				const fs::path dest = LongPath(gameDir / fs::path(file.relPath).lexically_normal());
 				const std::string destPath = dest.string();
@@ -200,16 +201,16 @@ bool RunInstallPlan(IHttpClient& http,
 					// linked to a copy another pack already has
 				} else {
 					std::error_code dirError;
-					fs::create_directories(dest.parent_path(), dirError);
+					TracedFs::CreateDirectories(dest.parent_path(), dirError);
 					const std::string partPath = destPath + ".part";
 					if (!http.DownloadToFile(file.url, partPath, nullptr, &error, cancel)) {
 						error = "download failed: " + error;
 					} else if (const std::string mismatch = VerifyFile(file, partPath); !mismatch.empty()) {
 						error = mismatch;
-						fs::remove(partPath, dirError);
+						TracedFs::Remove(partPath, dirError);
 					} else {
-						fs::remove(dest, dirError);
-						fs::rename(partPath, dest, dirError);
+						TracedFs::Remove(dest, dirError);
+						TracedFs::Rename(partPath, dest, dirError);
 						if (dirError)
 							error = "could not save: " + dirError.message();
 						else
@@ -252,7 +253,7 @@ bool RunInstallPlan(IHttpClient& http,
 		const std::vector<std::string> current = InstalledFiles(plan);
 		for (const std::string& old : PreviousFiles(root / "pack.json")) {
 			if (std::find(current.begin(), current.end(), old) == current.end() && IsSafeRelativePath(old))
-				fs::remove(LongPath(gameDir / fs::u8path(old)), ec);
+				TracedFs::Remove(LongPath(gameDir / fs::u8path(old)), ec);
 		}
 	}
 
@@ -269,7 +270,7 @@ bool RunInstallPlan(IHttpClient& http,
 		}
 	}
 
-	fs::remove_all(cacheDir, ec);
+	TracedFs::RemoveAll(cacheDir, ec);
 	if (!WritePackJson(plan, (root / "pack.json").string(), blocked)) {
 		if (err) *err = "Could not write pack.json";
 		return false;

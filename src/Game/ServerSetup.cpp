@@ -9,6 +9,7 @@
 #include "Util/Text.h"
 #include "Util/Process.h"
 #include "Util/Sha1.h"
+#include "Util/TracedFs.h"
 
 #include <nlohmann/json.hpp>
 
@@ -154,9 +155,9 @@ static bool CopyWholePackFiles(const ServerSetupRequest& request, const Installe
 		} else if (!copyConfigs) {
 			continue;
 		}
-		fs::create_directories(target.parent_path(), ec);
+		TracedFs::CreateDirectories(target.parent_path(), ec);
 		if (!ec)
-			fs::copy_file(gameDir / relative, target, fs::copy_options::skip_existing, ec);
+			TracedFs::CopyFile(gameDir / relative, target, fs::copy_options::skip_existing, ec);
 		if (ec) {
 			if (err) *err = "Couldn't copy " + relative.generic_string() + ": " + ec.message();
 			return false;
@@ -217,9 +218,9 @@ static bool CopyOverrides(const fs::path& extractedDir, const fs::path& target, 
 		disabled += ".disabled";
 		if (fs::exists(disabled, ec))
 			continue; // turned off by the player (Servers > Mods)
-		fs::create_directories(destination.parent_path(), ec);
+		TracedFs::CreateDirectories(destination.parent_path(), ec);
 		if (!ec)
-			fs::copy_file(source, destination, fs::copy_options::skip_existing, ec);
+			TracedFs::CopyFile(source, destination, fs::copy_options::skip_existing, ec);
 		if (ec) {
 			if (err) *err = "Couldn't copy " + relative.string() + ": " + ec.message();
 			return false;
@@ -321,7 +322,7 @@ static bool InstallLegacyForgeServer(IHttpClient& http, const fs::path& gameRoot
 		return false;
 	std::error_code ec;
 	jarName = "forge-" + minecraftVersion + "-" + forgeVersion + "-universal.jar";
-	fs::copy_file(forgeJar, serverDir / jarName, fs::copy_options::overwrite_existing, ec);
+	TracedFs::CopyFile(forgeJar, serverDir / jarName, fs::copy_options::overwrite_existing, ec);
 	if (ec) {
 		if (err) *err = "Couldn't copy the pack's Forge jar to the server: " + ec.message();
 		return false;
@@ -346,11 +347,11 @@ static bool InstallLegacyForgeServer(IHttpClient& http, const fs::path& gameRoot
 		if (progress)
 			progress("Downloading Forge libraries (" + std::to_string(done) + "/" + std::to_string(classPath.size()) + ")",
 				static_cast<double>(done) / static_cast<double>(classPath.size()));
-		fs::create_directories(target.parent_path(), ec);
+		TracedFs::CreateDirectories(target.parent_path(), ec);
 		const fs::path installed = gameRoot / fs::u8path(entry);
 		ec.clear();
 		if (fs::file_size(installed, ec) > 0 && !ec) {
-			fs::copy_file(installed, target, fs::copy_options::overwrite_existing, ec);
+			TracedFs::CopyFile(installed, target, fs::copy_options::overwrite_existing, ec);
 			if (!ec)
 				continue;
 		}
@@ -427,7 +428,7 @@ bool SetupServer(IHttpClient& http, const ServerSetupRequest& request, ServerInf
 	}
 	const fs::path& dir = request.serverDir;
 	std::error_code ec;
-	fs::create_directories(dir, ec);
+	TracedFs::CreateDirectories(dir, ec);
 	if (ec) {
 		if (err) *err = "Couldn't create the server folder: " + ec.message();
 		return false;
@@ -487,8 +488,8 @@ bool SetupServer(IHttpClient& http, const ServerSetupRequest& request, ServerInf
 		disabled += ".disabled";
 		if (!fs::is_regular_file(mod, ec) || fs::exists(target, ec) || fs::exists(disabled, ec))
 			continue;
-		fs::create_directories(target.parent_path(), ec);
-		fs::copy_file(mod, target, ec);
+		TracedFs::CreateDirectories(target.parent_path(), ec);
+		TracedFs::CopyFile(mod, target, ec);
 		if (ec) {
 			if (err) *err = "Couldn't copy " + mod.filename().u8string() + " to the server: " + ec.message();
 			return false;
@@ -512,17 +513,17 @@ bool SetupServer(IHttpClient& http, const ServerSetupRequest& request, ServerInf
 		for (const std::string& old : previousFiles) {
 			const fs::path relative = fs::u8path(old).lexically_normal();
 			if (currentFiles.count(old) == 0 && !relative.empty() && relative.is_relative() && *relative.begin() != "..") {
-				fs::remove(dir / relative, ec);
+				TracedFs::Remove(dir / relative, ec);
 				fs::path disabled = dir / relative; // also a copy the player turned off (Servers > Mods)
 				disabled += ".disabled";
-				fs::remove(disabled, ec);
+				TracedFs::Remove(disabled, ec);
 			}
 		}
 		if (progress)
 			progress("Copying pack configuration", -1.0);
 		if (!wholePack && !CopyOverrides(request.extractedDir, dir, err))
 			return false;
-		std::ofstream marker(dir / kPreparedMarker, std::ios::trunc);
+		auto marker = TracedFs::OpenWrite(dir / kPreparedMarker, std::ios::trunc);
 		marker << current << "\n";
 		for (const std::string& file : currentFiles)
 			marker << file << "\n";
@@ -688,11 +689,11 @@ bool SetupServer(IHttpClient& http, const ServerSetupRequest& request, ServerInf
 		{ "javaMajor", out.javaMajor },
 	};
 	const fs::path temporary = dir / (std::string(kInfoFile) + ".tmp");
-	std::ofstream saved(temporary, std::ios::trunc);
+	auto saved = TracedFs::OpenWrite(temporary, std::ios::trunc);
 	saved << info.dump(2) << "\n";
 	saved.close();
 	if (saved.good())
-		fs::rename(temporary, dir / kInfoFile, ec);
+		TracedFs::Rename(temporary, dir / kInfoFile, ec);
 	if (!saved.good() || ec) {
 		if (err) *err = "Couldn't save the server launch information";
 		return false;
@@ -733,7 +734,7 @@ bool RemoveServer(const fs::path& serverDir, std::string* err)
 		return false;
 	}
 	// Files deep inside can pass 260 characters even when serverDir doesn't.
-	fs::remove_all(ExtendedPath(absolute), ec);
+	TracedFs::RemoveAll(ExtendedPath(absolute), ec);
 	if (ec) {
 		if (err) *err = "Couldn't delete " + serverDir.string() + ": " + ec.message() +
 			". Close anything using its files and try again.";
@@ -888,8 +889,8 @@ bool WriteServerProperties(const fs::path& serverDir, const ServerProperties& pr
 			lines.push_back(key + "=" + value);
 	}
 	std::error_code ec;
-	fs::create_directories(serverDir, ec);
-	std::ofstream out(path, std::ios::trunc | std::ios::binary);
+	TracedFs::CreateDirectories(serverDir, ec);
+	auto out = TracedFs::OpenWrite(path, std::ios::trunc | std::ios::binary);
 	for (const std::string& line : lines)
 		out << line << "\n";
 	if (!out.good()) {
@@ -985,7 +986,7 @@ bool WriteDockerCompose(const fs::path& serverDir, const std::string& packId, co
 			properties.serverIp + "; Docker publishes the port instead.";
 		return false;
 	}
-	std::ofstream out(serverDir / "docker-compose.yml", std::ios::trunc | std::ios::binary);
+	auto out = TracedFs::OpenWrite(serverDir / "docker-compose.yml", std::ios::trunc | std::ios::binary);
 	out << DockerComposeText(packId, info, properties, memoryMb, EulaAccepted(serverDir));
 	if (!out.good()) {
 		if (err) *err = "Couldn't write " + (serverDir / "docker-compose.yml").string();
@@ -1012,12 +1013,12 @@ bool SetServerUsesDocker(const fs::path& serverDir, bool docker, std::string* er
 	std::error_code ec;
 	const fs::path marker = serverDir / ".mclp-docker";
 	if (!docker) {
-		fs::remove(marker, ec);
+		TracedFs::Remove(marker, ec);
 		if (ec && err) *err = "Couldn't remove " + marker.string() + ": " + ec.message();
 		return !ec;
 	}
-	fs::create_directories(serverDir, ec);
-	std::ofstream out(marker, std::ios::trunc);
+	TracedFs::CreateDirectories(serverDir, ec);
+	auto out = TracedFs::OpenWrite(marker, std::ios::trunc);
 	out << "This server runs in Docker (docker-minecraft-server). Delete this file to run it with Java again.\n";
 	if (!out.good()) {
 		if (err) *err = "Couldn't write " + marker.string();
@@ -1029,8 +1030,8 @@ bool SetServerUsesDocker(const fs::path& serverDir, bool docker, std::string* er
 bool AcceptEula(const fs::path& serverDir, std::string* err)
 {
 	std::error_code ec;
-	fs::create_directories(serverDir, ec);
-	std::ofstream out(serverDir / "eula.txt", std::ios::trunc);
+	TracedFs::CreateDirectories(serverDir, ec);
+	auto out = TracedFs::OpenWrite(serverDir / "eula.txt", std::ios::trunc);
 	out << "# Accepted in MC Launcher Premium (https://aka.ms/MinecraftEULA)\neula=true\n";
 	if (!out.good()) {
 		if (err) *err = "Couldn't write eula.txt";

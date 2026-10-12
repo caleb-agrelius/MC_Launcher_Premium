@@ -130,6 +130,7 @@ add_executable(MC_Launcher_Premium
   src/Network/CurseForge.cpp
   src/Network/Ftb.cpp
   src/Network/HttpClient.cpp
+  src/Network/TracingHttpClient.cpp
   src/Network/MicrosoftAuth.cpp
   src/Network/Modrinth.cpp
   src/Network/ModSearch.cpp
@@ -149,12 +150,14 @@ add_executable(MC_Launcher_Premium
   src/UI/Theme.cpp
   src/UI/Toasts.cpp
   src/UI/Widgets.cpp
+  src/Util/DebugTrace.cpp
   src/Util/Hash.cpp
   src/Util/Paths.cpp
   src/Util/Process.cpp
   src/Util/Sha1.cpp
   src/Util/SharedFiles.cpp
   src/Util/Text.cpp
+  src/Util/TracedFs.cpp
   ${imgui_backend_source_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
   ${imgui_backend_source_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
 )
@@ -213,6 +216,7 @@ if (BUILD_TESTING)
     src/Game/ServerSetup.cpp
     src/Model/Modpack.cpp
     src/Network/HttpClient.cpp
+    src/Network/TracingHttpClient.cpp
     src/Storage/Installer.cpp
     src/Storage/Library.cpp
     src/Storage/Settings.cpp
@@ -220,12 +224,14 @@ if (BUILD_TESTING)
     src/UI/Logo.cpp
     src/UI/Theme.cpp
     src/UI/Widgets.cpp
+    src/Util/DebugTrace.cpp
     src/Util/Hash.cpp
     src/Util/Paths.cpp
     src/Util/Process.cpp
     src/Util/Sha1.cpp
     src/Util/SharedFiles.cpp
     src/Util/Text.cpp
+    src/Util/TracedFs.cpp
   )
   get_target_property(launcher_includes MC_Launcher_Premium INCLUDE_DIRECTORIES)
   get_target_property(launcher_libraries MC_Launcher_Premium LINK_LIBRARIES)
@@ -261,12 +267,14 @@ if (BUILD_TESTING)
     src/Network/Technic.cpp
     src/Storage/InstallPlan.cpp
     src/Storage/Installer.cpp
+    src/Util/DebugTrace.cpp
     src/Util/Hash.cpp
     src/Util/Paths.cpp
     src/Util/Process.cpp
     src/Util/Sha1.cpp
     src/Util/SharedFiles.cpp
     src/Util/Text.cpp
+    src/Util/TracedFs.cpp
   )
   target_include_directories(live_checks PRIVATE ${launcher_includes})
   target_link_libraries(live_checks PRIVATE ${launcher_libraries})
