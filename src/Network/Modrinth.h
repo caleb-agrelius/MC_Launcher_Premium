@@ -23,9 +23,18 @@ struct ModrinthVersion {
 	std::vector<PackFile> files; // the .mrpack (primary file)
 };
 
+// Optional search filters. Empty fields don't filter.
+struct ModrinthSearchOptions {
+	std::string gameVersion; // e.g. "1.20.1"
+	std::string loader;      // e.g. "fabric" (a Modrinth category)
+	std::string index;       // relevance | downloads | follows | newest | updated; empty = downloads
+	                         // for an empty query, relevance otherwise
+};
+
 // Searches Modrinth modpacks. An empty query lists the most downloaded packs.
 bool SearchModrinthModpacks(HttpClient& http,
 							const std::string& query,
+							const ModrinthSearchOptions& options,
 							int limit,
 							ModrinthSearchResult& out,
 							std::string* err = nullptr,

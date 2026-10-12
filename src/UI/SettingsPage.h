@@ -13,6 +13,7 @@ struct SettingsPageContext {
 	float dpiScale = 1.0f;
 	std::string accountName;           // empty when signed out
 	std::string accountKind;           // e.g. "Microsoft account", "Offline (singleplayer)"
+	bool curseForgeEnvKeySet = false;  // MCLP_CURSEFORGE_API_KEY is set
 };
 
 // Draws the Settings page into the current window. Edits settings in place and returns

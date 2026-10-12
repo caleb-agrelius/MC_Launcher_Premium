@@ -24,11 +24,13 @@ Settings LoadSettings(const std::string& path)
 		json j;
 		ifs >> j;
 		settings.uiScale = std::clamp(j.value("uiScale", settings.uiScale), kMinUiScale, kMaxUiScale);
+		settings.discoverSource = j.value("discoverSource", settings.discoverSource);
 		settings.theme = j.value("theme", settings.theme);
 		settings.reduceMotion = j.value("reduceMotion", settings.reduceMotion);
 		settings.showGalleryBanners = j.value("showGalleryBanners", settings.showGalleryBanners);
 		settings.searchLimit = std::clamp(j.value("searchLimit", settings.searchLimit), kMinSearchLimit, kMaxSearchLimit);
 		settings.microsoftClientId = j.value("microsoftClientId", settings.microsoftClientId);
+		settings.curseForgeApiKey = j.value("curseForgeApiKey", settings.curseForgeApiKey);
 
 		LaunchSettings& l = settings.launch;
 		// Before the Settings page, memory was a top-level key.
@@ -76,11 +78,13 @@ bool SaveSettings(const std::string& path, const Settings& settings)
 	const LaunchSettings& l = settings.launch;
 	json j;
 	j["uiScale"] = std::round(settings.uiScale * 100.0) / 100.0; // 1.1, not 1.100000023841858
+	j["discoverSource"] = settings.discoverSource;
 	j["theme"] = settings.theme;
 	j["reduceMotion"] = settings.reduceMotion;
 	j["showGalleryBanners"] = settings.showGalleryBanners;
 	j["searchLimit"] = settings.searchLimit;
 	j["microsoftClientId"] = settings.microsoftClientId;
+	j["curseForgeApiKey"] = settings.curseForgeApiKey;
 	j["launch"] = {
 		{ "minMemoryMb", l.minMemoryMb },
 		{ "maxMemoryMb", l.maxMemoryMb },

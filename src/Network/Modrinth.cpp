@@ -31,16 +31,24 @@ static std::string StringOrEmpty(const json& object, const char* key)
 
 bool SearchModrinthModpacks(HttpClient& http,
 							const std::string& query,
+							const ModrinthSearchOptions& options,
 							int limit,
 							ModrinthSearchResult& out,
 							std::string* err,
 							const std::atomic<bool>* cancel)
 {
 	out = {};
+	// Facets are AND-ed groups: [["project_type:modpack"],["versions:1.20.1"],["categories:fabric"]].
+	json facets = json::array({ json::array({ "project_type:modpack" }) });
+	if (!options.gameVersion.empty())
+		facets.push_back(json::array({ "versions:" + options.gameVersion }));
+	if (!options.loader.empty())
+		facets.push_back(json::array({ "categories:" + options.loader }));
+	const std::string index = !options.index.empty() ? options.index : (query.empty() ? "downloads" : "relevance");
 	std::string url = std::string(kApiBase) + "/search?facets=" +
-		HttpClient::UrlEncode("[[\"project_type:modpack\"]]") +
+		HttpClient::UrlEncode(facets.dump()) +
 		"&limit=" + std::to_string(limit) +
-		"&index=" + (query.empty() ? "downloads" : "relevance");
+		"&index=" + index;
 	if (!query.empty())
 		url += "&query=" + HttpClient::UrlEncode(query);
 
@@ -69,7 +77,9 @@ bool SearchModrinthModpacks(HttpClient& http,
 				pack.bannerUrl = hit["gallery"].front().get<std::string>();
 			if (hit.contains("color") && hit["color"].is_number_unsigned())
 				pack.color = hit["color"].get<std::uint32_t>() & 0xFFFFFFu;
-			pack.fromModrinth = true;
+			pack.source = PackSource::Modrinth;
+			pack.sourceId = pack.id;
+			pack.websiteUrl = "https://modrinth.com/modpack/" + pack.id;
 			pack.filesLoaded = false;
 			if (!pack.id.empty())
 				out.packs.push_back(std::move(pack));

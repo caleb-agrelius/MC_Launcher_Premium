@@ -4,16 +4,27 @@ Downloading pack files, tracking their state, and the Downloads page.
 
 ## HTTP download (`src/Network/HttpClient.{h,cpp}`)
 - `HttpClient` wraps libcurl. Its constructor and destructor call `curl_global_init` and `curl_global_cleanup`, and `main()` owns a single instance.
-- Every request sends `User-Agent: MC_Launcher_Premium/0.1` and has a 20 s connect timeout. `Get()` (used for API calls) is covered in [modrinth-search.md](modrinth-search.md).
-- `DownloadToFile(url, outPath, progress, err, cancel)`:
+- Every request sends `User-Agent: MC_Launcher_Premium/0.1` and has a 20 s connect timeout. `Get()` and `Post()` (used for API calls), extra headers, and per-thread connection reuse are covered in [modrinth-search.md](modrinth-search.md).
+- `DownloadToFile(url, outPath, progress, err, cancel, headers)`:
   - Streams the response to `outPath`.
   - Follows redirects and treats HTTP status 400 and above as failure.
+  - Percent-encodes characters that aren't legal in URLs, such as spaces, which some pack manifests contain. Existing `%XX` escapes are kept.
+  - Gives up if the transfer stalls (under 1 byte/s for 60 s); this applies to every request.
+  - Writes through `OpenFile`, so output paths may pass 260 characters.
   - Reports `progress(totalBytes, downloadedBytes)` through curl's xferinfo callback (libcurl 7.32 or newer).
   - Takes an optional `cancel` flag (`const std::atomic<bool>*`). When the flag becomes true, the progress callback aborts the transfer and `err` becomes `"Cancelled"`. libcurl calls the callback at least once a second, even when no data is arriving.
-  - On failure, sets `err` to the curl error string (or `"Cancelled"`), deletes the partial file, and returns `false`.
+  - On failure, sets `err` to `"HTTP <status>"`, the curl error string, or `"Cancelled"`, deletes the partial file, and returns `false`.
 
 ## Where files go
 `downloads/<pack id>/<file name from the index>`. The worker creates the pack folder, so same-named files in different packs don't collide. Download state is keyed by URL, so two packs that list the **same URL** share one download state.
+
+## Whole-pack installs
+Sources that install from a plan (see [pack-sources.md](pack-sources.md)) use one entry keyed `pack:<pack id>`, with `planInstall` set. The other fields used are:
+- `active`, `error` and `installed` for the install as a whole
+- `stage`, `stageDone` and `stageTotal` for progress
+- `blocked` (files to download by hand) and `notes`
+
+The Downloads page shows the stage with its counts and a progress bar, then "Install failed: ...", "Installed", or "Installed - N file(s) need a manual download (see Discover)". These entries aren't saved to `downloads.json`.
 
 ## Download state (`src/main.cpp`)
 - `std::map<std::string, DownloadState> downloads` is keyed by file **URL** and guarded by `downloadsMutex`.

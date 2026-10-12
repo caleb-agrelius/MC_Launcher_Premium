@@ -18,7 +18,16 @@ static Modpack PackFromJson(const json& item)
 	pack.loaders = item.value("loaders", "");
 	pack.iconUrl = item.value("iconUrl", "");
 	pack.color = item.value("color", 0u);
-	pack.fromModrinth = item.value("fromModrinth", false);
+	pack.websiteUrl = item.value("websiteUrl", "");
+	// Files written before multiple sources existed only have "fromModrinth".
+	if (item.contains("source"))
+		pack.source = PackSourceFromKey(item.value("source", ""));
+	else if (item.value("fromModrinth", false))
+		pack.source = PackSource::Modrinth;
+	pack.sourceId = item.value("sourceId", "");
+	pack.sourceVersionId = item.value("sourceVersionId", "");
+	pack.sourceUrl = item.value("sourceUrl", "");
+	pack.sourceIsSolder = item.value("sourceIsSolder", false);
 	if (item.contains("files") && item["files"].is_array()) {
 		for (const auto& f : item["files"]) {
 			PackFile file;
@@ -46,7 +55,12 @@ static json PackToJson(const Modpack& pack)
 		{ "loaders", pack.loaders },
 		{ "iconUrl", pack.iconUrl },
 		{ "color", pack.color },
-		{ "fromModrinth", pack.fromModrinth },
+		{ "websiteUrl", pack.websiteUrl },
+		{ "source", PackSourceKey(pack.source) },
+		{ "sourceId", pack.sourceId },
+		{ "sourceVersionId", pack.sourceVersionId },
+		{ "sourceUrl", pack.sourceUrl },
+		{ "sourceIsSolder", pack.sourceIsSolder },
 		{ "files", files },
 	};
 }

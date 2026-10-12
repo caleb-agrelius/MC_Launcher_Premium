@@ -8,9 +8,12 @@
 #include "Model/Modpack.h"
 #include "Platform.h"
 #include "Network/HttpClient.h"
+#include "Network/CurseForge.h"
 #include "Network/MicrosoftAuth.h"
 #include "Network/Modrinth.h"
+#include "Network/PackSources.h"
 #include "Storage/Account.h"
+#include "Storage/InstallPlan.h"
 #include "Storage/Installer.h"
 #include "Storage/Library.h"
 #include "Storage/Settings.h"
@@ -27,6 +30,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdint>
+#include <cstring>
 #include <ctime>
 #include <exception>
 #include <filesystem>
@@ -118,6 +122,15 @@ struct DownloadState {
 	bool installing = false;
 	double installProgress = 0.0;
 	std::string installError;
+
+	// Whole-pack installs (sources that install from a plan, e.g. CurseForge). These are
+	// keyed "pack:<pack id>"; active/error/installed above describe the whole install.
+	bool planInstall = false;
+	std::string stage;            // "Resolving files", "Downloading files", ...
+	std::uint64_t stageDone = 0;
+	std::uint64_t stageTotal = 0;
+	std::vector<PlannedFile> blocked; // files the user has to download by hand
+	std::vector<std::string> notes;
 };
 
 enum class Page {
@@ -126,6 +139,37 @@ enum class Page {
 	Downloads,
 	Settings
 };
+
+// One Discover sub-page: a source's search box, filters, results and selection.
+// Each source keeps its own state, so switching sub-pages doesn't lose a search.
+struct SourceView {
+	PackSource source = PackSource::Modrinth;
+	SourceCapabilities caps;
+	char search[128] = "";
+	char gameVersion[32] = "";
+	int loader = 0; // 0 = any, else caps.loaders[loader - 1]
+	int sort = 0;   // index into caps.sorts
+	std::vector<Modpack> packs;
+	int selected = -1;
+	// Typing schedules a search; it runs once the input has been unchanged for
+	// kSearchDelaySeconds. The first visit runs the default (empty) search.
+	bool searchPending = true;
+	double lastSearchEdit = -1.0;
+	bool searching = false;
+	int searchGeneration = 0; // results from older searches are ignored
+	std::string searchStatus;
+	bool searchFailed = false;
+};
+
+static const char* LoaderLabel(const char* loader)
+{
+	const std::string key = loader;
+	if (key == "forge") return "Forge";
+	if (key == "neoforge") return "NeoForge";
+	if (key == "fabric") return "Fabric";
+	if (key == "quilt") return "Quilt";
+	return loader;
+}
 
 static std::string FormatFileSize(std::uint64_t bytes)
 {
@@ -178,6 +222,9 @@ static void StartWorker(std::vector<Worker>& workers, std::function<void()> task
 	Worker worker;
 	worker.thread = std::thread([task = std::move(task), done = worker.done]() {
 		task();
+		// Close this thread's connections before reporting done, so the UI thread's
+		// join in ReapFinishedWorkers doesn't wait on curl cleanup.
+		HttpClient::ReleaseThreadHandle();
 		done->store(true);
 	});
 	workers.push_back(std::move(worker));
@@ -385,11 +432,20 @@ int main(int argc, char** argv)
 		const std::vector<Modpack> localPacks = LoadIndex(kIndexRelativePath.string());
 		log << "Loaded " << localPacks.size() << " local modpack(s)\n";
 		log.flush();
-		std::vector<Modpack> packs;
-		int selected = -1;
+		// One Discover sub-page per online source. std::map keeps references stable,
+		// so background tasks can hold a SourceView& safely.
+		std::map<PackSource, SourceView> views;
+		for (PackSource source : OnlineSources()) {
+			SourceView& view = views[source];
+			view.source = source;
+			view.caps = GetSourceCapabilities(source);
+		}
+		PackSource discoverSource = PackSourceFromKey(settings.discoverSource);
+		if (views.count(discoverSource) == 0)
+			discoverSource = OnlineSources().front();
 		Page page = Page::Discover;
-		char search[128] = "";
 		bool focusSearch = false; // Ctrl+F
+		bool sourcesExpanded = true; // Discover's source list in the sidebar
 		HttpClient http;
 		ImageCache images(http);
 		FoxModel fox;
@@ -409,15 +465,7 @@ int main(int argc, char** argv)
 		fs::create_directories("downloads");
 		fs::create_directories("installs");
 
-		// Search state (UI thread only). Typing schedules a search; it runs once
-		// the query has been unchanged for kSearchDelaySeconds.
-		bool searchPending = true; // run the initial "most downloaded" search on the first frame
-		double lastSearchEdit = -1.0;
-		bool searching = false;
-		int searchGeneration = 0; // results from older searches are ignored
-		std::string searchStatus;
-		bool searchFailed = false;
-		// Per-pack version lookups for Modrinth results, keyed by pack id.
+		// Per-pack version lookups for online results, keyed by pack id (unique across sources).
 		std::set<std::string> filesLoading;
 		std::map<std::string, std::string> filesErrors;
 		// Full-size banner lookups, keyed by pack id.
@@ -429,6 +477,8 @@ int main(int argc, char** argv)
 		settingsContext.dataFolder = fs::current_path(cwdError).string();
 		settingsContext.systemMemoryMb = Platform::SystemMemoryMb();
 		settingsContext.dpiScale = dpiScale;
+		settingsContext.curseForgeEnvKeySet = !CurseForgeEnvApiKey().empty();
+		SetCurseForgeApiKey(settings.curseForgeApiKey);
 		// Packs whose files were extracted (UI thread only). Saved to library.json so
 		// My Library survives restarts; packs whose installs/ folder is gone are dropped.
 		Library libraryPacks = LoadPackLibrary(kLibraryFile);
@@ -570,6 +620,12 @@ int main(int argc, char** argv)
 		std::mutex playsMutex;
 		std::string stopConfirmPackId; // pack whose "Stop game" confirmation is open
 
+		// Play reads the modrinth.index.json of an extracted .mrpack. Packs installed from a
+		// source's install plan (CurseForge, FTB, ...) have no such index yet.
+		auto canPlay = [](const Modpack& pack) {
+			return !GetSourceCapabilities(pack.source).installsPacks;
+		};
+
 		auto startPlay = [&](const Modpack& pack) {
 			if (account.type == Account::Type::None) {
 				std::lock_guard<std::mutex> lock(playsMutex);
@@ -661,52 +717,61 @@ int main(int argc, char** argv)
 			});
 		};
 
-		auto startSearch = [&]() {
-			const int generation = ++searchGeneration;
-			const std::string query = search;
+		auto startSearch = [&](SourceView& view) {
+			const int generation = ++view.searchGeneration;
+			const std::string query = view.search;
+			SearchFilters filters;
+			filters.gameVersion = view.gameVersion;
+			if (view.loader > 0 && view.loader <= static_cast<int>(view.caps.loaders.size()))
+				filters.loader = view.caps.loaders[static_cast<std::size_t>(view.loader - 1)];
+			filters.sort = view.sort;
 			const int limit = settings.searchLimit;
-			searching = true;
-			StartWorker(workers, [&http, &uiQueue, &shuttingDown, &packs, &selected, &searching,
-				&searchStatus, &searchFailed, &searchGeneration, &localPacks, &log, query, limit, generation]() {
-				ModrinthSearchResult result;
+			view.searching = true;
+			StartWorker(workers, [&http, &uiQueue, &shuttingDown, &view, &localPacks, &log, query, filters, limit, generation]() {
+				SourceSearchResult result;
 				std::string error;
-				const bool ok = SearchModrinthModpacks(http, query, limit, result, &error, &shuttingDown);
-				uiQueue.Post([&packs, &selected, &searching, &searchStatus, &searchFailed, &searchGeneration,
-					&localPacks, &log, query, generation, ok, result, error]() {
-					if (generation != searchGeneration)
+				const bool ok = SearchPacks(http, view.source, query, filters, limit, result, &error, &shuttingDown);
+				uiQueue.Post([&view, &localPacks, &log, query, generation, ok, result, error]() {
+					if (generation != view.searchGeneration)
 						return;
-					searching = false;
-					searchFailed = !ok;
+					const char* sourceName = PackSourceName(view.source);
+					view.searching = false;
+					view.searchFailed = !ok;
 					if (ok) {
-						packs = result.packs;
-						searchStatus = FormatCount(result.totalHits) + " modpacks on Modrinth";
-						log << "Search \"" << query << "\": " << result.packs.size() << " of "
+						view.packs = result.packs;
+						view.searchStatus = FormatCount(result.totalHits) + " modpacks on " + sourceName;
+						log << sourceName << " search \"" << query << "\": " << result.packs.size() << " of "
 							<< result.totalHits << " result(s)\n";
 					} else {
-						log << "Search \"" << query << "\" failed: " << error << "\n";
-						// Offline or API error: fall back to the local index.
-						const std::string lowerQuery = ToLower(query);
-						packs.clear();
-						for (const Modpack& pack : localPacks) {
-							if (lowerQuery.empty() || ContainsIgnoreCase(pack.name, lowerQuery) ||
-								ContainsIgnoreCase(pack.description, lowerQuery))
-								packs.push_back(pack);
+						log << sourceName << " search \"" << query << "\" failed: " << error << "\n";
+						view.packs.clear();
+						if (view.source == PackSource::Modrinth) {
+							// Offline or API error: fall back to the local index.
+							const std::string lowerQuery = ToLower(query);
+							for (const Modpack& pack : localPacks) {
+								if (lowerQuery.empty() || ContainsIgnoreCase(pack.name, lowerQuery) ||
+									ContainsIgnoreCase(pack.description, lowerQuery))
+									view.packs.push_back(pack);
+							}
+							view.searchStatus = "Modrinth unavailable (" + error + ") - showing local packs";
+						} else {
+							view.searchStatus = std::string(sourceName) + " unavailable (" + error + ")";
 						}
-						searchStatus = "Modrinth unavailable (" + error + ") - showing local packs";
 					}
-					selected = packs.empty() ? -1 : 0;
+					view.selected = view.packs.empty() ? -1 : 0;
 				});
 			});
 		};
 
-		auto startFetchFiles = [&](const std::string& packId) {
+		auto startFetchFiles = [&](SourceView& view, const Modpack& pack) {
+			const std::string packId = pack.id;
 			filesLoading.insert(packId);
 			filesErrors.erase(packId);
-			StartWorker(workers, [&http, &uiQueue, &shuttingDown, &packs, &filesLoading, &filesErrors, &log, packId]() {
-				ModrinthVersion version;
+			StartWorker(workers, [&http, &uiQueue, &shuttingDown, &view, &filesLoading, &filesErrors, &log, pack, packId]() {
+				PackVersionInfo version;
 				std::string error;
-				const bool ok = FetchLatestModrinthVersion(http, packId, version, &error, &shuttingDown);
-				uiQueue.Post([&packs, &filesLoading, &filesErrors, &log, packId, ok, version, error]() {
+				const bool ok = FetchPackVersion(http, pack, version, &error, &shuttingDown);
+				uiQueue.Post([&view, &filesLoading, &filesErrors, &log, packId, ok, version, error]() {
 					filesLoading.erase(packId);
 					if (!ok) {
 						log << "Version lookup for " << packId << " failed: " << error << "\n";
@@ -714,37 +779,95 @@ int main(int argc, char** argv)
 						return;
 					}
 					log << "Version lookup for " << packId << ": " << version.versionNumber << " ("
-						<< (version.files.empty() ? std::string("no file") : version.files.front().name) << ")\n";
-					for (Modpack& pack : packs) {
-						if (pack.id != packId)
-							continue;
-						pack.version = version.versionNumber;
-						if (!version.gameVersion.empty())
-							pack.gameVersion = version.gameVersion;
-						pack.loaders = version.loaders;
-						pack.files = version.files;
-						pack.filesLoaded = true;
+						<< (version.files.empty() ? "id " + version.sourceVersionId : version.files.front().name) << ")\n";
+					for (Modpack& item : view.packs) {
+						if (item.id == packId)
+							ApplyPackVersion(item, version);
 					}
 				});
 			});
 		};
 
-		auto startFetchBanner = [&](const std::string& packId) {
+		auto startFetchBanner = [&](SourceView& view, const std::string& packId) {
 			bannersLoading.insert(packId);
-			StartWorker(workers, [&http, &uiQueue, &shuttingDown, &packs, &bannersLoading, &log, packId]() {
+			StartWorker(workers, [&http, &uiQueue, &shuttingDown, &view, &bannersLoading, &log, packId]() {
 				std::string url;
 				std::string error;
 				const bool ok = FetchModrinthBanner(http, packId, url, &error, &shuttingDown);
-				uiQueue.Post([&packs, &bannersLoading, &log, packId, ok, url, error]() {
+				uiQueue.Post([&view, &bannersLoading, &log, packId, ok, url, error]() {
 					bannersLoading.erase(packId);
 					if (!ok)
 						log << "Banner lookup for " << packId << " failed: " << error << "\n";
-					for (Modpack& pack : packs) {
+					for (Modpack& pack : view.packs) {
 						if (pack.id != packId)
 							continue;
 						pack.bannerHiResUrl = url;
 						pack.bannerLoaded = true; // also on failure: keep the thumbnail, don't retry
 					}
+				});
+			});
+		};
+
+		// Installs a whole pack (sources whose capabilities say installsPacks): builds the
+		// source's install plan, runs it into installs/<pack id>/, then adds the pack to My Library.
+		auto startPlanInstall = [&](const Modpack& pack) {
+			const std::string key = "pack:" + pack.id;
+			{
+				std::lock_guard<std::mutex> lock(downloadsMutex);
+				DownloadState started;
+				started.fileName = pack.version.empty() ? pack.name : pack.name + " " + pack.version;
+				started.pack = pack;
+				started.active = true;
+				started.planInstall = true;
+				started.stage = "Preparing";
+				downloads[key] = std::move(started);
+			}
+			log << "Installing " << pack.id << " " << pack.version << " from " << PackSourceName(pack.source) << "\n";
+			StartWorker(workers, [&http, &downloads, &downloadsMutex, &shuttingDown, &uiQueue, &libraryPacks, &log, key, pack]() {
+				auto setStage = [&](const std::string& stage, std::uint64_t done, std::uint64_t total) {
+					std::lock_guard<std::mutex> lock(downloadsMutex);
+					DownloadState& current = downloads[key];
+					current.stage = stage;
+					current.stageDone = done;
+					current.stageTotal = total;
+				};
+				std::string error;
+				InstallPlan plan;
+				std::vector<PlannedFile> blocked;
+				const std::string workDir = (fs::path("downloads") / pack.id).string();
+				std::error_code dirError;
+				fs::create_directories(workDir, dirError);
+				bool ok = BuildInstallPlan(http, pack, workDir, plan,
+					[&](const std::string& status) { setStage(status, 0, 0); }, &error, &shuttingDown);
+				if (ok) {
+					ok = RunInstallPlan(http, plan, (fs::path("installs") / pack.id).string(),
+						[&](const InstallProgress& progress) { setStage(progress.stage, progress.done, progress.total); },
+						blocked, &error, &shuttingDown);
+				}
+				{
+					std::lock_guard<std::mutex> lock(downloadsMutex);
+					DownloadState& current = downloads[key];
+					current.active = false;
+					current.installed = ok;
+					current.error = ok ? std::string() : error;
+					current.blocked = blocked;
+					current.notes = plan.notes;
+				}
+				const bool cancelled = shuttingDown.load();
+				uiQueue.Post([&libraryPacks, &log, pack, ok, cancelled, error, blockedCount = blocked.size(), fileCount = plan.files.size()]() {
+					if (!ok) {
+						log << "Install of " << pack.id << " failed: " << error << "\n";
+						if (!cancelled)
+							Toasts::Push(Toasts::Kind::Error, "Install failed", pack.name + ": " + error);
+						return;
+					}
+					log << "Installed " << pack.id << ": " << fileCount << " file(s), " << blockedCount << " blocked\n";
+					libraryPacks[pack.id] = pack;
+					if (!SavePackLibrary(kLibraryFile, libraryPacks))
+						log << "Could not save " << kLibraryFile << "\n";
+					Toasts::Push(Toasts::Kind::Success, "Pack installed", blockedCount > 0
+						? pack.name + ": " + std::to_string(blockedCount) + " file(s) need a manual download."
+						: pack.name + " is in your library.");
 				});
 			});
 		};
@@ -811,7 +934,8 @@ int main(int argc, char** argv)
 				ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBringToFrontOnFocus);
 
 			// ---- Sidebar ----
-			ImGui::BeginChild("sidebar", ImVec2(S(230.0f), 0.0f), ImGuiChildFlags_Borders);
+			ImGui::BeginChild("sidebar", ImVec2(S(230.0f), 0.0f), ImGuiChildFlags_Borders,
+				ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 			{
 				// Transparent interactive GLB fox mascot, then the launcher name.
 				fox.Draw(S(56.0f));
@@ -824,8 +948,25 @@ int main(int argc, char** argv)
 			}
 			ImGui::Dummy(ImVec2(0.0f, S(14.0f)));
 			Widgets::SectionLabel("BROWSE");
-			if (Widgets::NavItem("Discover", page == Page::Discover))
+			// Discover heads a collapsible list of sources. Clicking it while on Discover
+			// toggles the list; arriving from another page opens it.
+			if (Widgets::NavGroupItem("Discover", page == Page::Discover, sourcesExpanded)) {
+				sourcesExpanded = page == Page::Discover ? !sourcesExpanded : true;
 				page = Page::Discover;
+			}
+			// One sub-page per source. The choice is remembered in settings.json.
+			if (sourcesExpanded) {
+				for (PackSource source : OnlineSources()) {
+					if (Widgets::SubNavItem(PackSourceName(source), page == Page::Discover && discoverSource == source)) {
+						page = Page::Discover;
+						if (discoverSource != source) {
+							discoverSource = source;
+							settings.discoverSource = PackSourceKey(source);
+							settingsDirty = true;
+						}
+					}
+				}
+			}
 			if (Widgets::NavItem("My Library", page == Page::Library))
 				page = Page::Library;
 			int activeDownloads = 0;
@@ -922,7 +1063,8 @@ int main(int argc, char** argv)
 				: page == Page::Downloads ? "MINECRAFT  /  DOWNLOADS" : "LAUNCHER  /  SETTINGS";
 			Widgets::Text(fonts.bold, Theme::kFontSmall, Theme::C().accent, breadcrumb);
 			if (page == Page::Discover) {
-				Widgets::Text(fonts.bold, Theme::kFontTitle, Theme::C().text, "Discover modpacks");
+				Widgets::Text(fonts.bold, Theme::kFontTitle, Theme::C().text,
+					(std::string("Discover on ") + PackSourceName(discoverSource)).c_str());
 				ImGui::TextDisabled("Find a pack, download its files, and prepare it for Minecraft.");
 			} else if (page == Page::Library) {
 				Widgets::Text(fonts.bold, Theme::kFontTitle, Theme::C().text, "My library");
@@ -937,6 +1079,13 @@ int main(int argc, char** argv)
 			ImGui::Spacing();
 
 			if (page == Page::Discover) {
+				SourceView& view = views[discoverSource];
+				const SourceCapabilities& caps = view.caps;
+				const char* sourceName = PackSourceName(view.source);
+				std::string unavailableReason;
+				const bool sourceAvailable = IsSourceAvailable(view.source, &unavailableReason);
+
+				// Search box, then this source's filters on one row.
 				ImGui::SetNextItemWidth(-1.0f);
 				if (focusSearch) {
 					ImGui::SetKeyboardFocusHere();
@@ -944,41 +1093,111 @@ int main(int argc, char** argv)
 				}
 				ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(S(14.0f), S(11.0f)));
 				ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, S(8.0f));
-				if (ImGui::InputTextWithHint("##search", "Search Modrinth modpacks...", search, sizeof(search))) {
-					searchPending = true;
-					lastSearchEdit = ImGui::GetTime();
+				ImGui::BeginDisabled(!sourceAvailable);
+				if (ImGui::InputTextWithHint("##search", caps.searchHint, view.search, sizeof(view.search))) {
+					view.searchPending = true;
+					view.lastSearchEdit = ImGui::GetTime();
 				}
+				ImGui::EndDisabled();
 				ImGui::PopStyleVar(2);
-				if (searchPending && ImGui::GetTime() - lastSearchEdit >= kSearchDelaySeconds) {
-					searchPending = false;
-					startSearch();
+
+				bool filtersChanged = false; // combos search right away; text waits for typing to pause
+				ImGui::BeginDisabled(!sourceAvailable);
+				if (caps.gameVersionFilter) {
+					ImGui::SetNextItemWidth(S(170.0f));
+					if (ImGui::InputTextWithHint("##mcversion", "Minecraft version", view.gameVersion, sizeof(view.gameVersion))) {
+						view.searchPending = true;
+						view.lastSearchEdit = ImGui::GetTime();
+					}
+					ImGui::SetItemTooltip("Only packs for this Minecraft version, e.g. 1.20.1");
+					ImGui::SameLine();
 				}
-				if (searching) {
+				if (caps.loaderFilter) {
+					ImGui::SetNextItemWidth(S(150.0f));
+					const char* preview = view.loader == 0 ? "Any loader" : LoaderLabel(caps.loaders[static_cast<std::size_t>(view.loader - 1)]);
+					if (ImGui::BeginCombo("##loader", preview)) {
+						if (Widgets::ListItem("Any loader", view.loader == 0)) {
+							view.loader = 0;
+							filtersChanged = true;
+						}
+						for (std::size_t i = 0; i < caps.loaders.size(); ++i) {
+							if (Widgets::ListItem(LoaderLabel(caps.loaders[i]), view.loader == static_cast<int>(i + 1))) {
+								view.loader = static_cast<int>(i + 1);
+								filtersChanged = true;
+							}
+						}
+						ImGui::EndCombo();
+					}
+					ImGui::SameLine();
+				}
+				if (caps.sorts.size() > 1) {
+					ImGui::SetNextItemWidth(S(200.0f));
+					const std::string sortPreview = std::string("Sort: ") + caps.sorts[static_cast<std::size_t>(view.sort)];
+					if (ImGui::BeginCombo("##sort", sortPreview.c_str())) {
+						for (std::size_t i = 0; i < caps.sorts.size(); ++i) {
+							if (Widgets::ListItem(caps.sorts[i], view.sort == static_cast<int>(i))) {
+								view.sort = static_cast<int>(i);
+								filtersChanged = true;
+							}
+						}
+						ImGui::EndCombo();
+					}
+					ImGui::SameLine();
+				}
+				ImGui::EndDisabled();
+				if (filtersChanged) {
+					view.searchPending = true;
+					view.lastSearchEdit = -1.0; // no typing delay
+				}
+				// The status goes after the filters, or on its own line when it doesn't fit.
+				const std::string& statusText = !sourceAvailable ? unavailableReason : view.searchStatus;
+				if (caps.gameVersionFilter || caps.loaderFilter || caps.sorts.size() > 1) {
+					if (ImGui::CalcTextSize(statusText.c_str()).x + S(30.0f) > ImGui::GetContentRegionAvail().x)
+						ImGui::NewLine();
+				}
+				ImGui::AlignTextToFramePadding();
+				if (!sourceAvailable) {
+					Widgets::WrappedText(Theme::C().error, unavailableReason.c_str());
+				} else if (view.searching) {
 					Widgets::Spinner(Theme::C().accent);
 					ImGui::SameLine();
-					ImGui::TextDisabled("Searching Modrinth...");
-				} else if (searchFailed) {
-					ImGui::TextColored(Theme::C().error, "%s", searchStatus.c_str());
+					ImGui::TextDisabled("Searching %s...", sourceName);
+				} else if (view.searchFailed) {
+					Widgets::WrappedText(Theme::C().error, view.searchStatus.c_str());
 				} else {
-					ImGui::TextDisabled("%s", searchStatus.c_str());
+					ImGui::TextDisabled("%s", view.searchStatus.c_str());
+				}
+				if (sourceAvailable && view.searchPending && ImGui::GetTime() - view.lastSearchEdit >= kSearchDelaySeconds) {
+					view.searchPending = false;
+					startSearch(view);
 				}
 
 				// Pack list
+				std::vector<Modpack>& packs = view.packs;
+				int& selected = view.selected;
+				const bool browsing = view.search[0] == '\0' && view.gameVersion[0] == '\0' && view.loader == 0 && view.sort == 0;
 				ImGui::BeginChild("pack_list", ImVec2(S(340.0f), 0.0f), ImGuiChildFlags_Borders);
-				Widgets::SectionLabel(search[0] == '\0' ? "MOST DOWNLOADED" : "RESULTS");
+				Widgets::SectionLabel(browsing ? caps.browseLabel : "RESULTS");
 				for (std::size_t i = 0; i < packs.size(); ++i) {
 					const Modpack& item = packs[i];
 					std::string meta;
-					if (item.fromModrinth)
-						meta = item.gameVersion + "  \xC2\xB7  " + FormatCount(item.downloads) + " downloads";
-					else
+					if (item.source == PackSource::LocalIndex) {
 						meta = item.version + "  \xC2\xB7  " + std::to_string(item.files.size()) + " files";
+					} else {
+						meta = item.gameVersion;
+						if (item.downloads > 0)
+							meta += (meta.empty() ? "" : "  \xC2\xB7  ") + FormatCount(item.downloads) + " downloads";
+						if (meta.empty())
+							meta = item.author;
+						if (meta.empty())
+							meta = PackSourceName(item.source); // e.g. Technic search results, until selected
+					}
 					ImGui::PushID(static_cast<int>(i));
 					if (Widgets::PackRow(item, images, selected == static_cast<int>(i), meta))
 						selected = static_cast<int>(i);
 					ImGui::PopID();
 				}
-				if (packs.empty() && !searching)
+				if (packs.empty() && !view.searching && sourceAvailable)
 					ImGui::TextDisabled("No modpacks found.");
 				ImGui::EndChild();
 				ImGui::SameLine();
@@ -987,22 +1206,32 @@ int main(int argc, char** argv)
 				ImGui::BeginChild("pack_details", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders);
 				if (selected >= 0 && selected < static_cast<int>(packs.size())) {
 					const Modpack& pack = packs[static_cast<std::size_t>(selected)];
+					const bool online = pack.source != PackSource::LocalIndex;
 					const bool loadingFiles = filesLoading.count(pack.id) > 0;
 					const auto filesError = filesErrors.find(pack.id);
-					if (pack.fromModrinth && !pack.filesLoaded && !loadingFiles && filesError == filesErrors.end())
-						startFetchFiles(pack.id);
-					if (settings.showGalleryBanners && pack.fromModrinth && !pack.bannerLoaded && bannersLoading.count(pack.id) == 0)
-						startFetchBanner(pack.id);
+					if (online && !pack.filesLoaded && !loadingFiles && filesError == filesErrors.end())
+						startFetchFiles(view, pack);
+					if (settings.showGalleryBanners && pack.source == PackSource::Modrinth && !pack.bannerLoaded && bannersLoading.count(pack.id) == 0)
+						startFetchBanner(view, pack.id);
 
 					Widgets::HeroBanner(pack, images, std::clamp(ImGui::GetContentRegionAvail().x * 0.36f, S(200.0f), S(340.0f)),
 						settings.showGalleryBanners);
 					ImGui::Spacing();
 
-					if (pack.fromModrinth) {
-						Widgets::Chip((FormatCount(pack.downloads) + " downloads").c_str(), Theme::C().accent);
-						ImGui::SameLine();
-						ImGui::AlignTextToFramePadding();
-						ImGui::TextDisabled("modrinth.com/modpack/%s", pack.id.c_str());
+					if (online) {
+						if (pack.downloads > 0) {
+							Widgets::Chip((FormatCount(pack.downloads) + " downloads").c_str(), Theme::C().accent);
+							ImGui::SameLine();
+						}
+						if (!pack.websiteUrl.empty()) {
+							std::string shown = pack.websiteUrl;
+							for (const char* scheme : { "https://", "http://" }) {
+								if (shown.rfind(scheme, 0) == 0)
+									shown.erase(0, std::strlen(scheme));
+							}
+							ImGui::AlignTextToFramePadding();
+							ImGui::TextLinkOpenURL(shown.c_str(), pack.websiteUrl.c_str());
+						}
 					}
 					ImGui::Spacing();
 					ImGui::PushFont(nullptr, Theme::kFontBody + 1.0f);
@@ -1010,122 +1239,212 @@ int main(int argc, char** argv)
 					ImGui::PopFont();
 					ImGui::Dummy(ImVec2(0.0f, S(8.0f)));
 
-					char filesLabel[48];
-					std::snprintf(filesLabel, sizeof(filesLabel), "PACK FILES  (%llu)", static_cast<unsigned long long>(pack.files.size()));
-					Widgets::SectionLabel(filesLabel);
-					if (loadingFiles) {
-						Widgets::Spinner(Theme::C().accent);
-						ImGui::SameLine();
-						ImGui::TextDisabled("Loading latest version...");
-					} else if (filesError != filesErrors.end()) {
-						ImGui::TextColored(Theme::C().error, "Couldn't load versions: %s", filesError->second.c_str());
-						if (ImGui::Button("Retry"))
-							startFetchFiles(pack.id);
-					}
-
-					for (const PackFile& file : pack.files) {
+					if (caps.installsPacks && online) {
+						// Whole-pack install: one card for the pack's latest version.
+						Widgets::SectionLabel("INSTALL");
+						const std::string key = "pack:" + pack.id;
 						DownloadState state;
 						bool hasState = false;
 						{
 							std::lock_guard<std::mutex> lock(downloadsMutex);
-							const auto it = downloads.find(file.url);
+							const auto it = downloads.find(key);
 							if (it != downloads.end()) {
 								state = it->second;
 								hasState = true;
 							}
 						}
+						const auto libraryEntry = libraryPacks.find(pack.id);
+						const bool inLibrary = libraryEntry != libraryPacks.end() &&
+							libraryEntry->second.sourceVersionId == pack.sourceVersionId;
 
-						ImGui::PushID(file.url.c_str());
-						BeginCard("file_card");
+						BeginCard("install_card");
 						ImGui::AlignTextToFramePadding();
-						ImGui::PushFont(fonts.bold, 0.0f);
-						ImGui::TextUnformatted(file.name.c_str());
-						ImGui::PopFont();
-						ImGui::SameLine();
-						ImGui::TextDisabled("%s", FormatFileSize(file.size).c_str());
+						if (loadingFiles) {
+							Widgets::Spinner(Theme::C().accent);
+							ImGui::SameLine();
+							ImGui::TextDisabled("Loading latest version...");
+						} else if (filesError != filesErrors.end()) {
+							ImGui::TextColored(Theme::C().error, "Couldn't load versions: %s", filesError->second.c_str());
+							AlignRightForButton("Retry");
+							if (ImGui::Button("Retry"))
+								startFetchFiles(view, pack);
+						} else if (pack.filesLoaded) {
+							ImGui::PushFont(fonts.bold, 0.0f);
+							ImGui::TextUnformatted(pack.version.empty() ? "Latest version" : pack.version.c_str());
+							ImGui::PopFont();
+							ImGui::SameLine();
+							std::string details;
+							if (!pack.gameVersion.empty())
+								details = "Minecraft " + pack.gameVersion;
+							if (!pack.loaders.empty())
+								details += (details.empty() ? "" : "  \xC2\xB7  ") + pack.loaders;
+							ImGui::TextDisabled("%s", details.c_str());
 
-						if (!hasState || (!state.active && state.outPath.empty())) {
-							const char* label = hasState ? "Retry" : "Download";
-							AlignRightForButton(label);
-							if (ImGui::Button(label)) {
-								DownloadState started;
-								started.fileName = file.name;
-								started.pack = pack;
-								started.active = true;
-								{
-									std::lock_guard<std::mutex> lock(downloadsMutex);
-									downloads[file.url] = started;
-								}
-								const std::string url = file.url;
-								// Per-pack folder so same-named files from different packs don't collide.
-								const fs::path packDownloadDir = fs::path("downloads") / pack.id;
-								const std::string outputPath = (packDownloadDir / file.name).string();
-								StartWorker(workers, [&http, &downloads, &downloadsMutex, &shuttingDown, &uiQueue, &saveDownloads,
-									url, packDownloadDir, outputPath, packName = pack.name]() {
-									std::string error;
-									std::error_code dirError;
-									fs::create_directories(packDownloadDir, dirError);
-									auto progress = [&](double total, double now) {
-										std::lock_guard<std::mutex> lock(downloadsMutex);
-										DownloadState& current = downloads[url];
-										current.total = total;
-										current.now = now;
-									};
-									const bool ok = http.DownloadToFile(url, outputPath, progress, &error, &shuttingDown);
-									{
-										std::lock_guard<std::mutex> lock(downloadsMutex);
-										DownloadState& current = downloads[url];
-										current.active = false;
-										if (ok)
-											current.outPath = outputPath;
-										else
-											current.error = error;
-									}
-									if (ok)
-										uiQueue.Post([&saveDownloads]() { saveDownloads(); });
-									if (!shuttingDown.load()) {
-										uiQueue.Post([ok, packName, error]() {
-											if (ok)
-												Toasts::Push(Toasts::Kind::Success, "Download complete", packName + " is ready to install.");
-											else
-												Toasts::Push(Toasts::Kind::Error, "Download failed", packName + ": " + error);
-										});
-									}
-								});
+							if (hasState && state.active) {
+								std::string progressLabel = state.stage;
+								if (state.stageTotal > 0)
+									progressLabel += "  " + std::to_string(state.stageDone) + " / " + std::to_string(state.stageTotal);
+								AlignRightForButton(progressLabel.c_str());
+								ImGui::TextDisabled("%s", progressLabel.c_str());
+							} else {
+								const bool installed = (hasState && state.installed) || inLibrary;
+								const char* label = installed ? "Reinstall" : (hasState && !state.error.empty() ? "Retry" : "Install pack");
+								AlignRightForButton(label);
+								if (ImGui::Button(label))
+									startPlanInstall(pack);
 							}
-							if (hasState && !state.error.empty())
-								ImGui::TextColored(Theme::C().error, "Download failed: %s", state.error.c_str());
-						} else if (state.active) {
-							char progressLabel[64];
-							if (state.total > 0.0)
-								std::snprintf(progressLabel, sizeof(progressLabel), "Downloading  %.0f%%", 100.0 * state.now / state.total);
+						}
+						if (hasState && state.active) {
+							if (state.stageTotal > 0)
+								Widgets::ThinProgressBar(static_cast<float>(static_cast<double>(state.stageDone) / static_cast<double>(state.stageTotal)));
 							else
-								std::snprintf(progressLabel, sizeof(progressLabel), "Downloading");
-							AlignRightForButton(progressLabel);
-							ImGui::AlignTextToFramePadding();
-							ImGui::TextDisabled("%s", progressLabel);
-						} else if (state.installing) {
-							AlignRightForButton("Extracting");
-							ImGui::AlignTextToFramePadding();
-							ImGui::TextDisabled("Extracting");
-						} else if (state.installed) {
-							AlignRightForButton("Extracted");
-							ImGui::AlignTextToFramePadding();
-							ImGui::TextColored(Theme::C().accent, "Extracted");
-						} else if (!state.outPath.empty()) {
-							AlignRightForButton("Install files");
-							if (ImGui::Button("Install files"))
-								startInstall(file.url, pack, state.outPath);
+								Widgets::ThinProgressBar(0.0f);
+						}
+						if (hasState && !state.error.empty())
+							ImGui::TextColored(Theme::C().error, "Install failed: %s", state.error.c_str());
+						if (!(hasState && state.active) && ((hasState && state.installed) || inLibrary)) {
+							ImGui::TextColored(Theme::C().accent, "Installed");
+							ImGui::SameLine();
+							ImGui::TextDisabled("to installs/%s/minecraft", pack.id.c_str());
+						}
+						if (hasState && !state.blocked.empty()) {
+							ImGui::Spacing();
+							ImGui::TextColored(Theme::C().error, "%llu file(s) must be downloaded by hand into installs/%s/minecraft:",
+								static_cast<unsigned long long>(state.blocked.size()), pack.id.c_str());
+							for (const PlannedFile& file : state.blocked) {
+								ImGui::PushID(file.relPath.c_str());
+								ImGui::BulletText("%s  ->  %s", file.name.c_str(), file.relPath.c_str());
+								if (!file.manualPageUrl.empty()) {
+									ImGui::SameLine();
+									ImGui::TextLinkOpenURL("download page", file.manualPageUrl.c_str());
+								}
+								if (!file.blockedReason.empty())
+									ImGui::TextDisabled("    %s", file.blockedReason.c_str());
+								ImGui::PopID();
+							}
+						}
+						for (const std::string& note : state.notes)
+							ImGui::TextDisabled("Note: %s", note.c_str());
+						EndCard();
+					} else {
+						char filesLabel[48];
+						std::snprintf(filesLabel, sizeof(filesLabel), "PACK FILES  (%llu)", static_cast<unsigned long long>(pack.files.size()));
+						Widgets::SectionLabel(filesLabel);
+						if (loadingFiles) {
+							Widgets::Spinner(Theme::C().accent);
+							ImGui::SameLine();
+							ImGui::TextDisabled("Loading latest version...");
+						} else if (filesError != filesErrors.end()) {
+							ImGui::TextColored(Theme::C().error, "Couldn't load versions: %s", filesError->second.c_str());
+							if (ImGui::Button("Retry"))
+								startFetchFiles(view, pack);
 						}
 
-						if (state.active && state.total > 0.0)
-							Widgets::ThinProgressBar(static_cast<float>(state.now / state.total));
-						else if (state.installing)
-							Widgets::ThinProgressBar(static_cast<float>(state.installProgress));
-						if (!state.installError.empty())
-							ImGui::TextColored(Theme::C().error, "Extraction failed: %s", state.installError.c_str());
-						EndCard();
-						ImGui::PopID();
+						for (const PackFile& file : pack.files) {
+							DownloadState state;
+							bool hasState = false;
+							{
+								std::lock_guard<std::mutex> lock(downloadsMutex);
+								const auto it = downloads.find(file.url);
+								if (it != downloads.end()) {
+									state = it->second;
+									hasState = true;
+								}
+							}
+
+							ImGui::PushID(file.url.c_str());
+							BeginCard("file_card");
+							ImGui::AlignTextToFramePadding();
+							ImGui::PushFont(fonts.bold, 0.0f);
+							ImGui::TextUnformatted(file.name.c_str());
+							ImGui::PopFont();
+							ImGui::SameLine();
+							ImGui::TextDisabled("%s", FormatFileSize(file.size).c_str());
+
+							if (!hasState || (!state.active && state.outPath.empty())) {
+								const char* label = hasState ? "Retry" : "Download";
+								AlignRightForButton(label);
+								if (ImGui::Button(label)) {
+									DownloadState started;
+									started.fileName = file.name;
+									started.pack = pack;
+									started.active = true;
+									{
+										std::lock_guard<std::mutex> lock(downloadsMutex);
+										downloads[file.url] = started;
+									}
+									const std::string url = file.url;
+									// Per-pack folder so same-named files from different packs don't collide.
+									const fs::path packDownloadDir = fs::path("downloads") / pack.id;
+									const std::string outputPath = (packDownloadDir / file.name).string();
+									StartWorker(workers, [&http, &downloads, &downloadsMutex, &shuttingDown, &uiQueue, &saveDownloads,
+										url, packDownloadDir, outputPath, packName = pack.name]() {
+										std::string error;
+										std::error_code dirError;
+										fs::create_directories(packDownloadDir, dirError);
+										auto progress = [&](double total, double now) {
+											std::lock_guard<std::mutex> lock(downloadsMutex);
+											DownloadState& current = downloads[url];
+											current.total = total;
+											current.now = now;
+										};
+										const bool ok = http.DownloadToFile(url, outputPath, progress, &error, &shuttingDown);
+										{
+											std::lock_guard<std::mutex> lock(downloadsMutex);
+											DownloadState& current = downloads[url];
+											current.active = false;
+											if (ok)
+												current.outPath = outputPath;
+											else
+												current.error = error;
+										}
+										if (ok)
+											uiQueue.Post([&saveDownloads]() { saveDownloads(); });
+										if (!shuttingDown.load()) {
+											uiQueue.Post([ok, packName, error]() {
+												if (ok)
+													Toasts::Push(Toasts::Kind::Success, "Download complete", packName + " is ready to install.");
+												else
+													Toasts::Push(Toasts::Kind::Error, "Download failed", packName + ": " + error);
+											});
+										}
+									});
+								}
+								if (hasState && !state.error.empty())
+									ImGui::TextColored(Theme::C().error, "Download failed: %s", state.error.c_str());
+							} else if (state.active) {
+								char progressLabel[64];
+								if (state.total > 0.0)
+									std::snprintf(progressLabel, sizeof(progressLabel), "Downloading  %.0f%%", 100.0 * state.now / state.total);
+								else
+									std::snprintf(progressLabel, sizeof(progressLabel), "Downloading");
+								AlignRightForButton(progressLabel);
+								ImGui::AlignTextToFramePadding();
+								ImGui::TextDisabled("%s", progressLabel);
+							} else if (state.installing) {
+								AlignRightForButton("Extracting");
+								ImGui::AlignTextToFramePadding();
+								ImGui::TextDisabled("Extracting");
+							} else if (state.installed) {
+								AlignRightForButton("Extracted");
+								ImGui::AlignTextToFramePadding();
+								ImGui::TextColored(Theme::C().accent, "Extracted");
+							} else if (!state.outPath.empty()) {
+								AlignRightForButton("Install files");
+								if (ImGui::Button("Install files"))
+									startInstall(file.url, pack, state.outPath);
+							}
+
+							if (state.active && state.total > 0.0)
+								Widgets::ThinProgressBar(static_cast<float>(state.now / state.total));
+							else if (state.installing)
+								Widgets::ThinProgressBar(static_cast<float>(state.installProgress));
+							if (!state.installError.empty())
+								ImGui::TextColored(Theme::C().error, "Extraction failed: %s", state.installError.c_str());
+							EndCard();
+							ImGui::PopID();
+						}
+
 					}
 
 					ImGui::Dummy(ImVec2(0.0f, S(6.0f)));
@@ -1138,7 +1457,7 @@ int main(int argc, char** argv)
 						const auto it = plays.find(pack.id);
 						playBusy = it != plays.end() && it->second.busy;
 					}
-					ImGui::BeginDisabled(libraryPack == libraryPacks.end() || playBusy);
+					ImGui::BeginDisabled(!canPlay(pack) || libraryPack == libraryPacks.end() || playBusy);
 					if (ImGui::Button(playBusy ? "PLAYING" : "PLAY", ImVec2(-1.0f, S(52.0f)))) {
 						startPlay(libraryPack->second);
 						page = Page::Library;
@@ -1146,11 +1465,14 @@ int main(int argc, char** argv)
 					ImGui::EndDisabled();
 					ImGui::PopStyleVar();
 					ImGui::PopFont();
-					if (libraryPack == libraryPacks.end())
+					if (!canPlay(pack))
+						ImGui::TextDisabled("Playing %s packs isn't supported yet. Files install to installs/%s/minecraft.",
+							PackSourceName(pack.source), pack.id.c_str());
+					else if (libraryPack == libraryPacks.end())
 						ImGui::TextDisabled("Download and install the pack's files to play it.");
 					else
 						ImGui::TextDisabled("Progress and errors appear in My Library.");
-				} else {
+				} else if (sourceAvailable && !view.searching) {
 					ImGui::TextDisabled("No modpacks match your search.");
 				}
 				ImGui::EndChild();
@@ -1168,13 +1490,16 @@ int main(int argc, char** argv)
 					PackIconItem(pack, images, iconSize);
 					ImGui::SameLine(0.0f, S(14.0f));
 					ImGui::BeginGroup();
+					const bool playable = canPlay(pack);
 					Widgets::Text(fonts.bold, Theme::kFontHeading, Theme::C().text, pack.name.c_str());
-					std::string meta = pack.version;
+					std::string details = std::string(PackSourceName(pack.source)) + "  \xC2\xB7  " + pack.version;
 					if (!pack.gameVersion.empty())
-						meta += "  \xC2\xB7  Minecraft " + pack.gameVersion;
+						details += "  \xC2\xB7  Minecraft " + pack.gameVersion;
 					if (!pack.loaders.empty())
-						meta += "  \xC2\xB7  " + pack.loaders;
-					ImGui::TextDisabled("%s", meta.c_str());
+						details += "  \xC2\xB7  " + pack.loaders;
+					ImGui::TextDisabled("%s", details.c_str());
+					if (!playable)
+						ImGui::TextDisabled("Game folder: installs/%s/minecraft", pack.id.c_str());
 					if (play.playing) {
 						ImGui::TextColored(Theme::C().accent, "Minecraft is running");
 					} else if (play.busy) {
@@ -1185,7 +1510,7 @@ int main(int argc, char** argv)
 						ImGui::PushStyleColor(ImGuiCol_Text, Theme::C().error);
 						ImGui::TextWrapped("%s", play.error.c_str());
 						ImGui::PopStyleColor();
-					} else {
+					} else if (playable) {
 						ImGui::TextDisabled("Ready to play");
 					}
 					ImGui::EndGroup();
@@ -1207,15 +1532,20 @@ int main(int argc, char** argv)
 					} else {
 						AlignRightForButtons({ "Open folder", "  PLAY  " });
 						if (ImGui::Button("Open folder"))
-							Platform::OpenFolder((fs::path(kInstancesRoot) / pack.id).string());
+							Platform::OpenFolder((playable ? fs::path(kInstancesRoot) / pack.id
+								: fs::path("installs") / pack.id / "minecraft").string());
 						ImGui::SetItemTooltip("Open the game folder (mods, config, saves, logs)");
 						ImGui::SameLine();
 						ImGui::PushStyleColor(ImGuiCol_Button, Theme::C().accent);
 						ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Theme::Mix(Theme::C().accent, Theme::C().text, 0.15f));
 						ImGui::PushStyleColor(ImGuiCol_Text, Theme::C().windowBg);
+						ImGui::BeginDisabled(!playable);
 						if (ImGui::Button("  PLAY  "))
 							startPlay(pack);
+						ImGui::EndDisabled();
 						ImGui::PopStyleColor(3);
+						if (!playable)
+							ImGui::SetItemTooltip("Playing %s packs isn't supported yet.", PackSourceName(pack.source));
 					}
 					ImGui::PopFont();
 					if (play.busy && !play.playing && play.progress >= 0.0)
@@ -1245,7 +1575,22 @@ int main(int argc, char** argv)
 						state.pack.name.empty() ? state.fileName.c_str() : state.pack.name.c_str());
 					if (!state.pack.name.empty())
 						ImGui::TextDisabled("%s", state.fileName.c_str());
-					if (state.active) {
+					if (state.planInstall) {
+						if (state.active) {
+							if (state.stageTotal > 0)
+								ImGui::TextDisabled("%s...  %llu of %llu", state.stage.c_str(),
+									static_cast<unsigned long long>(state.stageDone), static_cast<unsigned long long>(state.stageTotal));
+							else
+								ImGui::TextDisabled("%s...", state.stage.c_str());
+						} else if (!state.error.empty()) {
+							ImGui::TextColored(Theme::C().error, "Install failed: %s", state.error.c_str());
+						} else if (!state.blocked.empty()) {
+							ImGui::TextColored(Theme::C().error, "Installed - %llu file(s) need a manual download (see Discover)",
+								static_cast<unsigned long long>(state.blocked.size()));
+						} else {
+							ImGui::TextColored(Theme::C().accent, "Installed");
+						}
+					} else if (state.active) {
 						if (state.total > 0.0)
 							ImGui::TextDisabled("Downloading...  %s of %s", FormatFileSize(static_cast<std::uint64_t>(state.now)).c_str(),
 								FormatFileSize(static_cast<std::uint64_t>(state.total)).c_str());
@@ -1268,7 +1613,10 @@ int main(int argc, char** argv)
 						if (ImGui::Button("Install files"))
 							startInstall(item.first, state.pack, state.outPath);
 					}
-					if (state.active && state.total > 0.0)
+					if (state.planInstall && state.active)
+						Widgets::ThinProgressBar(state.stageTotal > 0
+							? static_cast<float>(static_cast<double>(state.stageDone) / static_cast<double>(state.stageTotal)) : 0.0f);
+					else if (state.active && state.total > 0.0)
 						Widgets::ThinProgressBar(static_cast<float>(state.now / state.total));
 					else if (state.installing)
 						Widgets::ThinProgressBar(static_cast<float>(state.installProgress));
@@ -1278,8 +1626,14 @@ int main(int argc, char** argv)
 				settingsContext.accountName = account.type == Account::Type::None ? std::string() : account.name;
 				settingsContext.accountKind = account.type == Account::Type::Microsoft ? "Microsoft account"
 					: account.type == Account::Type::Offline ? "Offline (singleplayer)" : "No account yet";
-				if (DrawSettingsPage(settings, settingsContext))
+				const std::string oldCurseForgeKey = CurseForgeApiKey();
+				if (DrawSettingsPage(settings, settingsContext)) {
 					settingsDirty = true;
+					SetCurseForgeApiKey(settings.curseForgeApiKey);
+					// A new key: search CurseForge again next time its sub-page is shown.
+					if (CurseForgeApiKey() != oldCurseForgeKey && views.count(PackSource::CurseForge) > 0)
+						views[PackSource::CurseForge].searchPending = true;
+				}
 			}
 
 			// "Stop game" confirmation.

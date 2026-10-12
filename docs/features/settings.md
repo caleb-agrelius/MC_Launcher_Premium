@@ -13,10 +13,10 @@ Each tab is a set of cards with a label (and hint) on the left and the control o
 | **Minecraft** | Defaults used for every pack when Play is pressed (see [launching.md](launching.md)). **Memory:** maximum (`-Xmx`, 1 GB up to the PC's RAM, warning above 75% of it) and starting (`-Xms`, Automatic or a fixed amount) sliders in 0.5 GB steps. **Java:** executable path (empty = Mojang's runtime; a red note appears if the path doesn't exist) and extra JVM arguments. **Game window:** fullscreen, custom window size (off = Minecraft's 854 x 480), and what the launcher does when the game starts. **Reset Minecraft settings to defaults** |
 | **Game options** | Vanilla Minecraft options applied to every pack (see below): how they're applied (every launch, or only a pack's first launch), how many are on, **Turn all off**, then cards for Video, Controls, Sound, Chat & accessibility, and First launch |
 | **Account** | The current account (name and type, or "Not signed in") with a pointer to the sidebar's ACCOUNT section, and the **Azure client ID** used for Microsoft sign-in (`microsoftClientId`, see [accounts.md](accounts.md)) |
-| **Downloads** | Results per search (10–100); the `downloads/`, `installs/`, `instances/` and `minecraft/` paths with **Open** buttons |
-| **About** | Version, Windows display scaling, system memory, the data folder (with **Open**), keyboard shortcuts, and a Modrinth / not-affiliated note |
+| **Downloads** | Results per search (10–100; CurseForge shows at most 50); the **CurseForge API key** (masked, with **Show**/**Hide**; empty uses the `MCLP_CURSEFORGE_API_KEY` environment variable, see [curseforge.md](curseforge.md)); the `downloads/`, `installs/`, `instances/` and `minecraft/` paths with **Open** buttons |
+| **About** | Version, Windows display scaling, system memory, the data folder (with **Open**), keyboard shortcuts, and a pack-sources / not-affiliated note |
 
-`SettingsPageContext` passes in the app version (`kAppVersion` in `main.cpp`), the data folder, total RAM (`Platform::SystemMemoryMb`), the DPI scale, and the current account's name and type. **Open** buttons use `Platform::OpenFolder`, which creates the folder if needed and opens it in Explorer.
+`SettingsPageContext` passes in the app version (`kAppVersion` in `main.cpp`), the data folder, total RAM (`Platform::SystemMemoryMb`), the DPI scale, the current account's name and type, and whether `MCLP_CURSEFORGE_API_KEY` is set. **Open** buttons use `Platform::OpenFolder`, which creates the folder if needed and opens it in Explorer.
 
 ## `settings.json`
 Saved in the data folder (gitignored). A missing or invalid file gives the defaults. Values are clamped on load.
@@ -27,8 +27,10 @@ Saved in the data folder (gitignored). A missing or invalid file gives the defau
 | `theme` | `"grass"` | A theme id from [ui-theme.md](ui-theme.md). Unknown ids fall back to Grass Block |
 | `reduceMotion` | false | No image fade-ins or toast animations |
 | `showGalleryBanners` | true | When false, pack banners don't load gallery images |
-| `searchLimit` | 30 | Modrinth results per search, 10–100 |
+| `searchLimit` | 30 | Results per search, 10–100 (CurseForge caps it at 50) |
+| `discoverSource` | `"modrinth"` | The last Discover sub-page, a source key (see [discover.md](discover.md)). Unknown keys fall back to the first source |
 | `microsoftClientId` | `""` | Azure app ID for Microsoft sign-in; empty disables it |
+| `curseForgeApiKey` | `""` | CurseForge API key, stored in plain text; empty uses `MCLP_CURSEFORGE_API_KEY` |
 | `launch.minMemoryMb` | 0 | `-Xms`; 0 = let Java decide; at most `maxMemoryMb` |
 | `launch.maxMemoryMb` | 4096 | `-Xmx`; 1024–32768. A top-level `maxMemoryMb` (older files) is read into this |
 | `launch.javaPath` | `""` | Empty = Mojang's runtime for the Minecraft version |

@@ -4,6 +4,42 @@
 
 using json = nlohmann::json;
 
+const char* PackSourceName(PackSource source)
+{
+	switch (source) {
+	case PackSource::Modrinth: return "Modrinth";
+	case PackSource::CurseForge: return "CurseForge";
+	case PackSource::FTB: return "FTB";
+	case PackSource::Technic: return "Technic";
+	case PackSource::ATLauncher: return "ATLauncher";
+	case PackSource::LocalIndex: break;
+	}
+	return "Local";
+}
+
+const char* PackSourceKey(PackSource source)
+{
+	switch (source) {
+	case PackSource::Modrinth: return "modrinth";
+	case PackSource::CurseForge: return "curseforge";
+	case PackSource::FTB: return "ftb";
+	case PackSource::Technic: return "technic";
+	case PackSource::ATLauncher: return "atlauncher";
+	case PackSource::LocalIndex: break;
+	}
+	return "local";
+}
+
+PackSource PackSourceFromKey(const std::string& key)
+{
+	for (PackSource source : { PackSource::Modrinth, PackSource::CurseForge, PackSource::FTB,
+			 PackSource::Technic, PackSource::ATLauncher }) {
+		if (key == PackSourceKey(source))
+			return source;
+	}
+	return PackSource::LocalIndex;
+}
+
 std::vector<Modpack> LoadIndex(const std::string& path)
 {
 	std::vector<Modpack> out;

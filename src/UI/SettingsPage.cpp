@@ -601,9 +601,29 @@ bool DrawDownloads(Settings& settings, const SettingsPageContext& context)
 	BeginCard("search_card");
 	CardTitle("Search");
 	if (BeginRows("search_rows")) {
-		Row("Results per search", "How many packs each Modrinth search shows.");
+		Row("Results per search", "How many packs each search shows. CurseForge shows at most 50.");
 		changed |= ImGui::SliderInt("##search_limit", &settings.searchLimit, kMinSearchLimit, kMaxSearchLimit);
 		settings.searchLimit = std::clamp(settings.searchLimit, kMinSearchLimit, kMaxSearchLimit);
+		EndRows();
+	}
+	EndCard();
+
+	BeginCard("curseforge_card");
+	CardTitle("CurseForge", "Browsing and installing CurseForge packs needs your own API key from "
+		"console.curseforge.com. It's saved in settings.json in the data folder.");
+	if (BeginRows("curseforge_rows")) {
+		Row("API key", context.curseForgeEnvKeySet
+			? "Leave empty to use the MCLP_CURSEFORGE_API_KEY environment variable, which is set."
+			: "Or leave empty and set the MCLP_CURSEFORGE_API_KEY environment variable.");
+		static bool showKey = false;
+		const float showWidth = ImGui::CalcTextSize("Hide").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+		ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - showWidth - ImGui::GetStyle().ItemSpacing.x);
+		changed |= ImGui::InputTextWithHint("##curseforge_key", context.curseForgeEnvKeySet
+			? "Using the environment variable" : "Not set", &settings.curseForgeApiKey,
+			showKey ? ImGuiInputTextFlags_None : ImGuiInputTextFlags_Password);
+		ImGui::SameLine();
+		if (ImGui::Button(showKey ? "Hide" : "Show", ImVec2(showWidth, 0.0f)))
+			showKey = !showKey;
 		EndRows();
 	}
 	EndCard();
@@ -659,7 +679,8 @@ void DrawAbout(const SettingsPageContext& context)
 	EndCard();
 
 	ImGui::PushTextWrapPos(0.0f);
-	ImGui::TextDisabled("Modpack data and images come from Modrinth. Not affiliated with Mojang or Microsoft.");
+	ImGui::TextDisabled("Modpack data and images come from Modrinth, CurseForge, FTB, Technic and ATLauncher. "
+		"Not affiliated with Mojang or Microsoft.");
 	ImGui::PopTextWrapPos();
 }
 

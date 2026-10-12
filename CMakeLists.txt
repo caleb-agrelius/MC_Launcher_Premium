@@ -33,10 +33,16 @@ add_executable(MC_Launcher_Premium
   src/Game/Loaders.cpp
   src/Game/PackInstance.cpp
   src/Model/Modpack.cpp
+  src/Network/AtLauncher.cpp
+  src/Network/CurseForge.cpp
+  src/Network/Ftb.cpp
   src/Network/HttpClient.cpp
   src/Network/MicrosoftAuth.cpp
   src/Network/Modrinth.cpp
+  src/Network/PackSources.cpp
+  src/Network/Technic.cpp
   src/Storage/Account.cpp
+  src/Storage/InstallPlan.cpp
   src/Storage/Installer.cpp
   src/Storage/Library.cpp
   src/Storage/Settings.cpp
@@ -46,6 +52,8 @@ add_executable(MC_Launcher_Premium
   src/UI/Theme.cpp
   src/UI/Toasts.cpp
   src/UI/Widgets.cpp
+  src/Util/Hash.cpp
+  src/Util/Paths.cpp
   src/Util/Process.cpp
   src/Util/Sha1.cpp
   ${imgui_backend_source_SOURCE_DIR}/backends/imgui_impl_glfw.cpp

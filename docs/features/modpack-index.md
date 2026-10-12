@@ -40,6 +40,13 @@ A JSON array of modpacks:
 
 ## Data types
 `Modpack` and `PackFile` structs in `src/Model/Modpack.h`.
+- Local packs have `source = PackSource::LocalIndex`.
+- Online packs also carry:
+  - `source`
+  - `sourceId` and `sourceVersionId`: the source's own ids
+  - `websiteUrl`
+  - `sourceUrl` and `sourceIsSolder` (Technic only)
+- `PackSourceName()` and `PackSourceKey()` give a source's display name and its key in saved JSON (`modrinth`, `curseforge`, `ftb`, `technic`, `atlauncher`, `local`). See [pack-sources.md](pack-sources.md).
 
 ## Behavior notes
 - Missing fields default to empty strings / `0`.

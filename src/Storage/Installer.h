@@ -14,3 +14,22 @@ bool InstallZip(const std::string& zipPath,
 				std::function<void(int,int)> progress = nullptr,
 				std::string* err = nullptr,
 				const std::atomic<bool>* cancel = nullptr);
+
+// Like InstallZip, but only extracts entries under prefix (e.g. "overrides/"), with the
+// prefix removed from their paths. An empty prefix extracts everything.
+bool ExtractZip(const std::string& zipPath,
+				const std::string& targetDir,
+				const std::string& prefix,
+				std::function<void(int,int)> progress = nullptr,
+				std::string* err = nullptr,
+				const std::atomic<bool>* cancel = nullptr);
+
+// Reads one entry (e.g. "manifest.json") from a zip into out.
+bool ReadZipEntry(const std::string& zipPath,
+				  const std::string& entryName,
+				  std::string& out,
+				  std::string* err = nullptr);
+
+// False for paths that are absolute or climb out of the folder they're joined to
+// (e.g. "../evil.dll", "C:/evil.dll", "a/../../evil.dll"). Empty paths are allowed.
+bool IsSafeRelativePath(const std::string& path);

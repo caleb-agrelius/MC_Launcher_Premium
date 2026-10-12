@@ -76,7 +76,7 @@ Color themes, fonts, DPI and UI scaling, shared drawing helpers, and toast notif
 - `Theme::C()` returns a copy of the palette made by the last `Apply()`, so editing or deleting a custom theme never leaves it pointing at a removed entry.
 
 ## Settings (`src/Storage/Settings.{h,cpp}`)
-- `settings.json` in the data folder is gitignored. It holds `uiScale`, `microsoftClientId` (see [accounts.md](accounts.md)) and `maxMemoryMb` (Java heap for Minecraft, 1024–32768, default 4096; see [launching.md](launching.md)).
+- `settings.json` in the data folder is gitignored. Its fields, including `uiScale` and `discoverSource` (the last Discover sub-page, a source key such as `"modrinth"`), are listed in [settings.md](settings.md).
 - `LoadSettings` returns the defaults if the file is missing or invalid, and clamps the scale to its range.
 - `SaveSettings` writes the scale rounded to two decimals.
 
@@ -91,6 +91,10 @@ Color themes, fonts, DPI and UI scaling, shared drawing helpers, and toast notif
 | `ThinProgressBar` | An 8px accent progress bar with no text |
 | `Toggle` | An on/off switch in the theme's colors |
 | `NavItem` | A sidebar entry with an accent bar when selected, and an optional count badge |
+| `NavGroupItem` | A `NavItem` heading a collapsible group, with a chevron (down when expanded, right when collapsed) |
+| `SubNavItem` | A smaller, indented sidebar entry with a dot (accent-colored when selected), used for Discover's source sub-pages |
+| `ListItem` | A text row for lists and combo popups (Discover's loader and sort filters); closes its popup when clicked |
+| `WrappedText` | Colored text that wraps at the window edge (Discover's error statuses) |
 | `EmptyState` | A centered block illustration, title, hint, and optional button for empty pages |
 | `ThemeCard` | A theme swatch: a miniature launcher drawn in the theme's colors, its name, and a check mark when selected |
 | `PackRow` | A pack list row (see [discover.md](discover.md)) |
@@ -99,7 +103,9 @@ Color themes, fonts, DPI and UI scaling, shared drawing helpers, and toast notif
 
 Images fade in over 0.25 s (`FadeAlpha`), unless **Reduce motion** is on (`Widgets::SetReduceMotion`).
 
+**Selection highlights:** `NavItem`, `SubNavItem`, `PackRow` and `ListItem` share `RoundedSelectable`, an `InvisibleButton` with its own highlight instead of `ImGui::Selectable`. The highlight is a rounded rectangle (`ImGuiCol_Header` when selected, `HeaderHovered` on hover, `HeaderActive` while pressed). It is drawn inside the content region, so it never reaches the panel's padding or border. The accent selection bar sits just inside the highlight's left edge.
+
 ## Toasts (`src/UI/Toasts.{h,cpp}`)
 - `Toasts::Push(kind, title, body)` queues a notification. Kinds are `Info`, `Success`, and `Error`, and set the color of the stripe on the left. Call it on the UI thread; background threads post through `UiQueue`.
 - `Toasts::Draw(reduceMotion)` draws them in the bottom-right corner, newest at the bottom, each in its own non-interactive window. A toast stays 4.5 s, fading and sliding in and out unless reduce motion is on. At most 4 are kept.
-- Current toasts: download complete or failed, and files extracted or extraction failed.
+- Current toasts: download complete or failed, files extracted or extraction failed, whole-pack install finished or failed, Minecraft started, and play failed.
