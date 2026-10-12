@@ -35,6 +35,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <initializer_list>
 #include <iterator>
 #include <map>
 #include <memory>
@@ -310,6 +311,18 @@ static void AlignRightForButton(const char* label)
 	ImGui::SameLine(std::max(ImGui::GetCursorPosX(), x));
 }
 
+// Moves the cursor so a row of buttons with these labels ends at the right edge.
+static void AlignRightForButtons(std::initializer_list<const char*> labels)
+{
+	const ImGuiStyle& style = ImGui::GetStyle();
+	float width = 0.0f;
+	for (const char* label : labels)
+		width += ImGui::CalcTextSize(label, nullptr, true).x + style.FramePadding.x * 2.0f;
+	width += style.ItemSpacing.x * static_cast<float>(labels.size() - 1);
+	const float x = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - width;
+	ImGui::SameLine(std::max(ImGui::GetCursorPosX(), x));
+}
+
 // Starts a card: a bordered child with the card background color that grows to fit
 // its contents. Pair with EndCard().
 static void BeginCard(const char* id)
@@ -388,7 +401,9 @@ int main(int argc, char** argv)
 		float dpiScale = 1.0f;
 		glfwGetWindowContentScale(window, &dpiScale, nullptr);
 		float appliedUiScale = settings.uiScale;
+		Theme::SetCustomThemes(settings.customThemes);
 		std::size_t appliedTheme = Theme::FindTheme(settings.theme);
+		int appliedThemeRevision = Theme::Revision();
 		Theme::LoadFonts();
 		Theme::Apply(appliedTheme, dpiScale, settings.uiScale);
 		ApplyTitleBarColors(window, Theme::C());
@@ -589,9 +604,11 @@ int main(int argc, char** argv)
 			double progress = -1.0;
 			std::string error;
 			std::shared_ptr<std::atomic<bool>> cancel = std::make_shared<std::atomic<bool>>(false);
+			std::shared_ptr<std::atomic<bool>> stop = std::make_shared<std::atomic<bool>>(false); // force-close the game
 		};
 		std::map<std::string, PlayState> plays;
 		std::mutex playsMutex;
+		std::string stopConfirmPackId; // pack whose "Stop game" confirmation is open
 
 		// Play reads the modrinth.index.json of an extracted .mrpack. Packs installed from a
 		// source's install plan (CurseForge, FTB, ...) have no such index yet.
@@ -606,6 +623,7 @@ int main(int argc, char** argv)
 				return;
 			}
 			auto cancel = std::make_shared<std::atomic<bool>>(false);
+			auto stop = std::make_shared<std::atomic<bool>>(false);
 			{
 				std::lock_guard<std::mutex> lock(playsMutex);
 				PlayState& state = plays[pack.id];
@@ -613,6 +631,7 @@ int main(int argc, char** argv)
 				state.busy = true;
 				state.step = "Starting";
 				state.cancel = cancel;
+				state.stop = stop;
 			}
 			PlayRequest request;
 			request.gameRoot = fs::absolute(kGameRoot);
@@ -620,6 +639,8 @@ int main(int argc, char** argv)
 			request.instanceDir = fs::absolute(fs::path(kInstancesRoot) / pack.id);
 			request.account = account;
 			request.launch = settings.launch;
+			request.gameOptions = settings.gameOptions;
+			request.stopGame = stop.get(); // kept alive by the worker's copy of stop
 			const std::string clientId = settings.microsoftClientId;
 			const std::string packId = pack.id;
 			const std::string packName = pack.name;
@@ -627,7 +648,7 @@ int main(int argc, char** argv)
 			log << "Play " << packId << " as " << account.name << "\n";
 			log.flush();
 			StartWorker(workers, [&http, &uiQueue, &plays, &playsMutex, &setAccount, &log, window, request, clientId, packId,
-				packName, afterLaunch, cancel]() mutable {
+				packName, afterLaunch, cancel, stop]() mutable {
 				bool started = false; // Minecraft's process is running
 				auto progress = [&](const std::string& step, double fraction) {
 					std::lock_guard<std::mutex> lock(playsMutex);
@@ -667,17 +688,20 @@ int main(int argc, char** argv)
 					PlayState& state = plays[packId];
 					state.busy = false;
 					state.playing = false;
-					state.error = (ok || cancel->load()) ? std::string() : error;
+					state.error = (ok || cancel->load() || stop->load()) ? std::string() : error;
 				}
-				const bool cancelled = cancel->load();
-				uiQueue.Post([&log, window, packId, packName, ok, cancelled, started, afterLaunch, error]() {
+				const bool cancelled = cancel->load() || stop->load();
+				const bool stopped = stop->load();
+				uiQueue.Post([&log, window, packId, packName, ok, cancelled, stopped, started, afterLaunch, error]() {
 					if (ok)
 						log << "Minecraft closed (" << packId << ")\n";
 					else
 						log << "Play " << packId << " failed: " << error << "\n";
 					if (started && afterLaunch == AfterLaunch::Minimize)
 						glfwRestoreWindow(window);
-					if (!ok && !cancelled)
+					if (stopped)
+						Toasts::Push(Toasts::Kind::Info, "Minecraft was closed", packName);
+					else if (!ok && !cancelled)
 						Toasts::Push(Toasts::Kind::Error, "Couldn't play " + packName, error);
 				});
 			});
@@ -847,9 +871,11 @@ int main(int argc, char** argv)
 			// or the theme or UI scale changed last frame.
 			float contentScale = dpiScale;
 			glfwGetWindowContentScale(window, &contentScale, nullptr);
+			Theme::SetCustomThemes(settings.customThemes); // picks up edits from the theme editor
 			const std::size_t wantedTheme = Theme::FindTheme(settings.theme);
-			if (contentScale > 0.0f && (contentScale != dpiScale || settings.uiScale != appliedUiScale || wantedTheme != appliedTheme)) {
-				const bool themeChanged = wantedTheme != appliedTheme;
+			const bool themeChanged = wantedTheme != appliedTheme || Theme::Revision() != appliedThemeRevision;
+			if (contentScale > 0.0f && (contentScale != dpiScale || settings.uiScale != appliedUiScale || themeChanged)) {
+				appliedThemeRevision = Theme::Revision();
 				dpiScale = contentScale;
 				appliedUiScale = settings.uiScale;
 				appliedTheme = wantedTheme;
@@ -998,26 +1024,6 @@ int main(int argc, char** argv)
 				}
 			}
 
-			// Footer: UI scale control.
-			const float footerHeight = ImGui::GetFrameHeight() + ImGui::GetTextLineHeightWithSpacing() * 2.0f +
-				ImGui::GetStyle().ItemSpacing.y * 3.0f;
-			ImGui::SetCursorPosY(std::max(ImGui::GetCursorPosY(), ImGui::GetWindowHeight() - footerHeight - ImGui::GetStyle().WindowPadding.y));
-			ImGui::Separator();
-			Widgets::SectionLabel("UI SCALE");
-			if (ImGui::Button("-", ImVec2(ImGui::GetFrameHeight(), 0.0f)))
-				setUiScale(settings.uiScale - kUiScaleStep);
-			ImGui::SetItemTooltip("Smaller (Ctrl -)");
-			ImGui::SameLine();
-			char scaleLabel[32];
-			std::snprintf(scaleLabel, sizeof(scaleLabel), "%.0f%%##scale", settings.uiScale * 100.0f);
-			const float plusWidth = ImGui::GetFrameHeight();
-			if (ImGui::Button(scaleLabel, ImVec2(ImGui::GetContentRegionAvail().x - plusWidth - ImGui::GetStyle().ItemSpacing.x, 0.0f)))
-				setUiScale(1.0f);
-			ImGui::SetItemTooltip("Reset to 100%% (Ctrl 0)");
-			ImGui::SameLine();
-			if (ImGui::Button("+", ImVec2(plusWidth, 0.0f)))
-				setUiScale(settings.uiScale + kUiScaleStep);
-			ImGui::SetItemTooltip("Larger (Ctrl +)");
 			ImGui::EndChild();
 
 			// Offline name prompt.
@@ -1052,8 +1058,9 @@ int main(int argc, char** argv)
 
 			// ---- Main content ----
 			ImGui::SameLine();
-			ImGui::BeginChild("main_content", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None);
-			ImGui::Separator();
+			ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(24.0f), S(18.0f)));
+			ImGui::BeginChild("main_content", ImVec2(0.0f, 0.0f), ImGuiChildFlags_AlwaysUseWindowPadding);
+			ImGui::PopStyleVar();
 			const char* breadcrumb = page == Page::Discover ? "MINECRAFT  /  MODPACKS"
 				: page == Page::Library ? "MINECRAFT  /  LIBRARY"
 				: page == Page::Downloads ? "MINECRAFT  /  DOWNLOADS" : "LAUNCHER  /  SETTINGS";
@@ -1511,30 +1518,39 @@ int main(int argc, char** argv)
 					}
 					ImGui::EndGroup();
 
+					// Actions, right-aligned as one group so nothing runs past the card's edge.
 					ImGui::PushFont(fonts.bold, 0.0f);
-					if (play.busy && !play.playing) {
-						AlignRightForButton("Cancel");
+					if (play.playing) {
+						AlignRightForButtons({ "Stop game" });
+						ImGui::PushStyleColor(ImGuiCol_Button, Theme::Mix(Theme::C().cardBg, Theme::C().error, 0.55f));
+						ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Theme::Mix(Theme::C().cardBg, Theme::C().error, 0.75f));
+						if (ImGui::Button("Stop game"))
+							stopConfirmPackId = pack.id;
+						ImGui::PopStyleColor(2);
+						ImGui::SetItemTooltip("Force-close Minecraft");
+					} else if (play.busy) {
+						AlignRightForButtons({ "Cancel" });
 						if (ImGui::Button("Cancel"))
 							play.cancel->store(true);
-					} else if (!play.busy) {
-						AlignRightForButton("  PLAY  ");
-						ImGui::PushStyleColor(ImGuiCol_Button, Theme::C().accent);
-						ImGui::BeginDisabled(!playable);
-						if (ImGui::Button("  PLAY  "))
-							startPlay(pack);
-						ImGui::EndDisabled();
-						ImGui::PopStyleColor();
-						if (!playable)
-							ImGui::SetItemTooltip("Playing %s packs isn't supported yet.", PackSourceName(pack.source));
-					}
-					ImGui::PopFont();
-					if (!play.busy) {
-						ImGui::SameLine();
+					} else {
+						AlignRightForButtons({ "Open folder", "  PLAY  " });
 						if (ImGui::Button("Open folder"))
 							Platform::OpenFolder((playable ? fs::path(kInstancesRoot) / pack.id
 								: fs::path("installs") / pack.id / "minecraft").string());
 						ImGui::SetItemTooltip("Open the game folder (mods, config, saves, logs)");
+						ImGui::SameLine();
+						ImGui::PushStyleColor(ImGuiCol_Button, Theme::C().accent);
+						ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Theme::Mix(Theme::C().accent, Theme::C().text, 0.15f));
+						ImGui::PushStyleColor(ImGuiCol_Text, Theme::C().windowBg);
+						ImGui::BeginDisabled(!playable);
+						if (ImGui::Button("  PLAY  "))
+							startPlay(pack);
+						ImGui::EndDisabled();
+						ImGui::PopStyleColor(3);
+						if (!playable)
+							ImGui::SetItemTooltip("Playing %s packs isn't supported yet.", PackSourceName(pack.source));
 					}
+					ImGui::PopFont();
 					if (play.busy && !play.playing && play.progress >= 0.0)
 						Widgets::ThinProgressBar(static_cast<float>(play.progress));
 					EndCard();
@@ -1620,6 +1636,33 @@ int main(int argc, char** argv)
 					// A new key: search CurseForge again next time its sub-page is shown.
 					if (CurseForgeApiKey() != oldCurseForgeKey && views.count(PackSource::CurseForge) > 0)
 						views[PackSource::CurseForge].searchPending = true;
+				}
+			}
+
+			// "Stop game" confirmation.
+			if (!stopConfirmPackId.empty()) {
+				ImGui::OpenPopup("Stop Minecraft?");
+				ImGui::SetNextWindowSize(ImVec2(S(420.0f), 0.0f));
+				if (ImGui::BeginPopupModal("Stop Minecraft?", nullptr, ImGuiWindowFlags_NoResize)) {
+					ImGui::TextWrapped("Minecraft will be closed right away. Anything not saved since the last autosave "
+						"(usually under a minute ago) will be lost.");
+					ImGui::Spacing();
+					ImGui::PushStyleColor(ImGuiCol_Button, Theme::Mix(Theme::C().cardBg, Theme::C().error, 0.55f));
+					if (ImGui::Button("Stop game")) {
+						std::lock_guard<std::mutex> lock(playsMutex);
+						const auto it = plays.find(stopConfirmPackId);
+						if (it != plays.end())
+							it->second.stop->store(true);
+						stopConfirmPackId.clear();
+						ImGui::CloseCurrentPopup();
+					}
+					ImGui::PopStyleColor();
+					ImGui::SameLine();
+					if (ImGui::Button("Keep playing")) {
+						stopConfirmPackId.clear();
+						ImGui::CloseCurrentPopup();
+					}
+					ImGui::EndPopup();
 				}
 			}
 

@@ -1,5 +1,6 @@
 #include "SettingsPage.h"
 
+#include "Game/GameOptions.h"
 #include "Platform.h"
 #include "Storage/Settings.h"
 #include "Theme.h"
@@ -17,13 +18,14 @@ using Theme::S;
 
 namespace {
 
-enum class Tab { Appearance, Minecraft, Account, Downloads, About };
+enum class Tab { Appearance, Minecraft, GameOptions, Account, Downloads, About };
 
 const char* TabName(Tab tab)
 {
 	switch (tab) {
 	case Tab::Appearance: return "Appearance";
 	case Tab::Minecraft: return "Minecraft";
+	case Tab::GameOptions: return "Game options";
 	case Tab::Account: return "Account";
 	case Tab::Downloads: return "Downloads";
 	case Tab::About: return "About";
@@ -36,7 +38,7 @@ Tab g_tab = Tab::Appearance;
 // Pill-style tab strip that switches g_tab.
 void TabStrip()
 {
-	const Tab tabs[] = { Tab::Appearance, Tab::Minecraft, Tab::Account, Tab::Downloads, Tab::About };
+	const Tab tabs[] = { Tab::Appearance, Tab::Minecraft, Tab::GameOptions, Tab::Account, Tab::Downloads, Tab::About };
 	ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, S(18.0f));
 	ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(S(18.0f), S(8.0f)));
 	for (Tab tab : tabs) {
@@ -162,37 +164,253 @@ std::string FormatGb(int mb)
 	return text;
 }
 
+// A new custom theme, copied from `base`, with an unused id and name.
+CustomTheme NewCustomTheme(const Settings& settings, const Theme::ThemeInfo& base)
+{
+	int number = 1;
+	auto taken = [&](const std::string& id) {
+		for (const CustomTheme& theme : settings.customThemes) {
+			if (theme.id == id)
+				return true;
+		}
+		return false;
+	};
+	while (taken("custom-" + std::to_string(number)))
+		++number;
+	CustomTheme theme;
+	theme.id = "custom-" + std::to_string(number);
+	theme.name = "My theme " + std::to_string(number);
+	Theme::PaletteToCustom(base.palette, theme);
+	return theme;
+}
+
+// Editor for the selected custom theme. Edits apply live: main.cpp re-applies the
+// style when the custom themes change.
+bool DrawThemeEditor(Settings& settings)
+{
+	auto it = std::find_if(settings.customThemes.begin(), settings.customThemes.end(),
+		[&](const CustomTheme& theme) { return theme.id == settings.theme; });
+	if (it == settings.customThemes.end())
+		return false;
+	CustomTheme& theme = *it;
+	bool changed = false;
+
+	BeginCard("theme_editor");
+	CardTitle("Edit your theme", "Changes apply as you make them and are saved automatically.");
+	if (BeginRows("theme_editor_rows")) {
+		Row("Name");
+		changed |= ImGui::InputText("##theme_name", &theme.name);
+
+		Row("Start from", "Copies another theme's colors into this one.");
+		static int startFrom = 0;
+		std::vector<const char*> names;
+		for (std::size_t i = 0; i < Theme::BuiltInThemeCount(); ++i)
+			names.push_back(Theme::Themes()[i].name.c_str());
+		const float applyWidth = ImGui::CalcTextSize("Copy colors").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+		ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - applyWidth - ImGui::GetStyle().ItemSpacing.x);
+		ImGui::Combo("##start_from", &startFrom, names.data(), static_cast<int>(names.size()));
+		ImGui::SameLine();
+		if (ImGui::Button("Copy colors")) {
+			Theme::PaletteToCustom(Theme::Themes()[static_cast<std::size_t>(startFrom)].palette, theme);
+			changed = true;
+		}
+
+		Row("Light theme", "Use with light backgrounds and dark text.");
+		changed |= Widgets::Toggle("##theme_light", &theme.light);
+
+		const auto& fields = Theme::PaletteFields();
+		for (std::size_t i = 0; i < fields.size(); ++i) {
+			Row(fields[i].label);
+			ImGui::PushID(static_cast<int>(i));
+			changed |= ImGui::ColorEdit3("##color", &theme.colors[i * 3],
+				ImGuiColorEditFlags_DisplayHex | ImGuiColorEditFlags_InputRGB);
+			ImGui::PopID();
+		}
+		EndRows();
+	}
+	ImGui::Dummy(ImVec2(0.0f, S(4.0f)));
+	if (ImGui::Button("Duplicate")) {
+		const Theme::ThemeInfo copySource{ theme.id, theme.name, "", Theme::PaletteFromCustom(theme), true };
+		CustomTheme copy = NewCustomTheme(settings, copySource);
+		copy.name = theme.name + " copy";
+		settings.customThemes.push_back(std::move(copy)); // invalidates `theme`
+		settings.theme = settings.customThemes.back().id;
+		EndCard();
+		return true;
+	}
+	ImGui::SameLine();
+	ImGui::PushStyleColor(ImGuiCol_Button, Theme::Mix(Theme::C().cardBg, Theme::C().error, 0.45f));
+	if (ImGui::Button("Delete theme")) {
+		settings.customThemes.erase(it);
+		settings.theme = Theme::Themes()[0].id;
+		changed = true;
+	}
+	ImGui::PopStyleColor();
+	EndCard();
+	return changed;
+}
+
+// Settings > Game options: vanilla options.txt values applied to every pack.
+bool DrawGameOptions(Settings& settings)
+{
+	bool changed = false;
+	GameOptionsSettings& options = settings.gameOptions;
+
+	Notice("Turn an option on to apply it to every pack when you press Play. Options left off keep "
+		"whatever the pack or your in-game settings use.", Theme::C().info);
+
+	BeginCard("game_options_mode");
+	CardTitle("How they're applied");
+	if (BeginRows("game_options_mode_rows")) {
+		Row("Apply", "Every launch keeps all packs in sync but undoes in-game changes to these options.");
+		int mode = options.everyLaunch ? 0 : 1;
+		const char* modes[] = { "Every time a pack starts", "Only the first time each pack starts" };
+		if (ImGui::Combo("##apply_mode", &mode, modes, 2)) {
+			options.everyLaunch = mode == 0;
+			changed = true;
+		}
+		Row("Options turned on");
+		ImGui::AlignTextToFramePadding();
+		ImGui::Text("%d", static_cast<int>(options.values.size()));
+		ImGui::SameLine(0.0f, S(16.0f));
+		ImGui::BeginDisabled(options.values.empty());
+		if (ImGui::Button("Turn all off")) {
+			options.values.clear();
+			changed = true;
+		}
+		ImGui::EndDisabled();
+		EndRows();
+	}
+	EndCard();
+
+	const char* groups[] = { "Video", "Controls", "Sound", "Chat & accessibility", "First launch" };
+	for (const char* group : groups) {
+		ImGui::PushID(group);
+		BeginCard("group");
+		CardTitle(group);
+		if (BeginRows("rows")) {
+			for (const GameOptionDef& def : GameOptionDefs()) {
+				if (std::string(def.group) != group)
+					continue;
+				ImGui::PushID(def.key);
+				Row(def.label, def.hint);
+				auto found = options.values.find(def.key);
+				bool on = found != options.values.end();
+				if (Widgets::Toggle("##on", &on)) {
+					if (on)
+						options.values[def.key] = def.defaultValue;
+					else
+						options.values.erase(def.key);
+					changed = true;
+				}
+				ImGui::SetItemTooltip(on ? "Applied to every pack" : "Not applied: packs keep their own setting");
+				found = options.values.find(def.key);
+				std::string value = found != options.values.end() ? found->second : std::string(def.defaultValue);
+				ImGui::SameLine(0.0f, S(16.0f));
+				ImGui::BeginDisabled(!on);
+				ImGui::SetNextItemWidth(-FLT_MIN);
+				bool edited = false;
+				switch (def.type) {
+				case GameOptionType::Toggle: {
+					bool checked = (value == "true") != def.inverted;
+					if (Widgets::Toggle("##value", &checked)) {
+						value = (checked != def.inverted) ? "true" : "false";
+						edited = true;
+					}
+					break;
+				}
+				case GameOptionType::Slider: {
+					float display = GameOptionToDisplay(def, value);
+					const bool unlimited = std::string(def.key) == "maxFps" && display >= def.max - 0.5f;
+					if (ImGui::SliderFloat("##value", &display, def.min, def.max, unlimited ? "Unlimited" : def.format)) {
+						value = GameOptionFromDisplay(def, display);
+						edited = true;
+					}
+					break;
+				}
+				case GameOptionType::Choice: {
+					int index = 0;
+					std::vector<const char*> labels;
+					for (std::size_t i = 0; i < def.choices.size(); ++i) {
+						labels.push_back(def.choices[i].label);
+						if (value == def.choices[i].value)
+							index = static_cast<int>(i);
+					}
+					if (ImGui::Combo("##value", &index, labels.data(), static_cast<int>(labels.size()))) {
+						value = def.choices[static_cast<std::size_t>(index)].value;
+						edited = true;
+					}
+					break;
+				}
+				case GameOptionType::Text:
+					if (ImGui::InputText("##value", &value, ImGuiInputTextFlags_CharsNoBlank)) {
+						value.erase(std::remove(value.begin(), value.end(), ':'), value.end());
+						edited = true;
+					}
+					break;
+				}
+				ImGui::EndDisabled();
+				if (edited && on) {
+					options.values[def.key] = value;
+					changed = true;
+				}
+				ImGui::PopID();
+			}
+			EndRows();
+		}
+		EndCard();
+		ImGui::PopID();
+	}
+	return changed;
+}
+
 bool DrawAppearance(Settings& settings)
 {
 	bool changed = false;
 
 	BeginCard("theme_card");
-	CardTitle("Theme", "Pick a color theme. It applies right away.");
+	CardTitle("Theme", "Pick a color theme, or create your own. It applies right away.");
 	const float spacing = ImGui::GetStyle().ItemSpacing.x * 1.5f;
 	const float available = ImGui::GetContentRegionAvail().x;
 	const int columns = std::max(1, static_cast<int>((available + spacing) / (S(230.0f) + spacing)));
 	const float cardWidth = (available - spacing * (columns - 1)) / columns;
 	const std::size_t current = Theme::FindTheme(settings.theme);
-	for (std::size_t i = 0; i < Theme::ThemeCount(); ++i) {
+	const std::size_t count = Theme::ThemeCount();
+	for (std::size_t i = 0; i <= count; ++i) {
 		if (i % columns != 0)
 			ImGui::SameLine(0.0f, spacing);
-		if (Widgets::ThemeCard(Theme::Themes()[i], i == current, cardWidth) && i != current) {
+		if (i == count) {
+			if (Widgets::NewThemeCard(cardWidth)) {
+				settings.customThemes.push_back(NewCustomTheme(settings, Theme::Themes()[current]));
+				settings.theme = settings.customThemes.back().id;
+				changed = true;
+			}
+		} else if (Widgets::ThemeCard(Theme::Themes()[i], i == current, cardWidth) && i != current) {
 			settings.theme = Theme::Themes()[i].id;
 			changed = true;
 		}
 	}
 	EndCard();
 
+	changed |= DrawThemeEditor(settings);
+
 	BeginCard("display_card");
 	CardTitle("Display");
 	if (BeginRows("display_rows")) {
 		Row("UI scale", "On top of your Windows display scaling. Also Ctrl +, Ctrl - and Ctrl 0.");
-		int percent = static_cast<int>(std::lround(settings.uiScale * 100.0f));
+		// Applied when the slider is released: rescaling mid-drag would move the slider under the mouse.
+		static int dragPercent = 0;
+		static bool dragging = false;
+		int percent = dragging ? dragPercent : static_cast<int>(std::lround(settings.uiScale * 100.0f));
 		const float resetWidth = ImGui::CalcTextSize("Reset").x + ImGui::GetStyle().FramePadding.x * 2.0f;
 		ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - resetWidth - ImGui::GetStyle().ItemSpacing.x);
-		if (ImGui::SliderInt("##ui_scale", &percent, static_cast<int>(kMinUiScale * 100), static_cast<int>(kMaxUiScale * 100), "%d%%")) {
-			percent = (percent + 2) / 5 * 5;
-			settings.uiScale = std::clamp(percent / 100.0f, kMinUiScale, kMaxUiScale);
+		if (ImGui::SliderInt("##ui_scale", &percent, static_cast<int>(kMinUiScale * 100), static_cast<int>(kMaxUiScale * 100), "%d%%"))
+			dragPercent = (percent + 2) / 5 * 5;
+		if (ImGui::IsItemActivated())
+			dragPercent = percent;
+		dragging = ImGui::IsItemActive();
+		if (ImGui::IsItemDeactivatedAfterEdit()) {
+			settings.uiScale = std::clamp(dragPercent / 100.0f, kMinUiScale, kMaxUiScale);
 			changed = true;
 		}
 		ImGui::SameLine();
@@ -478,6 +696,7 @@ bool DrawSettingsPage(Settings& settings, const SettingsPageContext& context)
 	switch (g_tab) {
 	case Tab::Appearance: changed = DrawAppearance(settings); break;
 	case Tab::Minecraft: changed = DrawMinecraft(settings, context); break;
+	case Tab::GameOptions: changed = DrawGameOptions(settings); break;
 	case Tab::Account: changed = DrawAccount(settings, context); break;
 	case Tab::Downloads: changed = DrawDownloads(settings, context); break;
 	case Tab::About: DrawAbout(context); break;

@@ -12,8 +12,7 @@ Color themes, fonts, DPI and UI scaling, shared drawing helpers, and toast notif
 - The frame loop calls `Apply` again when the window moves to a monitor with a different DPI, or when the UI scale or theme changes.
 - `Theme::S(px)` scales a design-time pixel size. Every hardcoded layout size goes through it, e.g. `S(230.0f)` for the sidebar width.
 - Changing the UI scale:
-  - The sidebar footer's `-` and `+` buttons. Clicking the percentage resets it to 100%.
-  - The UI scale slider on Settings > Appearance.
+  - The UI scale slider on Settings > Appearance (applied when the slider is released, so the UI doesn't rescale under the mouse while dragging), and its **Reset** button.
   - **Ctrl +** / **Ctrl -** / **Ctrl 0** (number row or keypad).
   - Changes apply on the next frame and are saved immediately.
 
@@ -38,7 +37,7 @@ Color themes, fonts, DPI and UI scaling, shared drawing helpers, and toast notif
   | `kFontHero` | 34 |
 
 ## Themes
-- `Theme::Themes()` lists 10 built-in themes (`ThemeInfo`: `id`, `name`, `description`, `Palette`). The id is what `settings.json` stores. An unknown id falls back to the first theme.
+- `Theme::Themes()` lists the 10 built-in themes, then the player's custom themes (`ThemeInfo`: `id`, `name`, `description`, `Palette`, `custom`). The id is what `settings.json` stores. An unknown id (for example a deleted custom theme) falls back to the first theme.
 
   | id | Name | Look |
   |---|---|---|
@@ -68,7 +67,13 @@ Color themes, fonts, DPI and UI scaling, shared drawing helpers, and toast notif
   | `light` | True for light themes: ImGui's light base style, darker chip text, dark outlines, light title bar |
 
 - `Apply` derives the remaining ImGui colors (hover and active shades, slider grabs, scrollbars) from these by mixing (`Theme::Mix`).
-- To add a theme, add an entry to `kThemes` in `Theme.cpp`. It appears on Settings > Appearance automatically.
+- To add a built-in theme, add an entry to `kThemes` in `Theme.cpp`. It appears on Settings > Appearance automatically.
+
+## Custom themes
+- Made on Settings > Appearance: the dashed **Create your own** card (`Widgets::NewThemeCard`) at the end of the theme grid copies the selected theme's colors into a new theme (`custom-<n>`, "My theme <n>") and selects it.
+- While a custom theme is selected, an editor card appears below the grid: name, **Start from** (copy a built-in theme's colors), **Light theme**, and a color picker with a hex field for each palette field (`Theme::PaletteFields()`, in `Palette` order). **Duplicate** copies the theme; **Delete theme** removes it and switches back to Grass Block.
+- Edits apply live. Custom themes are saved in `settings.json` under `customThemes` (`id`, `name`, `light`, and `colors`: 11 RGB triples in `PaletteFields()` order). `Theme::SetCustomThemes()` turns them into `ThemeInfo`s and bumps `Theme::Revision()` when anything changed, which tells the frame loop to re-apply the style.
+- `Theme::C()` returns a copy of the palette made by the last `Apply()`, so editing or deleting a custom theme never leaves it pointing at a removed entry.
 
 ## Settings (`src/Storage/Settings.{h,cpp}`)
 - `settings.json` in the data folder is gitignored. Its fields, including `uiScale` and `discoverSource` (the last Discover sub-page, a source key such as `"modrinth"`), are listed in [settings.md](settings.md).

@@ -1,5 +1,6 @@
 #include "Launcher.h"
 
+#include "Game/GameOptions.h"
 #include "Game/Loaders.h"
 #include "Game/PackInstance.h"
 #include "Network/HttpClient.h"
@@ -237,7 +238,7 @@ static bool LaunchVersion(const PlayRequest& request, const ResolvedVersion& ver
 		progress("Playing", 1.0);
 	const fs::path log = request.instanceDir / "logs" / "launcher-output.log";
 	int exitCode = 0;
-	if (!RunProcess(command, request.instanceDir, log, true, &exitCode, err, cancel, false))
+	if (!RunProcess(command, request.instanceDir, log, true, &exitCode, err, cancel, false, request.stopGame))
 		return false;
 	if (exitCode != 0) {
 		if (err) *err = "Minecraft exited with code " + std::to_string(exitCode) + ". See " + PathString(log) +
@@ -258,6 +259,13 @@ bool PlayModpack(HttpClient& http, const PlayRequest& request, const ProgressFn&
 		return false;
 	if (!PrepareInstance(http, request.extractedDir, request.instanceDir, index, progress, err, cancel))
 		return false;
+	// After the pack's overrides, so the player's defaults from Settings win.
+	if (!request.gameOptions.values.empty()) {
+		if (progress)
+			progress("Applying game options", -1.0);
+		if (!ApplyGameOptions(request.instanceDir, request.gameOptions, err))
+			return false;
+	}
 
 	if (progress)
 		progress("Preparing Minecraft " + index.minecraftVersion, -1.0);

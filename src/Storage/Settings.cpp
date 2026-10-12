@@ -44,6 +44,25 @@ Settings LoadSettings(const std::string& path)
 		l.windowHeight = ClampWindowSide(launch.value("windowHeight", l.windowHeight));
 		l.fullscreen = launch.value("fullscreen", l.fullscreen);
 		l.afterLaunch = static_cast<AfterLaunch>(std::clamp(launch.value("afterLaunch", 0), 0, 2));
+
+		const json gameOptions = j.value("gameOptions", json::object());
+		settings.gameOptions.everyLaunch = gameOptions.value("everyLaunch", settings.gameOptions.everyLaunch);
+		// Named, not a temporary: items() only refers to the object it's called on.
+		const json optionValues = gameOptions.value("values", json::object());
+		for (const auto& [key, value] : optionValues.items()) {
+			if (value.is_string() && !key.empty() && key.find(':') == std::string::npos)
+				settings.gameOptions.values[key] = value.get<std::string>();
+		}
+
+		for (const auto& item : j.value("customThemes", json::array())) {
+			CustomTheme theme;
+			theme.id = item.value("id", "");
+			theme.name = item.value("name", "Custom theme");
+			theme.light = item.value("light", false);
+			theme.colors = item.value("colors", std::vector<float>());
+			if (theme.id.rfind("custom-", 0) == 0 && theme.colors.size() == kCustomThemeFloats)
+				settings.customThemes.push_back(std::move(theme));
+		}
 	}
 	catch (...) {
 		// corrupt file: keep whatever was read before the error, defaults for the rest
@@ -76,6 +95,18 @@ bool SaveSettings(const std::string& path, const Settings& settings)
 		{ "fullscreen", l.fullscreen },
 		{ "afterLaunch", static_cast<int>(l.afterLaunch) },
 	};
+	j["gameOptions"] = {
+		{ "everyLaunch", settings.gameOptions.everyLaunch },
+		{ "values", settings.gameOptions.values },
+	};
+	json themes = json::array();
+	for (const CustomTheme& theme : settings.customThemes) {
+		std::vector<float> colors;
+		for (float c : theme.colors)
+			colors.push_back(std::round(c * 1000.0f) / 1000.0f);
+		themes.push_back({ { "id", theme.id }, { "name", theme.name }, { "light", theme.light }, { "colors", colors } });
+	}
+	j["customThemes"] = themes;
 	ofs << j.dump(2) << "\n";
 	return ofs.good();
 }

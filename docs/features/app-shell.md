@@ -10,7 +10,7 @@ Window, rendering loop, navigation, theme, and logging.
 5. Loads the modpack index (see [modpack-index.md](modpack-index.md)) and creates the `downloads/` and `installs/` folders.
 6. Runs the frame loop until the window is closed. Each frame:
    - joins finished worker threads (`ReapFinishedWorkers`) and runs results posted by background threads (`UiQueue::Drain`)
-   - rebuilds the style if the monitor DPI scale, the UI scale, or the theme changed (see [ui-theme.md](ui-theme.md)); a theme change also recolors the title bar
+   - refreshes the custom themes from settings (`Theme::SetCustomThemes`), then rebuilds the style if the monitor DPI scale, the UI scale, the selected theme, or a custom theme's colors changed (see [ui-theme.md](ui-theme.md)); a theme change also recolors the title bar
    - saves `settings.json` if a setting changed and no widget is being edited (so sliders and text boxes don't save on every step)
    - uploads newly decoded images (`ImageCache::Update`)
    - handles the shortcuts: Ctrl +, Ctrl -, Ctrl 0 (UI scale) and Ctrl F (go to Discover and focus the search box)
@@ -19,8 +19,8 @@ Window, rendering loop, navigation, theme, and logging.
 
 ## Layout
 One full-window ImGui window with no title bar, split into:
-- **Sidebar** (230px, scaled): a grass-block logo drawn from small squares, "MC Launcher" with a "PREMIUM · JAVA" tag, the **BROWSE** entries **Discover**, **My Library**, and **Downloads**, the **LAUNCHER** entry **Settings** (`Widgets::NavItem`; the selected one has an accent bar and bold text), then the **ACCOUNT** section (see [accounts.md](accounts.md)). **Discover** is a collapsible group (`Widgets::NavGroupItem`, with a chevron): under it is one smaller entry per pack source (`Widgets::SubNavItem`, with a dot in the accent color when selected; see [discover.md](discover.md)). Clicking Discover while on Discover collapses or expands the list; arriving from another page expands it. It starts expanded. The sidebar never scrolls (`NoScrollbar | NoScrollWithMouse`). Downloads shows a count badge while downloads or extractions are running. The footer holds the **UI scale** control (`-`, the current percentage, which resets to 100% when clicked, and `+`).
-- **Main content:** a header (an accent breadcrumb such as "MINECRAFT / MODPACKS" or "LAUNCHER / SETTINGS", a large bold page title, and a subtitle), then the active page.
+- **Sidebar** (230px, scaled): a grass-block logo drawn from small squares, "MC Launcher" with a "PREMIUM · JAVA" tag, the **BROWSE** entries **Discover**, **My Library**, and **Downloads**, the **LAUNCHER** entry **Settings** (`Widgets::NavItem`; the selected one has an accent bar and bold text), then the **ACCOUNT** section (see [accounts.md](accounts.md)). **Discover** is a collapsible group (`Widgets::NavGroupItem`, with a chevron): under it is one smaller entry per pack source (`Widgets::SubNavItem`, with a dot in the accent color when selected; see [discover.md](discover.md)). Clicking Discover while on Discover collapses or expands the list; arriving from another page expands it. It starts expanded. The sidebar never scrolls (`NoScrollbar | NoScrollWithMouse`). Downloads shows a count badge while downloads or extractions are running. The UI scale is set in Settings > Appearance, not in the sidebar.
+- **Main content:** a padded panel (24 x 18 px, scaled) with a header (an accent breadcrumb such as "MINECRAFT / MODPACKS" or "LAUNCHER / SETTINGS", a large bold page title, and a subtitle), then the active page.
 
 Navigation state is the `Page` enum (`Discover`, `Library`, `Downloads`, `Settings`) plus `discoverSource`, the selected Discover sub-page. Discover is the default page, and the sub-page is restored from `settings.json`.
 

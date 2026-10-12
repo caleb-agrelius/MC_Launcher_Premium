@@ -524,7 +524,7 @@ bool ThemeCard(const Theme::ThemeInfo& theme, bool selected, float width)
 	const float fontSize = ImGui::GetFontSize();
 	const float smallSize = fontSize * (Theme::kFontSmall / Theme::kFontBody);
 	const float height = previewHeight + fontSize + smallSize + S(26.0f);
-	ImGui::PushID(theme.id);
+	ImGui::PushID(theme.id.c_str());
 	const bool clicked = ImGui::InvisibleButton("##theme", ImVec2(width, height));
 	const bool hovered = ImGui::IsItemHovered();
 	ImGui::PopID();
@@ -596,6 +596,51 @@ bool ThemeCard(const Theme::ThemeInfo& theme, bool selected, float width)
 		const std::array<ImVec2, 3> check = { ImVec2(c.x - k, c.y), ImVec2(c.x - k * 0.25f, c.y + k * 0.75f), ImVec2(c.x + k, c.y - k * 0.6f) };
 		drawList->AddPolyline(check.data(), 3, ImGui::GetColorU32(Theme::C().windowBg), 0, S(2.0f));
 	}
+	if (hovered)
+		ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+	return clicked;
+}
+
+}
+
+namespace Widgets {
+
+bool NewThemeCard(float width)
+{
+	// Same height as ThemeCard so the grid lines up.
+	const float fontSize = ImGui::GetFontSize();
+	const float smallSize = fontSize * (Theme::kFontSmall / Theme::kFontBody);
+	const float height = width * 0.52f + fontSize + smallSize + S(26.0f);
+	const bool clicked = ImGui::InvisibleButton("##new_theme", ImVec2(width, height));
+	const bool hovered = ImGui::IsItemHovered();
+	const ImVec2 min = ImGui::GetItemRectMin();
+	const ImVec2 max = ImGui::GetItemRectMax();
+	ImDrawList* drawList = ImGui::GetWindowDrawList();
+	const float rounding = S(10.0f);
+	const ImVec4& p = hovered ? Theme::C().accent : Theme::C().textDim;
+	drawList->AddRectFilled(min, max, ImGui::GetColorU32(Theme::WithAlpha(Theme::C().cardBg, hovered ? 1.0f : 0.6f)), rounding);
+	// Dashed outline.
+	const float dash = S(8.0f);
+	const ImU32 color = ImGui::GetColorU32(Theme::WithAlpha(p, 0.8f));
+	for (float x = min.x + rounding; x < max.x - rounding; x += dash * 2.0f) {
+		const float end = std::min(x + dash, max.x - rounding);
+		drawList->AddLine(ImVec2(x, min.y), ImVec2(end, min.y), color, S(1.5f));
+		drawList->AddLine(ImVec2(x, max.y), ImVec2(end, max.y), color, S(1.5f));
+	}
+	for (float y = min.y + rounding; y < max.y - rounding; y += dash * 2.0f) {
+		const float end = std::min(y + dash, max.y - rounding);
+		drawList->AddLine(ImVec2(min.x, y), ImVec2(min.x, end), color, S(1.5f));
+		drawList->AddLine(ImVec2(max.x, y), ImVec2(max.x, end), color, S(1.5f));
+	}
+	// Plus sign and label.
+	const ImVec2 center((min.x + max.x) * 0.5f, min.y + height * 0.4f);
+	const float arm = S(16.0f);
+	drawList->AddLine(ImVec2(center.x - arm, center.y), ImVec2(center.x + arm, center.y), ImGui::GetColorU32(p), S(3.0f));
+	drawList->AddLine(ImVec2(center.x, center.y - arm), ImVec2(center.x, center.y + arm), ImGui::GetColorU32(p), S(3.0f));
+	const char* label = "Create your own";
+	ImFont* font = Theme::GetFonts().bold;
+	const ImVec2 size = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, label);
+	drawList->AddText(font, fontSize, ImVec2(center.x - size.x * 0.5f, center.y + arm + S(14.0f)), ImGui::GetColorU32(p), label);
 	if (hovered)
 		ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
 	return clicked;
