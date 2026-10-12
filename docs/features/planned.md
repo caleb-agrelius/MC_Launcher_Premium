@@ -1,11 +1,12 @@
 # Planned / Not Yet Implemented
 
-Features the UI mentions that don't exist yet:
+Features that don't exist yet:
 
-- **Launching Minecraft:** the PLAY button on Discover is disabled and labeled "COMING SOON".
-- **Minecraft installation:** downloading or managing the game itself, Java runtimes, and mod loaders.
-- **Account sign-in:** Microsoft authentication (needs an Azure app client ID approved for the Minecraft API).
-- **Full `.mrpack` installs:** extraction unpacks the manifest and `overrides/`, but doesn't yet download the mod jars listed in `modrinth.index.json` or merge `overrides/` into a game directory.
+- **Microsoft sign-in approval:** the sign-in flow is built (see [accounts.md](accounts.md)), but it needs an Azure app client ID that Mojang has approved for the Minecraft API. Until one is set in `settings.json`, only offline mode works.
+- **Multiple accounts:** only one account is saved at a time.
+- **Settings UI for memory:** `maxMemoryMb` can only be changed in `settings.json`.
+- **Instance management:** no buttons to open the instance folder, view logs, repair, update or uninstall a pack.
+- **Other platforms:** launching is Windows x64 only.
 
 Unused scaffolding: `src/App.h` declares `RunApp()`, which has no definition and no callers.
 

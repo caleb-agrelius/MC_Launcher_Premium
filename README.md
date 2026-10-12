@@ -7,15 +7,17 @@ Development Team:
 
 # MC_Launcher_Premium
 
-A Minecraft Java Edition modpack browser and downloader built with C++ and Dear ImGui.
+A Minecraft Java Edition modpack launcher built with C++ and Dear ImGui.
 
 ## Features
 
 - Search modpacks live on [Modrinth](https://modrinth.com/modpacks), no API key needed. The app falls back to `resources/index.json` when offline.
 - Download a pack's `.mrpack` with progress.
 - Extract it into `installs/<pack>/`, with protection against malicious archive paths.
+- Play it: the launcher downloads the pack's mods, Minecraft, a Mojang Java runtime and the mod loader (Fabric, Quilt, Forge or NeoForge), then starts the game. See [docs/features/launching.md](docs/features/launching.md).
+- Sign in with a Microsoft account, or play offline with a username. See [docs/features/accounts.md](docs/features/accounts.md).
 
-Launching Minecraft, downloading the game, and account sign-in aren't implemented yet. See [docs/features/planned.md](docs/features/planned.md).
+Microsoft sign-in needs an Azure app client ID approved by Mojang, set as `"microsoftClientId"` in `settings.json`. Until then, use offline mode. See [docs/features/planned.md](docs/features/planned.md) for what isn't built yet.
 
 ## Prerequisites (Windows)
 
@@ -70,6 +72,9 @@ You can also double-click the exe or start it from any folder. The app finds the
 | `settings.json`     | UI scale                                                       |
 | `library.json`      | Packs listed in My Library                                     |
 | `downloads.json`    | Finished downloads, restored on startup                        |
+| `account.dat`       | Signed-in account (encrypted with Windows DPAPI)               |
+| `minecraft\`        | Shared Minecraft versions, libraries, assets, Java runtimes    |
+| `instances\<pack>\` | Each pack's game folder (mods, config, saves, logs)            |
 
 All of these are gitignored.
 
@@ -86,9 +91,11 @@ All of these are gitignored.
    | Search results | `SearchModrinthModpacks` in `src/Network/Modrinth.cpp` |
    | Downloads      | `HttpClient::DownloadToFile`                           |
    | Extraction     | `InstallZip` in `src/Storage/Installer.cpp`            |
+   | Play           | `PlayModpack` in `src/Game/Launcher.cpp`               |
+   | Sign-in        | `src/Network/MicrosoftAuth.cpp`                        |
    | UI             | the frame loop in `src/main.cpp`                       |
 
-Background work (searches, downloads, extraction) runs on worker threads. Use **Debug → Windows → Threads** to switch between them.
+Background work (searches, downloads, extraction, sign-in, play) runs on worker threads. Use **Debug → Windows → Threads** to switch between them.
 
 ### VS Code
 
@@ -140,11 +147,18 @@ Version lookup for fabulously-optimized: 14.1.1 (Fabulously.Optimized-v14.1.1.mr
 ```
 src/main.cpp              Window, UI, threading
 src/Model/Modpack.*       Modpack data + local index loader
-src/Network/HttpClient.*  libcurl wrapper (downloads, GET, cancel)
+src/Network/HttpClient.*  libcurl wrapper (downloads, GET/POST, cancel)
+src/Network/MicrosoftAuth.* Microsoft -> Xbox -> Minecraft sign-in
 src/Network/Modrinth.*    Modrinth API client (search, versions)
 src/Storage/Installer.*   Zip extraction
 src/Storage/Settings.*    settings.json (UI scale)
 src/Storage/Library.*     library.json (My Library), downloads.json (finished downloads)
+src/Storage/Account.*     account.dat (signed-in or offline account)
+src/Game/GameFiles.*      Minecraft versions, libraries, assets, Java runtimes
+src/Game/Loaders.*        Fabric, Quilt, Forge, NeoForge
+src/Game/PackInstance.*   .mrpack index -> instances/<pack>/
+src/Game/Launcher.*       Play: prepare everything, build the command line, run Java
+src/Util/                 SHA-1, process launching
 src/UI/Theme.*            Colors, fonts, DPI/UI scaling
 src/UI/Widgets.*          Pack rows, hero banner, chips, spinner
 src/UI/ImageCache.*       Async icon/banner loading (PNG, JPEG, WebP)
