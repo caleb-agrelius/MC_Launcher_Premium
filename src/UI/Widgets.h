@@ -56,5 +56,7 @@ bool EmptyState(const char* title, const char* body, const char* buttonLabel = n
 // Clickable theme swatch: a miniature launcher in the theme's colors plus its name.
 // Returns true when clicked.
 bool ThemeCard(const Theme::ThemeInfo& theme, bool selected, float width);
+// Dashed "Create your own" card the same size as ThemeCard. Returns true when clicked.
+bool NewThemeCard(float width);
 
 }

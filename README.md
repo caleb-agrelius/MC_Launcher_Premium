@@ -162,6 +162,7 @@ src/Game/GameFiles.*      Minecraft versions, libraries, assets, Java runtimes
 src/Game/Loaders.*        Fabric, Quilt, Forge, NeoForge
 src/Game/PackInstance.*   .mrpack index -> instances/<pack>/
 src/Game/Launcher.*       Play: prepare everything, build the command line, run Java
+src/Game/GameOptions.*    Vanilla options.txt defaults applied to every pack
 src/Util/                 SHA-1, process launching
 src/Platform.*            Open folders, system memory
 src/UI/Theme.*            Color themes, fonts, DPI/UI scaling

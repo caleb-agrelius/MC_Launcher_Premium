@@ -3,13 +3,14 @@
 Turning an installed modpack into a running Minecraft. Entry point: `PlayModpack()` in `src/Game/Launcher.{h,cpp}`, started by `startPlay()` in `src/main.cpp`.
 
 ## Where to click
-- **My Library:** each pack card has a **PLAY** button. While the pack is being prepared, the card shows the current step, a spinner, a progress bar when the size is known, and a **Cancel** button. While the game runs it shows "Minecraft is running". Errors appear in red on the card.
+- **My Library:** each pack card has a **PLAY** button. While the pack is being prepared, the card shows the current step, a spinner, a progress bar when the size is known, and a **Cancel** button. While the game runs it shows "Minecraft is running" and a **Stop game** button, which asks for confirmation and then force-closes Minecraft (unsaved progress since the last autosave is lost). Errors appear in red on the card.
 - **Discover:** the big **PLAY** button works once the selected pack is in My Library. It starts the same play flow and switches to My Library. Otherwise it's disabled, with a hint to install the pack's files.
 - An account is required (see [accounts.md](accounts.md)). Pressing Play without one shows an error on the card.
 
 ## Steps (`PlayModpack`)
 1. **Read the pack:** `ReadMrpackIndex()` (`src/Game/PackInstance.cpp`) reads `installs/<pack id>/modrinth.index.json`. It takes the Minecraft version and loader from `dependencies` (`fabric-loader`, `quilt-loader`, `neoforge`, `forge`) and the client files: entries with `env.client == "unsupported"` are skipped, and paths that are absolute or climb out of the instance are rejected.
 2. **Prepare the instance:** `PrepareInstance()` downloads the listed files into `instances/<pack id>/` (the game directory). The first time each pack version is prepared, it copies `overrides/` then `client-overrides/` over it. The version is recorded in `instances/<pack id>/.mclp-prepared`, so later launches keep the player's own option and config changes.
+   Then, if any game options are turned on in Settings > Game options, `ApplyGameOptions()` writes them into the instance's `options.txt` ("Applying game options"; see [settings.md](settings.md)).
 3. **Vanilla Minecraft:** `InstallVanillaJson()` gets `versions/<mc>/<mc>.json` from Mojang's version manifest, and `ResolveVersion()` reads it.
 4. **Java:** if Settings > Minecraft names a Java (`launch.javaPath`), it is used instead: a `java.exe` is swapped for the `javaw.exe` next to it, and a folder means its `bin/javaw.exe`. A path that doesn't exist fails with an error naming it. Otherwise, `InstallJavaRuntime()` installs the Mojang Java runtime named by the version's `javaVersion.component` (default `jre-legacy`) into `minecraft/runtime/<component>/`. `.manifest-sha1` records the installed manifest, so later launches skip it. If Mojang can't be reached, an already-installed runtime is used.
 5. **Game files:** `InstallGameFiles()` downloads the client jar, libraries, old-style natives, the log4j config, the asset index and assets. Natives are extracted once into `versions/<id>/natives/`, with a `.extracted` marker. Pre-1.7.3 "virtual" asset indexes are also copied by name into `assets/virtual/<index>/`.
@@ -45,4 +46,4 @@ Turning an installed modpack into a running Minecraft. Entry point: `PlayModpack
 - Windows x64 only (process launching and the Java runtime platform).
 - Mod files are kept by size, not re-hashed on every launch. A mod removed in a newer pack version stays in `mods/`.
 - Pre-1.6 `map_to_resources` assets aren't copied into the game directory.
-- Closing the launcher stops preparation but leaves a running game open.
+- Closing the launcher stops preparation but leaves a running game open. Only **Stop game** ends it from the launcher: it sets `PlayRequest::stopGame`, which makes `RunProcess` terminate the process (its `kill` flag) and `PlayModpack` return "Stopped". That shows a "Minecraft was closed" toast instead of an error.

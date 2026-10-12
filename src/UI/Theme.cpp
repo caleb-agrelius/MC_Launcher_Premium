@@ -1,5 +1,7 @@
 #include "Theme.h"
 
+#include "Storage/Settings.h"
+
 #include <filesystem>
 #include <iterator>
 
@@ -7,8 +9,15 @@ namespace Theme {
 
 static constexpr ImVec4 RGB(float r, float g, float b) { return ImVec4(r, g, b, 1.0f); }
 
+struct BuiltInTheme {
+	const char* id;
+	const char* name;
+	const char* description;
+	Palette palette;
+};
+
 // Each theme is named after a Minecraft place or block. Grass Block is the original look.
-static const ThemeInfo kThemes[] = {
+static const BuiltInTheme kThemes[] = {
 	{ "grass", "Grass Block", "The original slate and green.", {
 		RGB(0.055f, 0.070f, 0.085f), RGB(0.075f, 0.090f, 0.105f), RGB(0.095f, 0.115f, 0.130f),
 		RGB(0.10f, 0.13f, 0.14f), RGB(0.15f, 0.19f, 0.21f),
@@ -74,21 +83,40 @@ static const ThemeInfo kThemes[] = {
 static Fonts g_fonts;
 static float g_scale = 1.0f;
 static std::size_t g_theme = 0;
+static int g_revision = 0;
+// The palette Apply() used. Kept separately so editing or removing a custom theme
+// can't leave C() pointing at a stale entry.
+static Palette g_palette = kThemes[0].palette;
 
-const ThemeInfo* Themes()
+static std::vector<ThemeInfo> BuiltIns()
 {
-	return kThemes;
+	std::vector<ThemeInfo> themes;
+	for (const BuiltInTheme& theme : kThemes)
+		themes.push_back({ theme.id, theme.name, theme.description, theme.palette, false });
+	return themes;
+}
+
+static std::vector<ThemeInfo> g_themes = BuiltIns();
+
+const std::vector<ThemeInfo>& Themes()
+{
+	return g_themes;
 }
 
 std::size_t ThemeCount()
+{
+	return g_themes.size();
+}
+
+std::size_t BuiltInThemeCount()
 {
 	return std::size(kThemes);
 }
 
 std::size_t FindTheme(const std::string& id)
 {
-	for (std::size_t i = 0; i < std::size(kThemes); ++i) {
-		if (id == kThemes[i].id)
+	for (std::size_t i = 0; i < g_themes.size(); ++i) {
+		if (id == g_themes[i].id)
 			return i;
 	}
 	return 0;
@@ -96,7 +124,78 @@ std::size_t FindTheme(const std::string& id)
 
 const Palette& C()
 {
-	return kThemes[g_theme].palette;
+	return g_palette;
+}
+
+const std::vector<PaletteField>& PaletteFields()
+{
+	static const std::vector<PaletteField> fields = {
+		{ "Window background", &Palette::windowBg },
+		{ "Panels", &Palette::panelBg },
+		{ "Cards", &Palette::cardBg },
+		{ "Inputs", &Palette::frameBg },
+		{ "Borders", &Palette::border },
+		{ "Text", &Palette::text },
+		{ "Secondary text", &Palette::textDim },
+		{ "Accent", &Palette::accent },
+		{ "Buttons and selection", &Palette::accentDeep },
+		{ "Errors", &Palette::error },
+		{ "Tags and notices", &Palette::info },
+	};
+	return fields;
+}
+
+Palette PaletteFromCustom(const CustomTheme& theme)
+{
+	Palette palette = kThemes[0].palette;
+	const auto& fields = PaletteFields();
+	for (std::size_t i = 0; i < fields.size() && i * 3 + 2 < theme.colors.size(); ++i)
+		palette.*fields[i].member = ImVec4(theme.colors[i * 3], theme.colors[i * 3 + 1], theme.colors[i * 3 + 2], 1.0f);
+	palette.light = theme.light;
+	return palette;
+}
+
+void PaletteToCustom(const Palette& palette, CustomTheme& theme)
+{
+	theme.colors.clear();
+	for (const PaletteField& field : PaletteFields()) {
+		const ImVec4& color = palette.*field.member;
+		theme.colors.push_back(color.x);
+		theme.colors.push_back(color.y);
+		theme.colors.push_back(color.z);
+	}
+	theme.light = palette.light;
+}
+
+static bool SamePalette(const Palette& a, const Palette& b)
+{
+	for (const PaletteField& field : PaletteFields()) {
+		const ImVec4& x = a.*field.member;
+		const ImVec4& y = b.*field.member;
+		if (x.x != y.x || x.y != y.y || x.z != y.z || x.w != y.w)
+			return false;
+	}
+	return a.light == b.light;
+}
+
+void SetCustomThemes(const std::vector<CustomTheme>& themes)
+{
+	std::vector<ThemeInfo> updated = BuiltIns();
+	for (const CustomTheme& theme : themes)
+		updated.push_back({ theme.id, theme.name, "Your custom theme.", PaletteFromCustom(theme), true });
+
+	bool same = updated.size() == g_themes.size();
+	for (std::size_t i = 0; same && i < updated.size(); ++i)
+		same = updated[i].id == g_themes[i].id && updated[i].name == g_themes[i].name && SamePalette(updated[i].palette, g_themes[i].palette);
+	if (same)
+		return;
+	g_themes = std::move(updated);
+	++g_revision;
+}
+
+int Revision()
+{
+	return g_revision;
 }
 
 ImVec4 Mix(const ImVec4& a, const ImVec4& b, float t)
@@ -170,7 +269,8 @@ float Scale()
 
 void Apply(std::size_t themeIndex, float dpiScale, float userScale)
 {
-	g_theme = themeIndex < std::size(kThemes) ? themeIndex : 0;
+	g_theme = themeIndex < g_themes.size() ? themeIndex : 0;
+	g_palette = g_themes[g_theme].palette;
 	g_scale = dpiScale * userScale;
 	const Palette& p = C();
 

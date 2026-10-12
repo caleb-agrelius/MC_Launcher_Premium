@@ -63,7 +63,8 @@ bool RunProcess(const std::vector<std::string>& args,
 				int* exitCode,
 				std::string* err,
 				const std::atomic<bool>* cancel,
-				bool killOnCancel)
+				bool killOnCancel,
+				const std::atomic<bool>* kill)
 {
 #ifdef _WIN32
 	if (args.empty()) {
@@ -110,6 +111,13 @@ bool RunProcess(const std::vector<std::string>& args,
 		return true;
 	}
 	while (WaitForSingleObject(process.hProcess, 200) == WAIT_TIMEOUT) {
+		if (kill && kill->load()) {
+			TerminateProcess(process.hProcess, 1);
+			WaitForSingleObject(process.hProcess, 5000);
+			CloseHandle(process.hProcess);
+			if (err) *err = "Stopped";
+			return false;
+		}
 		if (cancel && cancel->load()) {
 			if (killOnCancel)
 				TerminateProcess(process.hProcess, 1);
@@ -124,7 +132,7 @@ bool RunProcess(const std::vector<std::string>& args,
 	if (exitCode) *exitCode = static_cast<int>(code);
 	return true;
 #else
-	(void)args; (void)workDir; (void)logFile; (void)wait; (void)exitCode; (void)cancel; (void)killOnCancel;
+	(void)args; (void)workDir; (void)logFile; (void)wait; (void)exitCode; (void)cancel; (void)killOnCancel; (void)kill;
 	if (err) *err = "Launching programs is only implemented on Windows";
 	return false;
 #endif

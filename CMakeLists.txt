@@ -28,6 +28,7 @@ add_executable(MC_Launcher_Premium
   src/main.cpp
   src/Platform.cpp
   src/Game/GameFiles.cpp
+  src/Game/GameOptions.cpp
   src/Game/Launcher.cpp
   src/Game/Loaders.cpp
   src/Game/PackInstance.cpp
