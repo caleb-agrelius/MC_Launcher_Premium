@@ -3,6 +3,7 @@ project(MC_Launcher_Premium LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(MCLP_MICROSOFT_CLIENT_ID "" CACHE STRING "Microsoft Entra application client ID for Minecraft sign-in")
 
 message(STATUS "Configuring MC_Launcher_Premium - prefer vcpkg-managed dependencies. If packages are missing, run vcpkg install for glfw3 glad imgui nlohmann-json curl miniz")
 
@@ -28,6 +29,7 @@ add_executable(MC_Launcher_Premium
   src/main.cpp
   src/Model/Modpack.cpp
   src/Network/HttpClient.cpp
+  src/Network/MicrosoftAuth.cpp
   src/Network/Modrinth.cpp
   src/Storage/Installer.cpp
   src/Storage/Settings.cpp
@@ -53,6 +55,10 @@ target_link_libraries(MC_Launcher_Premium PRIVATE
   WebP::webp
 )
 
+target_compile_definitions(MC_Launcher_Premium PRIVATE
+  MCLP_MICROSOFT_CLIENT_ID="${MCLP_MICROSOFT_CLIENT_ID}"
+)
+
 if (miniz_FOUND)
   target_link_libraries(MC_Launcher_Premium PRIVATE miniz::miniz)
 else()
@@ -61,6 +67,7 @@ endif()
 
 if (WIN32)
   target_compile_definitions(MC_Launcher_Premium PRIVATE "_CRT_SECURE_NO_WARNINGS" "GLFW_INCLUDE_NONE")
+  target_link_libraries(MC_Launcher_Premium PRIVATE bcrypt shell32 ws2_32)
 endif()
 
 # Visual Studio: make F5 launch the app (not ALL_BUILD), running from the repo root.

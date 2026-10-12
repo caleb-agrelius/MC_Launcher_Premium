@@ -6,6 +6,7 @@
 
 #include "Model/Modpack.h"
 #include "Network/HttpClient.h"
+#include "Network/MicrosoftAuth.h"
 #include "Network/Modrinth.h"
 #include "Storage/Installer.h"
 #include "Storage/Settings.h"
@@ -349,6 +350,9 @@ int main(int argc, char** argv)
 		std::vector<Worker> workers;
 		std::atomic<bool> shuttingDown{ false };
 		UiQueue uiQueue;
+		MinecraftAccount minecraftAccount;
+		bool microsoftSignInPending = false;
+		std::string microsoftSignInStatus;
 		fs::create_directories("downloads");
 		fs::create_directories("installs");
 
@@ -557,6 +561,45 @@ int main(int argc, char** argv)
 			// ---- Main content ----
 			ImGui::SameLine();
 			ImGui::BeginChild("main_content", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None);
+			Widgets::SectionLabel("ACCOUNT");
+			if (minecraftAccount.username.empty()) {
+				if (microsoftSignInPending) {
+					ImGui::BeginDisabled();
+					ImGui::Button("Waiting for Microsoft sign-in...");
+					ImGui::EndDisabled();
+				} else if (ImGui::Button("Sign in with Microsoft")) {
+					microsoftSignInPending = true;
+					microsoftSignInStatus = "Opening Microsoft sign-in in your browser...";
+					StartWorker(workers, [&http, &uiQueue, &shuttingDown, &minecraftAccount,
+						&microsoftSignInPending, &microsoftSignInStatus, &log]() {
+						MinecraftAccount signedInAccount;
+						std::string error;
+						const bool ok = SignInWithMicrosoft(http, signedInAccount, shuttingDown, &error);
+						uiQueue.Post([&minecraftAccount, &microsoftSignInPending,
+							&microsoftSignInStatus, &log, ok, signedInAccount, error]() {
+							microsoftSignInPending = false;
+							if (ok) {
+								minecraftAccount = signedInAccount;
+								microsoftSignInStatus.clear();
+								log << "Signed in to Minecraft as " << minecraftAccount.username << "\n";
+							} else {
+								microsoftSignInStatus = "Sign-in failed: " + error;
+								log << microsoftSignInStatus << "\n";
+							}
+						});
+					});
+				}
+			} else {
+				ImGui::Text("Signed in as %s", minecraftAccount.username.c_str());
+				ImGui::SameLine();
+				if (ImGui::Button("Sign out")) {
+					minecraftAccount = {};
+					microsoftSignInStatus.clear();
+				}
+			}
+			if (!microsoftSignInStatus.empty())
+				ImGui::TextWrapped("%s", microsoftSignInStatus.c_str());
+			ImGui::Separator();
 			Widgets::Text(fonts.bold, Theme::kFontSmall, Theme::kAccent, "MINECRAFT  /  MODPACKS");
 			if (page == Page::Discover) {
 				Widgets::Text(fonts.bold, Theme::kFontTitle, Theme::kText, "Discover modpacks");
@@ -780,7 +823,7 @@ int main(int argc, char** argv)
 					ImGui::EndDisabled();
 					ImGui::PopStyleVar();
 					ImGui::PopFont();
-					ImGui::TextDisabled("Minecraft installation, account sign-in, and launching are not wired up yet.");
+					ImGui::TextDisabled("Minecraft installation and launching are not wired up yet.");
 				} else {
 					ImGui::TextDisabled("No modpacks match your search.");
 				}

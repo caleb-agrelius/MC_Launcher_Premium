@@ -29,6 +29,23 @@ public:
 			 std::string* err = nullptr,
 			 const std::atomic<bool>* cancel = nullptr);
 
+	// Sends a POST request and returns the response body and HTTP status.
+	bool Post(const std::string& url,
+			  const std::string& requestBody,
+			  const std::string& contentType,
+			  std::string& responseBody,
+			  long& statusCode,
+			  std::string* err = nullptr,
+			  const std::atomic<bool>* cancel = nullptr);
+
+	// Sends a GET request with a bearer token and returns the response body and HTTP status.
+	bool GetWithBearer(const std::string& url,
+					   const std::string& accessToken,
+					   std::string& responseBody,
+					   long& statusCode,
+					   std::string* err = nullptr,
+					   const std::atomic<bool>* cancel = nullptr);
+
 	// Percent-encodes text for use in a URL query parameter.
 	static std::string UrlEncode(const std::string& text);
 };

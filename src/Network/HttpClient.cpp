@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <memory>
 #include <utility>
+#include <vector>
 
 struct ProgressData {
 	std::function<void(double,double)> callback;
@@ -41,11 +42,11 @@ static int xferinfo(void* p,
 
 // Options shared by every request: redirects, HTTP errors as failures,
 // user agent, and the progress/cancel callback.
-static void ApplyCommonOptions(CURL* curl, const std::string& url, ProgressData* pd)
+static void ApplyCommonOptions(CURL* curl, const std::string& url, ProgressData* pd, bool failOnHttpError = true)
 {
 	curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
 	curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-	curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
+	curl_easy_setopt(curl, CURLOPT_FAILONERROR, failOnHttpError ? 1L : 0L);
 	curl_easy_setopt(curl, CURLOPT_USERAGENT, HttpClient::kUserAgent);
 	curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 20L);
 
@@ -58,6 +59,63 @@ static void ApplyCommonOptions(CURL* curl, const std::string& url, ProgressData*
 	// older libcurl may not have xferinfo; ignore progress
 	(void)pd;
 #endif
+}
+
+static bool PerformStringRequest(const std::string& url,
+								 const std::string* requestBody,
+								 const std::vector<std::string>& requestHeaders,
+								 std::string& responseBody,
+								 long& statusCode,
+								 std::string* err,
+								 const std::atomic<bool>* cancel)
+{
+	responseBody.clear();
+	statusCode = 0;
+	CURL* curl = curl_easy_init();
+	if (!curl) {
+		if (err) *err = "Failed to initialize curl";
+		return false;
+	}
+
+	ProgressData pd{nullptr, cancel};
+	ApplyCommonOptions(curl, url, &pd, false);
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_string);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &responseBody);
+	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 60L);
+
+	if (requestBody) {
+		curl_easy_setopt(curl, CURLOPT_POST, 1L);
+		curl_easy_setopt(curl, CURLOPT_POSTFIELDS, requestBody->data());
+		curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(requestBody->size()));
+	}
+
+	curl_slist* headers = nullptr;
+	for (const std::string& header : requestHeaders) {
+		curl_slist* updated = curl_slist_append(headers, header.c_str());
+		if (!updated) {
+			if (headers)
+				curl_slist_free_all(headers);
+			if (err) *err = "Failed to allocate HTTP request headers";
+			curl_easy_cleanup(curl);
+			return false;
+		}
+		headers = updated;
+	}
+	if (headers)
+		curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+
+	const CURLcode result = curl_easy_perform(curl);
+	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &statusCode);
+	if (headers)
+		curl_slist_free_all(headers);
+	curl_easy_cleanup(curl);
+
+	if (result != CURLE_OK) {
+		if (err) *err = (cancel && cancel->load()) ? "Cancelled" : curl_easy_strerror(result);
+		responseBody.clear();
+		return false;
+	}
+	return true;
 }
 
 HttpClient::HttpClient()
@@ -142,6 +200,29 @@ bool HttpClient::Get(const std::string& url,
 		return false;
 	}
 	return true;
+}
+
+bool HttpClient::Post(const std::string& url,
+					  const std::string& requestBody,
+					  const std::string& contentType,
+					  std::string& responseBody,
+					  long& statusCode,
+					  std::string* err,
+					  const std::atomic<bool>* cancel)
+{
+	return PerformStringRequest(url, &requestBody, {"Content-Type: " + contentType},
+		responseBody, statusCode, err, cancel);
+}
+
+bool HttpClient::GetWithBearer(const std::string& url,
+							   const std::string& accessToken,
+							   std::string& responseBody,
+							   long& statusCode,
+							   std::string* err,
+							   const std::atomic<bool>* cancel)
+{
+	return PerformStringRequest(url, nullptr, {"Authorization: Bearer " + accessToken},
+		responseBody, statusCode, err, cancel);
 }
 
 std::string HttpClient::UrlEncode(const std::string& text)

@@ -14,8 +14,9 @@ A Minecraft Java Edition modpack browser and downloader built with C++ and Dear 
 - Search modpacks live on [Modrinth](https://modrinth.com/modpacks), no API key needed. The app falls back to `resources/index.json` when offline.
 - Download a pack's `.mrpack` with progress.
 - Extract it into `installs/<pack>/`, with protection against malicious archive paths.
+- Sign in with a Microsoft account and verify its Minecraft: Java Edition profile.
 
-Launching Minecraft, downloading the game, and account sign-in aren't implemented yet. See [docs/features/planned.md](docs/features/planned.md).
+Minecraft installation and launching aren't implemented yet. See [docs/features/planned.md](docs/features/planned.md). For Microsoft sign-in setup, see [docs/features/account-sign-in.md](docs/features/account-sign-in.md).
 
 ## Prerequisites (Windows)
 
@@ -41,7 +42,7 @@ From the repo root:
 
 ```powershell
 # Configure (once, or after adding source files / changing CMakeLists.txt)
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DMCLP_MICROSOFT_CLIENT_ID="YOUR-APPLICATION-CLIENT-ID"
 
 # Build
 cmake --build build --config Debug      # -> build\Debug\MC_Launcher_Premium.exe
@@ -50,6 +51,7 @@ cmake --build build --config Release    # -> build\Release\MC_Launcher_Premium.e
 
 - The first configure downloads the ImGui GLFW/OpenGL backend files from GitHub.
 - The build copies the required DLLs (glfw3, libcurl, zlib, miniz) next to the exe.
+- Replace `YOUR-APPLICATION-CLIENT-ID` with the client ID from your Microsoft app registration; see the sign-in setup guide above.
 
 > The `MC_Launcher_Premium.slnx` / `.vcxproj` in the repo root don't build as-is because they expect ImGui backend files that aren't in the repo. Use the CMake build, or the solution CMake generates (see below).
 
