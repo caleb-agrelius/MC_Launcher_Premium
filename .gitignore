@@ -32,20 +32,20 @@ _deps/
 *.tlog/
 *.recipe
 
-# Application-generated data in the repo root, where the app runs from. Anchored with a
-# leading slash: unanchored names like downloads/ and servers/ also matched source folders
-# (src/Services/Downloads, src/UI/Pages/Servers, ...). Copies next to the exe are under /build*/.
+# Application-generated data in the data folder (the repository root when run from here; copies
+# next to the exe are under /build/ or /out/). Folder patterns start with "/" so they don't match
+# source folders: Git on Windows ignores case, and "downloads/" also matched src/Services/Downloads/.
 /downloads/
 /installs/
 /servers/
-/app.log
-/imgui.ini
-/settings.json
-/library.json
-/downloads.json
-/account.dat
 /minecraft/
 /instances/
+app.log
+imgui.ini
+settings.json
+library.json
+downloads.json
+account.dat
 
 # Modpack archives
 *.mrpack
