@@ -39,11 +39,12 @@ Saved in the data folder (gitignored). A missing or invalid file gives the defau
 | `launch.windowWidth` / `windowHeight` | 0 / 0 | 0 = Minecraft's default size; otherwise at least 320 |
 | `launch.fullscreen` | false | |
 | `launch.afterLaunch` | 0 | 0 keep open, 1 minimize, 2 close (`AfterLaunch`) |
+| `packLaunch` | `{}` | Per-pack launch options: pack id -> the same keys as `launch` except `afterLaunch`. Missing keys fall back to `launch`. Set from My Library > Manage > Launch settings |
 | `gameOptions.everyLaunch` | true | false = apply only the first time each pack starts |
 | `gameOptions.values` | `{}` | options.txt key -> value, only for options turned on |
 | `customThemes` | `[]` | Custom themes, see [ui-theme.md](ui-theme.md) |
 
-How the `launch` values are applied is described in [launching.md](launching.md).
+How the `launch` values are applied is described in [launching.md](launching.md). `LaunchSettingsFor(settings, packId)` picks a pack's own options from `packLaunch` when it has them, always with the global `afterLaunch`. The Minecraft page's notice mentions per-pack settings when any pack has them.
 
 ## Game options (`src/Game/GameOptions.{h,cpp}`)
 - `GameOptionDefs()` lists the vanilla options the page offers, with their options.txt key, group, label, hint, type (`Toggle`, `Slider`, `Choice`, `Text`), vanilla default, and for sliders the range and unit conversion. Keys and value formats follow recent Minecraft (1.19+); versions that don't know a key ignore it.

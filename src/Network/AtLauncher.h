@@ -28,8 +28,16 @@ bool FetchAtLauncherVersion(HttpClient& http,
 							std::string* err = nullptr,
 							const std::atomic<bool>* cancel = nullptr);
 
-// Reads Configs.json, downloads Configs.zip into workDir, and plans every required client mod.
-// Optional mods are skipped (and noted); there is no picker yet.
+// The version's optional client mods, from Configs.json.
+bool FetchAtLauncherOptionalMods(HttpClient& http,
+								 const Modpack& pack,
+								 std::vector<OptionalMod>& out,
+								 std::string* err = nullptr,
+								 const std::atomic<bool>* cancel = nullptr);
+
+// Reads Configs.json, downloads Configs.zip into workDir, and plans every required client
+// mod plus the optional ones named in pack.optionalMods. Other optional mods are skipped
+// (and noted).
 bool BuildAtLauncherPlan(HttpClient& http,
 						 const Modpack& pack,
 						 const std::string& workDir,

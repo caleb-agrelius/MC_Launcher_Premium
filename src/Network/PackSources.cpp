@@ -205,6 +205,18 @@ void ApplyPackVersion(Modpack& pack, const PackVersionInfo& version)
 	pack.filesLoaded = true;
 }
 
+bool FetchOptionalMods(HttpClient& http,
+					   const Modpack& pack,
+					   std::vector<OptionalMod>& out,
+					   std::string* err,
+					   const std::atomic<bool>* cancel)
+{
+	out.clear();
+	if (pack.source == PackSource::ATLauncher)
+		return FetchAtLauncherOptionalMods(http, pack, out, err, cancel);
+	return true;
+}
+
 bool BuildInstallPlan(HttpClient& http,
 					  const Modpack& pack,
 					  const std::string& workDir,

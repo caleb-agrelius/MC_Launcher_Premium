@@ -707,7 +707,9 @@ int main(int argc, char** argv)
 		};
 
 		// ---- Account (UI thread only) ----
-		Account account = LoadAccount(kAccountFile);
+		AccountList accounts = LoadAccounts(kAccountFile);
+		Account account = accounts.Active(); // copy of the active account, kept in step by saveAccounts
+		log << "Loaded " << accounts.accounts.size() << " account(s)\n";
 		enum class SignIn { Idle, Starting };
 		SignIn signIn = SignIn::Idle;
 		std::string signInError;
@@ -715,13 +717,23 @@ int main(int argc, char** argv)
 		char offlineName[17] = "";
 		bool openOfflinePopup = false;
 
-		auto setAccount = [&](const Account& newAccount) {
-			account = newAccount;
+		auto saveAccounts = [&]() {
+			account = accounts.Active();
 			std::error_code removeError;
-			if (account.type == Account::Type::None)
+			if (accounts.accounts.empty())
 				fs::remove(kAccountFile, removeError);
-			else if (!SaveAccount(kAccountFile, account))
+			else if (!SaveAccounts(kAccountFile, accounts))
 				log << "Could not save " << kAccountFile << "\n";
+		};
+		// A new sign-in (or offline name) becomes the active account.
+		auto addAccount = [&](const Account& newAccount) {
+			accounts.AddOrReplace(newAccount);
+			saveAccounts();
+		};
+		// Fresh tokens for a saved account; it keeps its place in the list.
+		auto updateAccount = [&](const Account& refreshed) {
+			accounts.Update(refreshed);
+			saveAccounts();
 		};
 
 		auto startMicrosoftSignIn = [&]() {
@@ -729,15 +741,15 @@ int main(int argc, char** argv)
 			signInError.clear();
 			signInCancel = std::make_shared<std::atomic<bool>>(false);
 			const std::string clientId = settings.microsoftClientId;
-			StartWorker(workers, [&http, &uiQueue, &signIn, &signInError, &setAccount, &log,
+			StartWorker(workers, [&http, &uiQueue, &signIn, &signInError, &addAccount, &log,
 				clientId, cancel = signInCancel]() {
 				std::string error;
 				Account signedIn;
 				const bool ok = SignInWithMicrosoft(http, clientId, signedIn, &error, cancel.get());
-				uiQueue.Post([&signIn, &signInError, &setAccount, &log, ok, signedIn, error, cancel]() {
+				uiQueue.Post([&signIn, &signInError, &addAccount, &log, ok, signedIn, error, cancel]() {
 					signIn = SignIn::Idle;
 					if (ok) {
-						setAccount(signedIn);
+						addAccount(signedIn);
 						log << "Signed in as " << signedIn.name << "\n";
 					} else if (!cancel->load()) {
 						signInError = error;
@@ -822,10 +834,16 @@ int main(int argc, char** argv)
 			});
 		};
 
-		// Play reads the modrinth.index.json of an extracted .mrpack. Packs installed from a
-		// source's install plan (CurseForge, FTB, ...) have no such index yet.
-		auto canPlay = [](const Modpack& pack) {
+		// One-click servers read the modrinth.index.json of an extracted .mrpack, which packs
+		// installed from a source's install plan (CurseForge, FTB, ...) don't have.
+		auto canHostServer = [](const Modpack& pack) {
 			return !GetSourceCapabilities(pack.source).installsPacks;
+		};
+		// The pack's game folder: instances/<id>/ for .mrpack packs, or the folder an install
+		// plan filled, installs/<id>/minecraft/.
+		auto gameDir = [](const Modpack& pack) {
+			return GetSourceCapabilities(pack.source).installsPacks ? fs::path("installs") / pack.id / "minecraft"
+				: fs::path(kInstancesRoot) / pack.id;
 		};
 
 		auto startPlay = [&](const Modpack& pack) {
@@ -848,9 +866,9 @@ int main(int argc, char** argv)
 			PlayRequest request;
 			request.gameRoot = fs::absolute(kGameRoot);
 			request.extractedDir = fs::absolute(fs::path("installs") / pack.id);
-			request.instanceDir = fs::absolute(fs::path(kInstancesRoot) / pack.id);
+			request.instanceDir = fs::absolute(gameDir(pack));
 			request.account = account;
-			request.launch = settings.launch;
+			request.launch = LaunchSettingsFor(settings, pack.id);
 			request.gameOptions = settings.gameOptions;
 			request.stopGame = stop.get(); // kept alive by the worker's copy of stop
 			const std::string clientId = settings.microsoftClientId;
@@ -859,7 +877,7 @@ int main(int argc, char** argv)
 			const AfterLaunch afterLaunch = settings.launch.afterLaunch;
 			log << "Play " << packId << " as " << account.name << "\n";
 			log.flush();
-			StartWorker(workers, [&http, &uiQueue, &plays, &playsMutex, &setAccount, &log, window, request, clientId, packId,
+			StartWorker(workers, [&http, &uiQueue, &plays, &playsMutex, &updateAccount, &log, window, request, clientId, packId,
 				packName, afterLaunch, cancel, stop]() mutable {
 				bool started = false; // Minecraft's process is running
 				auto progress = [&](const std::string& step, double fraction) {
@@ -890,7 +908,7 @@ int main(int argc, char** argv)
 					ok = RefreshMicrosoftAccount(http, clientId, request.account, &error, cancel.get());
 					if (ok) {
 						const Account refreshed = request.account;
-						uiQueue.Post([&setAccount, refreshed]() { setAccount(refreshed); });
+						uiQueue.Post([&updateAccount, refreshed]() { updateAccount(refreshed); });
 					}
 				}
 				if (ok)
@@ -1077,6 +1095,185 @@ int main(int argc, char** argv)
 			});
 		};
 
+		// Re-checks a library pack's files and re-downloads damaged or missing ones. Whole-pack
+		// installs re-run their install plan, which keeps files whose hash still matches.
+		auto startRepair = [&](const Modpack& pack) {
+			if (GetSourceCapabilities(pack.source).installsPacks) {
+				startPlanInstall(pack);
+				Toasts::Push(Toasts::Kind::Info, "Repairing " + pack.name, "Progress is on the Downloads page.");
+				return;
+			}
+			auto cancel = std::make_shared<std::atomic<bool>>(false);
+			{
+				std::lock_guard<std::mutex> lock(playsMutex);
+				PlayState& state = plays[pack.id];
+				state = PlayState{};
+				state.busy = true;
+				state.step = "Repairing";
+				state.cancel = cancel;
+			}
+			PlayRequest request;
+			request.gameRoot = fs::absolute(kGameRoot);
+			request.extractedDir = fs::absolute(fs::path("installs") / pack.id);
+			request.instanceDir = fs::absolute(gameDir(pack));
+			const std::string packId = pack.id;
+			const std::string packName = pack.name;
+			log << "Repair " << packId << "\n";
+			StartWorker(workers, [&http, &uiQueue, &plays, &playsMutex, &log, request, packId, packName, cancel]() {
+				auto progress = [&](const std::string& step, double fraction) {
+					std::lock_guard<std::mutex> lock(playsMutex);
+					PlayState& state = plays[packId];
+					state.step = step;
+					state.progress = fraction;
+				};
+				std::string error;
+				const bool ok = RepairModpack(http, request, progress, &error, cancel.get());
+				{
+					std::lock_guard<std::mutex> lock(playsMutex);
+					PlayState& state = plays[packId];
+					state.busy = false;
+					state.error = (ok || cancel->load()) ? std::string() : error;
+				}
+				const bool cancelled = cancel->load();
+				uiQueue.Post([&log, packId, packName, ok, cancelled, error]() {
+					log << "Repair " << packId << (ok ? " done" : " failed: " + error) << "\n";
+					if (ok)
+						Toasts::Push(Toasts::Kind::Success, "Repaired " + packName, "Every pack file matches its checksum.");
+					else if (!cancelled)
+						Toasts::Push(Toasts::Kind::Error, "Repair failed", packName + ": " + error);
+				});
+			});
+		};
+
+		// Removes a pack from My Library and deletes its files: installs/<id>/, the game
+		// folder (worlds included), downloads/<id>/ and its saved downloads. Its server
+		// folder, if any, is kept. The deleting runs on a worker so big packs don't stall the UI.
+		auto uninstallPack = [&](const Modpack& pack) {
+			// The id names folders that get deleted, so it must be one plain path segment.
+			if (pack.id.empty() || pack.id == "." || pack.id == ".." ||
+				pack.id.find_first_of("/\\:") != std::string::npos) {
+				log << "Refusing to uninstall pack with id \"" << pack.id << "\"\n";
+				Toasts::Push(Toasts::Kind::Error, "Couldn't uninstall " + pack.name, "Its id isn't a valid folder name.");
+				return;
+			}
+			const fs::path game = gameDir(pack);
+			libraryPacks.erase(pack.id);
+			if (!SavePackLibrary(kLibraryFile, libraryPacks))
+				log << "Could not save " << kLibraryFile << "\n";
+			{
+				std::lock_guard<std::mutex> lock(downloadsMutex);
+				for (auto it = downloads.begin(); it != downloads.end();) {
+					if (it->second.pack.id == pack.id && !it->second.active)
+						it = downloads.erase(it);
+					else
+						++it;
+				}
+			}
+			saveDownloads();
+			{
+				std::lock_guard<std::mutex> lock(playsMutex);
+				plays.erase(pack.id);
+			}
+			log << "Uninstall " << pack.id << "\n";
+			StartWorker(workers, [&uiQueue, &log, game, packId = pack.id, packName = pack.name]() {
+				std::string failed;
+				for (const fs::path& dir : { fs::path("installs") / packId, game, fs::path("downloads") / packId }) {
+					std::error_code ec;
+					fs::path target = fs::absolute(dir, ec);
+#ifdef _WIN32
+					// Always the \\?\ form: files deep inside can pass 260 characters even when dir doesn't.
+					target = fs::path(L"\\\\?\\" + target.lexically_normal().wstring());
+#endif
+					fs::remove_all(target, ec);
+					if (ec && failed.empty())
+						failed = dir.string() + ": " + ec.message();
+				}
+				uiQueue.Post([&log, packId, packName, failed]() {
+					if (failed.empty()) {
+						Toasts::Push(Toasts::Kind::Success, "Uninstalled " + packName, "Its files were deleted.");
+					} else {
+						log << "Uninstall " << packId << ": couldn't delete " << failed << "\n";
+						Toasts::Push(Toasts::Kind::Error, "Some files couldn't be deleted",
+							failed + ". Close anything using them and delete the folder by hand.");
+					}
+				});
+			});
+		};
+		std::string uninstallPackId; // pack whose "Uninstall" confirmation is open
+		std::string launchSettingsPackId; // pack whose "Launch settings" dialog is open
+
+		// The optional-mods picker shown before installing a pack that has some (ATLauncher).
+		struct OptionalPicker {
+			Modpack pack;               // empty id = closed
+			bool loading = false;
+			std::string error;
+			std::vector<OptionalMod> mods;
+			std::vector<char> chosen;   // parallel to mods
+			int generation = 0;
+		};
+		OptionalPicker picker;
+
+		// Checks or unchecks an optional mod, keeping the choice consistent: checking adds the
+		// mods it depends on and unchecks others in its group; unchecking drops mods that need it.
+		std::function<void(std::size_t, bool)> setOptional = [&](std::size_t index, bool on) {
+			if (index >= picker.mods.size() || (picker.chosen[index] != 0) == on)
+				return;
+			picker.chosen[index] = on ? 1 : 0;
+			const OptionalMod& mod = picker.mods[index];
+			for (std::size_t i = 0; i < picker.mods.size(); ++i) {
+				const OptionalMod& other = picker.mods[i];
+				if (on && i != index && !mod.group.empty() && other.group == mod.group)
+					setOptional(i, false);
+				if (on && std::find(mod.depends.begin(), mod.depends.end(), other.name) != mod.depends.end())
+					setOptional(i, true);
+				if (!on && std::find(other.depends.begin(), other.depends.end(), mod.name) != other.depends.end())
+					setOptional(i, false);
+			}
+		};
+
+		// Install pack: ATLauncher packs first offer their optional mods; everything else installs right away.
+		auto requestPlanInstall = [&](const Modpack& pack) {
+			if (pack.source != PackSource::ATLauncher) {
+				startPlanInstall(pack);
+				return;
+			}
+			picker = OptionalPicker{ pack, true, {}, {}, {}, picker.generation + 1 };
+			// A reinstall starts from the choices made last time.
+			const auto saved = libraryPacks.find(pack.id);
+			const std::vector<std::string> previous = saved != libraryPacks.end() ? saved->second.optionalMods
+				: std::vector<std::string>();
+			const bool hadChoice = saved != libraryPacks.end();
+			StartWorker(workers, [&http, &uiQueue, &shuttingDown, &picker, &setOptional, &startPlanInstall, pack, previous,
+				hadChoice, generation = picker.generation]() {
+				std::vector<OptionalMod> mods;
+				std::string error;
+				const bool ok = FetchOptionalMods(http, pack, mods, &error, &shuttingDown);
+				uiQueue.Post([&picker, &setOptional, &startPlanInstall, pack, previous, hadChoice, generation, ok, mods, error]() {
+					if (picker.generation != generation || picker.pack.id.empty())
+						return; // cancelled or replaced
+					picker.loading = false;
+					if (!ok) {
+						picker.error = error;
+						return;
+					}
+					if (mods.empty()) {
+						picker.pack = Modpack{};
+						startPlanInstall(pack);
+						return;
+					}
+					picker.mods = mods;
+					picker.chosen.assign(mods.size(), 0);
+					for (std::size_t i = 0; i < mods.size(); ++i) {
+						const bool wanted = hadChoice
+							? std::find(previous.begin(), previous.end(), mods[i].name) != previous.end()
+							: mods[i].selected;
+						if (wanted)
+							setOptional(i, true);
+					}
+				});
+			});
+		};
+
 		while (!glfwWindowShouldClose(window)) {
 			glfwPollEvents();
 			ReapFinishedWorkers(workers);
@@ -1189,13 +1386,55 @@ int main(int argc, char** argv)
 			// Account: who Minecraft is launched as.
 			ImGui::Dummy(ImVec2(0.0f, S(10.0f)));
 			Widgets::SectionLabel("ACCOUNT");
-			if (account.type != Account::Type::None) {
-				ImGui::PushFont(fonts.bold, 0.0f);
-				ImGui::TextUnformatted(account.name.c_str());
-				ImGui::PopFont();
-				ImGui::TextDisabled(account.type == Account::Type::Microsoft ? "Microsoft account" : "Offline (singleplayer)");
-				if (ImGui::Button("Sign out", ImVec2(-1.0f, 0.0f)))
-					setAccount(Account{});
+			auto accountKind = [](const Account& a) {
+				return a.type == Account::Type::Microsoft ? "Microsoft account" : "Offline (singleplayer)";
+			};
+			const bool hasClientId = !settings.microsoftClientId.empty();
+			if (account.type != Account::Type::None && signIn != SignIn::Starting) {
+				if (accounts.accounts.size() > 1) {
+					// Switch which saved account Play uses.
+					ImGui::SetNextItemWidth(-1.0f);
+					if (ImGui::BeginCombo("##account", account.name.c_str())) {
+						for (std::size_t i = 0; i < accounts.accounts.size(); ++i) {
+							const Account& item = accounts.accounts[i];
+							ImGui::PushID(static_cast<int>(i));
+							if (ImGui::Selectable(item.name.c_str(), i == accounts.active)) {
+								accounts.active = i;
+								saveAccounts();
+							}
+							ImGui::SameLine();
+							ImGui::TextDisabled("%s", item.type == Account::Type::Microsoft ? "Microsoft" : "Offline");
+							ImGui::PopID();
+						}
+						ImGui::EndCombo();
+					}
+				} else {
+					ImGui::PushFont(fonts.bold, 0.0f);
+					ImGui::TextUnformatted(account.name.c_str());
+					ImGui::PopFont();
+				}
+				ImGui::TextDisabled("%s", accountKind(account));
+				const float half = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+				if (ImGui::Button("Add account", ImVec2(half, 0.0f)))
+					ImGui::OpenPopup("add_account");
+				ImGui::SameLine();
+				if (ImGui::Button("Sign out", ImVec2(-1.0f, 0.0f))) {
+					accounts.Remove(accounts.active);
+					saveAccounts();
+				}
+				ImGui::SetItemTooltip("Remove %s from this launcher", account.name.c_str());
+				if (ImGui::BeginPopup("add_account")) {
+					if (ImGui::MenuItem("Sign in with Microsoft", nullptr, false, hasClientId))
+						startMicrosoftSignIn();
+					if (ImGui::MenuItem("Play offline..."))
+						openOfflinePopup = true;
+					ImGui::EndPopup();
+				}
+				if (!signInError.empty()) {
+					ImGui::PushStyleColor(ImGuiCol_Text, Theme::C().error);
+					ImGui::TextWrapped("%s", signInError.c_str());
+					ImGui::PopStyleColor();
+				}
 			} else if (signIn == SignIn::Starting) {
 				Widgets::Spinner(Theme::C().accent);
 				ImGui::SameLine();
@@ -1206,7 +1445,6 @@ int main(int argc, char** argv)
 					signInCancel->store(true);
 				ImGui::EndDisabled();
 			} else {
-				const bool hasClientId = !settings.microsoftClientId.empty();
 				ImGui::BeginDisabled(!hasClientId);
 				if (ImGui::Button("Sign in with Microsoft", ImVec2(-1.0f, 0.0f)))
 					startMicrosoftSignIn();
@@ -1245,7 +1483,7 @@ int main(int argc, char** argv)
 					ImGui::TextColored(Theme::C().error, "3-16 letters, numbers or underscores.");
 				ImGui::BeginDisabled(!valid);
 				if (ImGui::Button("Use this name") || (entered && valid)) {
-					setAccount(MakeOfflineAccount(offlineName));
+					addAccount(MakeOfflineAccount(offlineName));
 					ImGui::CloseCurrentPopup();
 				}
 				ImGui::EndDisabled();
@@ -1651,7 +1889,7 @@ int main(int argc, char** argv)
 								const char* label = installed ? "Reinstall" : (hasState && !state.error.empty() ? "Retry" : "Install pack");
 								AlignRightForButton(label);
 								if (ImGui::Button(label))
-									startPlanInstall(pack);
+									requestPlanInstall(pack);
 							}
 						}
 						if (hasState && state.active) {
@@ -1817,7 +2055,7 @@ int main(int argc, char** argv)
 						const auto it = plays.find(pack.id);
 						playBusy = it != plays.end() && it->second.busy;
 					}
-					ImGui::BeginDisabled(!canPlay(pack) || libraryPack == libraryPacks.end() || playBusy);
+					ImGui::BeginDisabled(libraryPack == libraryPacks.end() || playBusy);
 					if (ImGui::Button(playBusy ? "PLAYING" : "PLAY", ImVec2(-1.0f, S(52.0f)))) {
 						startPlay(libraryPack->second);
 						page = Page::Library;
@@ -1825,11 +2063,9 @@ int main(int argc, char** argv)
 					ImGui::EndDisabled();
 					ImGui::PopStyleVar();
 					ImGui::PopFont();
-					if (!canPlay(pack))
-						ImGui::TextDisabled("Playing %s packs isn't supported yet. Files install to installs/%s/minecraft.",
-							PackSourceName(pack.source), pack.id.c_str());
-					else if (libraryPack == libraryPacks.end())
-						ImGui::TextDisabled("Download and install the pack's files to play it.");
+					if (libraryPack == libraryPacks.end())
+						ImGui::TextDisabled(GetSourceCapabilities(pack.source).installsPacks
+							? "Install the pack to play it." : "Download and install the pack's files to play it.");
 					else
 						ImGui::TextDisabled("Progress and errors appear in My Library.");
 				} else if (searchingNames.empty()) {
@@ -1854,7 +2090,7 @@ int main(int argc, char** argv)
 					PackIconItem(pack, images, iconSize);
 					ImGui::SameLine(0.0f, S(14.0f));
 					ImGui::BeginGroup();
-					const bool playable = canPlay(pack);
+					const bool hostable = canHostServer(pack);
 					ImGui::PushTextWrapPos(0.0f);
 					Widgets::Text(fonts.bold, Theme::kFontHeading, Theme::C().text, pack.name.c_str());
 					std::string details = std::string(PackSourceName(pack.source)) + "  \xC2\xB7  " + pack.version;
@@ -1863,8 +2099,6 @@ int main(int argc, char** argv)
 					if (!pack.loaders.empty())
 						details += "  \xC2\xB7  " + pack.loaders;
 					ImGui::TextDisabled("%s", details.c_str());
-					if (!playable)
-						ImGui::TextDisabled("Game folder: installs/%s/minecraft", pack.id.c_str());
 					if (play.playing) {
 						ImGui::TextColored(Theme::C().accent, "Minecraft is running");
 					} else if (play.busy) {
@@ -1875,7 +2109,7 @@ int main(int argc, char** argv)
 						ImGui::PushStyleColor(ImGuiCol_Text, Theme::C().error);
 						ImGui::TextWrapped("%s", play.error.c_str());
 						ImGui::PopStyleColor();
-					} else if (playable) {
+					} else {
 						ImGui::TextDisabled("Ready to play");
 					}
 					ImGui::EndGroup();
@@ -1896,9 +2130,9 @@ int main(int argc, char** argv)
 						if (ImGui::Button("Cancel"))
 							play.cancel->store(true);
 					} else {
-						AlignRightForButtons(playable ? std::initializer_list<const char*>{ "Server", "Open folder", "  PLAY  " }
-							: std::initializer_list<const char*>{ "Open folder", "  PLAY  " });
-						if (playable) {
+						AlignRightForButtons(hostable ? std::initializer_list<const char*>{ "Server", "Open folder", "Manage", "  PLAY  " }
+							: std::initializer_list<const char*>{ "Open folder", "Manage", "  PLAY  " });
+						if (hostable) {
 							if (ImGui::Button("Server")) {
 								serverPackId = pack.id;
 								page = Page::Servers;
@@ -1907,20 +2141,40 @@ int main(int argc, char** argv)
 							ImGui::SameLine();
 						}
 						if (ImGui::Button("Open folder"))
-							Platform::OpenFolder((playable ? fs::path(kInstancesRoot) / pack.id
-								: fs::path("installs") / pack.id / "minecraft").string());
+							Platform::OpenFolder(gameDir(pack).string());
 						ImGui::SetItemTooltip("Open the game folder (mods, config, saves, logs)");
+						ImGui::SameLine();
+						if (ImGui::Button("Manage"))
+							ImGui::OpenPopup("manage_pack");
+						if (ImGui::BeginPopup("manage_pack")) {
+							ImGui::PushFont(nullptr, 0.0f);
+							const fs::path logsDir = gameDir(pack) / "logs";
+							std::error_code logError;
+							const bool hasLog = fs::is_regular_file(logsDir / "latest.log", logError);
+							if (ImGui::MenuItem("Open latest log", nullptr, false, hasLog))
+								Platform::OpenFile((logsDir / "latest.log").string());
+							if (ImGui::MenuItem("Open logs folder"))
+								Platform::OpenFolder(logsDir.string());
+							ImGui::Separator();
+							if (ImGui::MenuItem("Launch settings...", nullptr, settings.packLaunch.count(pack.id) > 0))
+								launchSettingsPackId = pack.id;
+							ImGui::SetItemTooltip("Memory, Java and window options for this pack only");
+							if (ImGui::MenuItem("Repair files"))
+								startRepair(pack);
+							ImGui::SetItemTooltip("Re-check every pack file and re-download damaged or missing ones");
+							ImGui::Separator();
+							if (ImGui::MenuItem("Uninstall..."))
+								uninstallPackId = pack.id;
+							ImGui::PopFont();
+							ImGui::EndPopup();
+						}
 						ImGui::SameLine();
 						ImGui::PushStyleColor(ImGuiCol_Button, Theme::C().accent);
 						ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Theme::Mix(Theme::C().accent, Theme::C().text, 0.15f));
 						ImGui::PushStyleColor(ImGuiCol_Text, Theme::C().windowBg);
-						ImGui::BeginDisabled(!playable);
 						if (ImGui::Button("  PLAY  "))
 							startPlay(pack);
-						ImGui::EndDisabled();
 						ImGui::PopStyleColor(3);
-						if (!playable)
-							ImGui::SetItemTooltip("Playing %s packs isn't supported yet.", PackSourceName(pack.source));
 					}
 					ImGui::PopFont();
 					if (play.busy && !play.playing && play.progress >= 0.0)
@@ -2349,6 +2603,7 @@ int main(int argc, char** argv)
 				}
 			} else {
 				settingsContext.accountName = account.type == Account::Type::None ? std::string() : account.name;
+				settingsContext.accountCount = static_cast<int>(accounts.accounts.size());
 				settingsContext.accountKind = account.type == Account::Type::Microsoft ? "Microsoft account"
 					: account.type == Account::Type::Offline ? "Offline (singleplayer)" : "No account yet";
 				const std::string oldCurseForgeKey = CurseForgeApiKey();
@@ -2386,6 +2641,142 @@ int main(int argc, char** argv)
 						ImGui::CloseCurrentPopup();
 					}
 					ImGui::EndPopup();
+				}
+			}
+
+			// Per-pack launch settings.
+			if (!launchSettingsPackId.empty()) {
+				const auto it = libraryPacks.find(launchSettingsPackId);
+				if (it == libraryPacks.end()) {
+					launchSettingsPackId.clear();
+				} else {
+					ImGui::OpenPopup("Launch settings");
+					const ImVec2 display = ImGui::GetIO().DisplaySize;
+					ImGui::SetNextWindowSize(ImVec2(std::min(S(720.0f), display.x * 0.9f), std::min(S(640.0f), display.y * 0.85f)));
+					if (ImGui::BeginPopupModal("Launch settings", nullptr, ImGuiWindowFlags_NoResize)) {
+						Widgets::Text(fonts.bold, Theme::kFontHeading, Theme::C().text, it->second.name.c_str());
+						ImGui::TextDisabled("Used the next time you press Play for this pack.");
+						const float footer = ImGui::GetFrameHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y;
+						ImGui::BeginChild("pack_launch_scroll", ImVec2(0.0f, -footer));
+						if (DrawPackLaunchSettings(settings, launchSettingsPackId, settingsContext))
+							settingsDirty = true;
+						ImGui::EndChild();
+						if (ImGui::Button("Done")) {
+							launchSettingsPackId.clear();
+							ImGui::CloseCurrentPopup();
+						}
+						ImGui::EndPopup();
+					}
+				}
+			}
+
+			// Optional mods picker.
+			if (!picker.pack.id.empty()) {
+				ImGui::OpenPopup("Optional mods");
+				const ImVec2 display = ImGui::GetIO().DisplaySize;
+				ImGui::SetNextWindowSize(ImVec2(std::min(S(640.0f), display.x * 0.9f), std::min(S(600.0f), display.y * 0.85f)));
+				if (ImGui::BeginPopupModal("Optional mods", nullptr, ImGuiWindowFlags_NoResize)) {
+					Widgets::Text(fonts.bold, Theme::kFontHeading, Theme::C().text, picker.pack.name.c_str());
+					bool close = false;
+					if (picker.loading) {
+						Widgets::Spinner(Theme::C().accent);
+						ImGui::SameLine();
+						ImGui::TextDisabled("Loading optional mods...");
+					} else if (!picker.error.empty()) {
+						ImGui::TextColored(Theme::C().error, "Couldn't load optional mods: %s", picker.error.c_str());
+					} else {
+						ImGui::TextDisabled("Choose extra mods to install. Mods they need are added too.");
+					}
+					const float footer = ImGui::GetFrameHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y;
+					ImGui::BeginChild("optional_list", ImVec2(0.0f, -footer), ImGuiChildFlags_Borders);
+					for (std::size_t i = 0; i < picker.mods.size(); ++i) {
+						const OptionalMod& mod = picker.mods[i];
+						ImGui::PushID(static_cast<int>(i));
+						bool on = picker.chosen[i] != 0;
+						if (ImGui::Checkbox(mod.name.c_str(), &on))
+							setOptional(i, on);
+						if (!mod.group.empty()) {
+							ImGui::SameLine();
+							ImGui::TextDisabled("(pick one: %s)", mod.group.c_str());
+						}
+						if (!mod.description.empty()) {
+							ImGui::Indent(ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x);
+							ImGui::PushStyleColor(ImGuiCol_Text, Theme::C().textDim);
+							ImGui::TextWrapped("%s", mod.description.c_str());
+							ImGui::PopStyleColor();
+							ImGui::Unindent(ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x);
+						}
+						ImGui::PopID();
+					}
+					ImGui::EndChild();
+					ImGui::BeginDisabled(picker.loading);
+					if (ImGui::Button(picker.error.empty() ? "Install" : "Install without optional mods")) {
+						Modpack pack = picker.pack;
+						pack.optionalMods.clear();
+						for (std::size_t i = 0; i < picker.mods.size(); ++i) {
+							if (picker.chosen[i])
+								pack.optionalMods.push_back(picker.mods[i].name);
+						}
+						startPlanInstall(pack);
+						close = true;
+					}
+					ImGui::EndDisabled();
+					ImGui::SameLine();
+					if (ImGui::Button("Cancel##optional"))
+						close = true;
+					if (close) {
+						picker.pack = Modpack{};
+						ImGui::CloseCurrentPopup();
+					}
+					ImGui::EndPopup();
+				}
+			}
+
+			// "Uninstall" confirmation.
+			if (!uninstallPackId.empty()) {
+				const auto it = libraryPacks.find(uninstallPackId);
+				if (it == libraryPacks.end()) {
+					uninstallPackId.clear();
+				} else {
+					ImGui::OpenPopup("Uninstall pack?");
+					ImGui::SetNextWindowSize(ImVec2(S(460.0f), 0.0f));
+					if (ImGui::BeginPopupModal("Uninstall pack?", nullptr, ImGuiWindowFlags_NoResize)) {
+						const Modpack pack = it->second;
+						ImGui::TextWrapped("%s will be removed from My Library and its files deleted, including "
+							"worlds in its saves folder. This can't be undone.", pack.name.c_str());
+						ImGui::TextDisabled("%s", gameDir(pack).string().c_str());
+						ImGui::Spacing();
+						bool busy = false;
+						{
+							std::lock_guard<std::mutex> lock(playsMutex);
+							const auto play = plays.find(pack.id);
+							busy = play != plays.end() && play->second.busy;
+						}
+						{
+							std::lock_guard<std::mutex> lock(downloadsMutex);
+							for (const auto& [key, state] : downloads)
+								busy = busy || (state.pack.id == pack.id && (state.active || state.installing));
+						}
+						if (busy)
+							ImGui::TextColored(Theme::C().error, "Close the game and wait for downloads or installs of this pack to finish first.");
+						ImGui::PushStyleColor(ImGuiCol_Button, Theme::Mix(Theme::C().cardBg, Theme::C().error, 0.55f));
+						ImGui::BeginDisabled(busy);
+						if (ImGui::Button("Uninstall")) {
+							if (settings.packLaunch.erase(pack.id) > 0)
+								settingsDirty = true;
+							uninstallPack(pack);
+							uninstallPackId.clear();
+							ImGui::CloseCurrentPopup();
+						}
+						ImGui::EndDisabled();
+						ImGui::PopStyleColor();
+						ImGui::SameLine();
+						if (ImGui::Button("Keep it")) {
+							uninstallPackId.clear();
+							ImGui::CloseCurrentPopup();
+						}
+						ImGui::EndPopup();
+					}
 				}
 			}
 

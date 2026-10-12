@@ -138,9 +138,44 @@ static bool WriteArgFile(const fs::path& path, const std::vector<std::string>& a
 	return true;
 }
 
+// Versions before 1.6 read assets by name from <game dir>/resources/ (their asset
+// index sets "map_to_resources"). Copies missing ones there from the object store.
+static void MapAssetsToResources(const fs::path& root, const ResolvedVersion& version, const fs::path& gameDir)
+{
+	if (version.assetIndex.is_null())
+		return;
+	const fs::path indexPath = root / "assets" / "indexes" / (version.assetIndex.value("id", "") + ".json");
+	json index;
+	try {
+		std::ifstream ifs(indexPath);
+		if (!ifs.is_open())
+			return;
+		ifs >> index;
+	}
+	catch (...) {
+		return;
+	}
+	if (!index.value("map_to_resources", false))
+		return;
+	const json objects = index.value("objects", json::object());
+	for (const auto& [name, object] : objects.items()) {
+		const std::string hash = object.value("hash", "");
+		const fs::path relative = fs::u8path(name).lexically_normal();
+		if (hash.size() < 2 || relative.empty() || relative.is_absolute() || *relative.begin() == "..")
+			continue;
+		const fs::path target = gameDir / "resources" / relative;
+		std::error_code ec;
+		if (fs::exists(target, ec))
+			continue;
+		fs::create_directories(target.parent_path(), ec);
+		fs::copy_file(root / "assets" / "objects" / hash.substr(0, 2) / hash, target, ec);
+	}
+}
+
 static bool LaunchVersion(const PlayRequest& request, const ResolvedVersion& version, const fs::path& javaExe,
 	const ProgressFn& progress, std::string* err, const std::atomic<bool>* cancel)
 {
+	MapAssetsToResources(request.gameRoot, version, request.instanceDir);
 	const fs::path& root = request.gameRoot;
 	const Account& account = request.account;
 
@@ -248,18 +283,14 @@ static bool LaunchVersion(const PlayRequest& request, const ResolvedVersion& ver
 	return true;
 }
 
-bool PlayModpack(HttpClient& http, const PlayRequest& request, const ProgressFn& progress, std::string* err,
+// Installs vanilla Minecraft, Java and the loader into the shared game root, then
+// launches. Shared by .mrpack instances and whole-pack installs.
+static bool InstallAndLaunch(HttpClient& http, const PlayRequest& request, const std::string& minecraftVersion,
+	LoaderKind loader, const std::string& loaderVersion, const ProgressFn& progress, std::string* err,
 	const std::atomic<bool>* cancel)
 {
 	const fs::path& root = request.gameRoot;
-	if (progress)
-		progress("Reading modpack", -1.0);
-	MrpackIndex index;
-	if (!ReadMrpackIndex(request.extractedDir, index, err))
-		return false;
-	if (!PrepareInstance(http, request.extractedDir, request.instanceDir, index, progress, err, cancel))
-		return false;
-	// After the pack's overrides, so the player's defaults from Settings win.
+	// After the pack's own files, so the player's defaults from Settings win.
 	if (!request.gameOptions.values.empty()) {
 		if (progress)
 			progress("Applying game options", -1.0);
@@ -268,11 +299,11 @@ bool PlayModpack(HttpClient& http, const PlayRequest& request, const ProgressFn&
 	}
 
 	if (progress)
-		progress("Preparing Minecraft " + index.minecraftVersion, -1.0);
-	if (!InstallVanillaJson(http, root, index.minecraftVersion, err, cancel))
+		progress("Preparing Minecraft " + minecraftVersion, -1.0);
+	if (!InstallVanillaJson(http, root, minecraftVersion, err, cancel))
 		return false;
 	ResolvedVersion vanilla;
-	if (!ResolveVersion(root, index.minecraftVersion, vanilla, err))
+	if (!ResolveVersion(root, minecraftVersion, vanilla, err))
 		return false;
 
 	fs::path javaw;
@@ -290,7 +321,7 @@ bool PlayModpack(HttpClient& http, const PlayRequest& request, const ProgressFn&
 		return false;
 
 	std::string versionId;
-	if (!InstallLoader(http, root, index.loader, index.minecraftVersion, index.loaderVersion, javaConsole,
+	if (!InstallLoader(http, root, loader, minecraftVersion, loaderVersion, javaConsole,
 			versionId, progress, err, cancel))
 		return false;
 	ResolvedVersion version;
@@ -306,4 +337,42 @@ bool PlayModpack(HttpClient& http, const PlayRequest& request, const ProgressFn&
 	if (progress)
 		progress("Starting Minecraft", -1.0);
 	return LaunchVersion(request, version, javaw, progress, err, cancel);
+}
+
+bool RepairModpack(HttpClient& http, const PlayRequest& request, const ProgressFn& progress, std::string* err,
+	const std::atomic<bool>* cancel)
+{
+	if (progress)
+		progress("Reading modpack", -1.0);
+	MrpackIndex index;
+	if (!ReadMrpackIndex(request.extractedDir, index, err))
+		return false;
+	return RepairInstance(http, request.extractedDir, request.instanceDir, index, progress, err, cancel);
+}
+
+bool PlayModpack(HttpClient& http, const PlayRequest& request, const ProgressFn& progress, std::string* err,
+	const std::atomic<bool>* cancel)
+{
+	if (progress)
+		progress("Reading modpack", -1.0);
+
+	// Whole-pack installs (CurseForge, FTB, Technic, ATLauncher) are already a game folder.
+	if (IsWholePackInstall(request.extractedDir)) {
+		InstalledPack pack;
+		if (!ReadInstalledPack(request.extractedDir, pack, err))
+			return false;
+		std::error_code ec;
+		if (!fs::is_directory(request.instanceDir, ec)) {
+			if (err) *err = "The pack's game folder is missing: " + PathString(request.instanceDir) + ". Install it again.";
+			return false;
+		}
+		return InstallAndLaunch(http, request, pack.minecraftVersion, pack.loader, pack.loaderVersion, progress, err, cancel);
+	}
+
+	MrpackIndex index;
+	if (!ReadMrpackIndex(request.extractedDir, index, err))
+		return false;
+	if (!PrepareInstance(http, request.extractedDir, request.instanceDir, index, progress, err, cancel))
+		return false;
+	return InstallAndLaunch(http, request, index.minecraftVersion, index.loader, index.loaderVersion, progress, err, cancel);
 }

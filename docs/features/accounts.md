@@ -2,10 +2,17 @@
 
 Who Minecraft is launched as. Shown in the **ACCOUNT** section of the sidebar.
 
+## Sidebar
+- With no account: **Sign in with Microsoft** and **Play offline...**.
+- With accounts: the active account's name (a dropdown to switch when more than one is saved, each entry marked Microsoft or Offline) and its kind, then **Add account** (a menu with **Sign in with Microsoft** and **Play offline...**) and **Sign out**, which removes only the active account; the next one becomes active.
+- While a Microsoft sign-in is running, a spinner and **Cancel** replace these. Sign-in errors appear in red below.
+- Settings > Account shows the active account and how many are saved.
+
 ## Account model (`src/Storage/Account.{h,cpp}`)
 - `Account` has a type (`None`, `Microsoft`, `Offline`), name, UUID (32 hex digits), Minecraft access token, its expiry (unix seconds), Microsoft refresh token, and Xbox user id.
-- Saved in `account.dat` in the data folder (gitignored). On Windows the JSON is encrypted with DPAPI (`CryptProtectData`), so only the same Windows user can read it. A missing, unreadable or undecryptable file means no account. **Sign out** deletes the file.
-- One account at a time.
+- Any number of accounts are saved (`AccountList`: the accounts plus the index of the active one, which Play uses). `account.dat` in the data folder (gitignored) holds `{"active": n, "accounts": [...]}`. On Windows the JSON is encrypted with DPAPI (`CryptProtectData`), so only the same Windows user can read it. A missing, unreadable or undecryptable file means no accounts. Files from before multiple accounts (one account object) still load. When the last account is removed, the file is deleted.
+- `AddOrReplace` adds a new sign-in or offline name and makes it active. Signing in again as a saved player replaces that entry instead of adding a duplicate: the same UUID for Microsoft, the same name for offline. A replaced offline account keeps its UUID, so worlds still know the player. `Update` stores refreshed tokens on the matching account wherever it is in the list.
+- The startup log says how many accounts were loaded.
 
 ## Microsoft sign-in (`src/Network/MicrosoftAuth.{h,cpp}`)
 - Uses the launcher’s default Azure app (client) ID, which can be changed in Settings > Account (saved as `"microsoftClientId"` in `settings.json`). The app must be registered for personal Microsoft accounts with public client flows enabled, **and Mojang must approve it for the Minecraft API**. Without approval, the last step fails with a message saying so. If the client ID is cleared, **Sign in with Microsoft** is disabled.

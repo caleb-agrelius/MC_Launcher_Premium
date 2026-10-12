@@ -435,13 +435,11 @@ bool DrawAppearance(Settings& settings)
 	return changed;
 }
 
-bool DrawMinecraft(Settings& settings, const SettingsPageContext& context)
+// The Memory, Java and Game window cards. global adds the launcher-wide "When the game
+// starts" choice; per-pack settings leave it out.
+static bool DrawLaunchCards(LaunchSettings& launch, const SettingsPageContext& context, bool global)
 {
 	bool changed = false;
-	LaunchSettings& launch = settings.launch;
-
-	Notice("These apply to every pack the next time you press Play.", Theme::C().info);
-
 	BeginCard("memory_card");
 	CardTitle("Memory", "How much RAM Minecraft may use. Most modpacks run well with 4\xE2\x80\x93" "8 GB.");
 	const int systemMb = context.systemMemoryMb > 0 ? static_cast<int>(context.systemMemoryMb) : kMaxMemoryMb;
@@ -531,26 +529,61 @@ bool DrawMinecraft(Settings& settings, const SettingsPageContext& context)
 		}
 		ImGui::EndDisabled();
 
-		Row("When the game starts");
-		const char* options[] = { "Keep the launcher open", "Minimize the launcher", "Close the launcher" };
-		int afterLaunch = static_cast<int>(launch.afterLaunch);
-		if (ImGui::Combo("##after_launch", &afterLaunch, options, 3)) {
-			launch.afterLaunch = static_cast<AfterLaunch>(afterLaunch);
-			changed = true;
-		}
-		if (launch.afterLaunch == AfterLaunch::Minimize) {
-			ImGui::PushFont(nullptr, Theme::kFontSmall);
-			ImGui::TextDisabled("The launcher comes back when Minecraft closes.");
-			ImGui::PopFont();
+		if (global) {
+			Row("When the game starts");
+			const char* options[] = { "Keep the launcher open", "Minimize the launcher", "Close the launcher" };
+			int afterLaunch = static_cast<int>(launch.afterLaunch);
+			if (ImGui::Combo("##after_launch", &afterLaunch, options, 3)) {
+				launch.afterLaunch = static_cast<AfterLaunch>(afterLaunch);
+				changed = true;
+			}
+			if (launch.afterLaunch == AfterLaunch::Minimize) {
+				ImGui::PushFont(nullptr, Theme::kFontSmall);
+				ImGui::TextDisabled("The launcher comes back when Minecraft closes.");
+				ImGui::PopFont();
+			}
 		}
 		EndRows();
 	}
-	ImGui::Dummy(ImVec2(0.0f, S(4.0f)));
-	if (ImGui::Button("Reset Minecraft settings to defaults")) {
-		launch = LaunchSettings{};
-		changed = true;
+	if (global) {
+		ImGui::Dummy(ImVec2(0.0f, S(4.0f)));
+		if (ImGui::Button("Reset Minecraft settings to defaults")) {
+			launch = LaunchSettings{};
+			changed = true;
+		}
 	}
 	EndCard();
+	return changed;
+}
+
+bool DrawMinecraft(Settings& settings, const SettingsPageContext& context)
+{
+	Notice(settings.packLaunch.empty() ? "These apply to every pack the next time you press Play."
+		: "These apply to every pack the next time you press Play, except packs with their own launch settings "
+		  "(My Library > Manage > Launch settings).", Theme::C().info);
+	return DrawLaunchCards(settings.launch, context, true);
+}
+
+bool DrawPackLaunch(Settings& settings, const std::string& packId, const SettingsPageContext& context)
+{
+	bool changed = false;
+	bool custom = settings.packLaunch.count(packId) > 0;
+	BeginCard("pack_launch_card");
+	if (BeginRows("pack_launch_rows")) {
+		Row("Use custom launch settings", "Off uses Settings > Minecraft, like every other pack.");
+		if (Widgets::Toggle("##pack_custom", &custom)) {
+			if (custom)
+				settings.packLaunch[packId] = settings.launch; // start from the global options
+			else
+				settings.packLaunch.erase(packId);
+			changed = true;
+		}
+		EndRows();
+	}
+	EndCard();
+	const auto it = settings.packLaunch.find(packId);
+	if (it != settings.packLaunch.end())
+		changed |= DrawLaunchCards(it->second, context, false);
 	return changed;
 }
 
@@ -582,7 +615,11 @@ bool DrawAccount(Settings& settings, const SettingsPageContext& context)
 	ImGui::TextUnformatted(context.accountName.empty() ? "Not signed in" : context.accountName.c_str());
 	ImGui::PopFont();
 	ImGui::TextDisabled("%s", context.accountKind.c_str());
-	ImGui::TextDisabled("Sign in, play offline, or sign out from the ACCOUNT section of the sidebar.");
+	if (context.accountCount > 1)
+		ImGui::TextDisabled("%d accounts saved. Switch, add or sign out from the ACCOUNT section of the sidebar.",
+			context.accountCount);
+	else
+		ImGui::TextDisabled("Sign in, add another account, play offline, or sign out from the ACCOUNT section of the sidebar.");
 	ImGui::EndGroup();
 	EndCard();
 
@@ -687,6 +724,11 @@ void DrawAbout(const SettingsPageContext& context)
 	ImGui::PopTextWrapPos();
 }
 
+}
+
+bool DrawPackLaunchSettings(Settings& settings, const std::string& packId, const SettingsPageContext& context)
+{
+	return DrawPackLaunch(settings, packId, context);
 }
 
 bool DrawSettingsPage(Settings& settings, const SettingsPageContext& context)

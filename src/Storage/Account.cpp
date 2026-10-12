@@ -2,6 +2,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <fstream>
@@ -45,44 +46,28 @@ static bool Protect(const std::string& plain, std::string& out, bool encrypt)
 }
 #endif
 
-Account LoadAccount(const std::string& path)
+static Account AccountFromJson(const json& j)
 {
 	Account account;
-	std::ifstream ifs(path, std::ios::binary);
-	if (!ifs.is_open())
-		return account;
-	std::string data((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
-#ifdef _WIN32
-	std::string plain;
-	if (!Protect(data, plain, false))
-		return account;
-	data.swap(plain);
-#endif
-	try {
-		const json j = json::parse(data);
-		const std::string type = j.value("type", "none");
-		if (type == "microsoft")
-			account.type = Account::Type::Microsoft;
-		else if (type == "offline")
-			account.type = Account::Type::Offline;
-		account.name = j.value("name", "");
-		account.uuid = j.value("uuid", "");
-		account.accessToken = j.value("accessToken", "");
-		account.accessExpires = j.value("accessExpires", std::int64_t{ 0 });
-		account.refreshToken = j.value("refreshToken", "");
-		account.xuid = j.value("xuid", "");
-		if (account.name.empty() || account.uuid.empty())
-			account = Account{};
-	}
-	catch (...) {
-		account = Account{};
-	}
+	const std::string type = j.value("type", "none");
+	if (type == "microsoft")
+		account.type = Account::Type::Microsoft;
+	else if (type == "offline")
+		account.type = Account::Type::Offline;
+	account.name = j.value("name", "");
+	account.uuid = j.value("uuid", "");
+	account.accessToken = j.value("accessToken", "");
+	account.accessExpires = j.value("accessExpires", std::int64_t{ 0 });
+	account.refreshToken = j.value("refreshToken", "");
+	account.xuid = j.value("xuid", "");
+	if (account.type == Account::Type::None || account.name.empty() || account.uuid.empty())
+		return Account{};
 	return account;
 }
 
-bool SaveAccount(const std::string& path, const Account& account)
+static json AccountToJson(const Account& account)
 {
-	const json j = {
+	return {
 		{ "type", TypeName(account.type) },
 		{ "name", account.name },
 		{ "uuid", account.uuid },
@@ -91,7 +76,97 @@ bool SaveAccount(const std::string& path, const Account& account)
 		{ "refreshToken", account.refreshToken },
 		{ "xuid", account.xuid },
 	};
-	std::string data = j.dump();
+}
+
+static bool SamePlayer(const Account& a, const Account& b)
+{
+	if (a.type != b.type)
+		return false;
+	// Offline accounts get a new random UUID each time, so the name identifies them.
+	return a.type == Account::Type::Offline ? a.name == b.name : a.uuid == b.uuid;
+}
+
+Account AccountList::Active() const
+{
+	return accounts.empty() ? Account{} : accounts[std::min(active, accounts.size() - 1)];
+}
+
+void AccountList::AddOrReplace(const Account& account)
+{
+	for (std::size_t i = 0; i < accounts.size(); ++i) {
+		if (SamePlayer(accounts[i], account)) {
+			// Keep an offline player's UUID, so their worlds still know them.
+			const std::string uuid = accounts[i].uuid;
+			accounts[i] = account;
+			if (account.type == Account::Type::Offline)
+				accounts[i].uuid = uuid;
+			active = i;
+			return;
+		}
+	}
+	accounts.push_back(account);
+	active = accounts.size() - 1;
+}
+
+void AccountList::Update(const Account& account)
+{
+	for (Account& saved : accounts) {
+		if (saved.type == account.type && saved.uuid == account.uuid)
+			saved = account;
+	}
+}
+
+void AccountList::Remove(std::size_t index)
+{
+	if (index >= accounts.size())
+		return;
+	accounts.erase(accounts.begin() + static_cast<std::ptrdiff_t>(index));
+	if (active > index || active >= accounts.size())
+		active = active > 0 ? active - 1 : 0;
+}
+
+AccountList LoadAccounts(const std::string& path)
+{
+	AccountList list;
+	std::ifstream ifs(path, std::ios::binary);
+	if (!ifs.is_open())
+		return list;
+	std::string data((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+#ifdef _WIN32
+	std::string plain;
+	if (!Protect(data, plain, false))
+		return list;
+	data.swap(plain);
+#endif
+	try {
+		const json j = json::parse(data);
+		if (j.contains("accounts")) {
+			for (const auto& item : j["accounts"]) {
+				const Account account = AccountFromJson(item);
+				if (account.type != Account::Type::None)
+					list.accounts.push_back(account);
+			}
+			list.active = std::min<std::size_t>(j.value("active", std::size_t{ 0 }),
+				list.accounts.empty() ? 0 : list.accounts.size() - 1);
+		} else {
+			// A single account, written before multiple accounts existed.
+			const Account account = AccountFromJson(j);
+			if (account.type != Account::Type::None)
+				list.accounts.push_back(account);
+		}
+	}
+	catch (...) {
+		list = AccountList{};
+	}
+	return list;
+}
+
+bool SaveAccounts(const std::string& path, const AccountList& list)
+{
+	json accounts = json::array();
+	for (const Account& account : list.accounts)
+		accounts.push_back(AccountToJson(account));
+	std::string data = json{ { "active", list.active }, { "accounts", accounts } }.dump();
 #ifdef _WIN32
 	std::string encrypted;
 	if (!Protect(data, encrypted, true))

@@ -24,7 +24,8 @@ The ATLauncher Discover sub-page: search, version lookup, and whole-pack install
 - **Configs:** unless `noConfigs` is set, `Configs.zip` (same folder as `Configs.json`) is downloaded into the work folder, checked against `configs.sha1`, and merged into `minecraft/` last as an override.
 - **Loader:** `loader.type` and `loader.metadata.version` (else `metadata.loader`) are recorded in the plan.
 - **Mods:** each `mods[]` entry becomes a planned file, checked by `md5` and `filesize`. 4 download at a time.
-  - Skipped: `client: false` mods, and `optional` mods (with a note, since there's no picker yet).
+  - Skipped: `client: false` mods, and `optional` mods that aren't named in `pack.optionalMods` (with a note counting them).
+  - **Optional mods** (`FetchAtLauncherOptionalMods`): every client mod with `optional: true` becomes an `OptionalMod` with its `name`, `description`, `group`, `depends` and default (`selected` or `recommended`). Discover's picker uses them (see [discover.md](discover.md)), and the choice is saved in `library.json` so **Repair files** and **Reinstall** keep it.
   - `download: "server"` → the CDN base + `url`. `"direct"` → `url` as-is. `"browser"` → a blocked file whose page is `url`.
   - Folder by `type`:
 
@@ -37,7 +38,7 @@ The ATLauncher Discover sub-page: search, version lookup, and whole-pack install
     | `ic2lib`, `denlib` | `mods/ic2`, `mods/denlib` |
     | `coremods`, `plugins` | same name |
     | `texturepack`, `resourcepack`, `shaderpack` | `texturepacks`, `resourcepacks`, `shaderpacks` |
-    | `jar`, `forge` | `jarmods` (kept for a future Play feature) |
+    | `jar`, `forge` | `jarmods` (not added to the game jar at launch) |
 
   - `extract` mods are zips unpacked into the folder for `extractTo`. Only the zip folder named by `extractFolder` is taken (ATLauncher's `%s%` means `/`).
   - `texturepackextract` and `resourcepackextract` unpack into `texturepacks/extracted` and `resourcepacks/extracted`.

@@ -199,6 +199,43 @@ static const char* FolderForType(const std::string& type, const std::string& mcF
 	return nullptr; // mcpc, millenaire, decomp, unknown
 }
 
+bool FetchAtLauncherOptionalMods(HttpClient& http,
+								 const Modpack& pack,
+								 std::vector<OptionalMod>& out,
+								 std::string* err,
+								 const std::atomic<bool>* cancel)
+{
+	out.clear();
+	json configs;
+	if (!GetJson(http, ConfigsUrl(pack, pack.sourceVersionId, "Configs.json"), configs, err, cancel))
+		return false;
+	try {
+		for (const auto& mod : configs.value("mods", json::array())) {
+			if (!mod.value("client", true) || !mod.value("optional", false))
+				continue;
+			OptionalMod item;
+			item.name = StringOrEmpty(mod, "name");
+			if (item.name.empty())
+				continue;
+			item.description = StringOrEmpty(mod, "description");
+			item.group = StringOrEmpty(mod, "group");
+			item.selected = mod.value("selected", false) || mod.value("recommended", false);
+			if (mod.contains("depends") && mod["depends"].is_array()) {
+				for (const auto& dep : mod["depends"]) {
+					if (dep.is_string())
+						item.depends.push_back(dep.get<std::string>());
+				}
+			}
+			out.push_back(std::move(item));
+		}
+	}
+	catch (const std::exception& ex) {
+		if (err) *err = std::string("Unexpected ATLauncher manifest: ") + ex.what();
+		return false;
+	}
+	return true;
+}
+
 bool BuildAtLauncherPlan(HttpClient& http,
 						 const Modpack& pack,
 						 const std::string& workDir,
@@ -255,7 +292,8 @@ bool BuildAtLauncherPlan(HttpClient& http,
 		for (const auto& mod : configs.value("mods", json::array())) {
 			if (!mod.value("client", true))
 				continue;
-			if (mod.value("optional", false)) {
+			if (mod.value("optional", false) &&
+				std::find(pack.optionalMods.begin(), pack.optionalMods.end(), StringOrEmpty(mod, "name")) == pack.optionalMods.end()) {
 				++optional;
 				continue;
 			}
@@ -318,7 +356,7 @@ bool BuildAtLauncherPlan(HttpClient& http,
 		return false;
 	}
 	if (optional > 0)
-		plan.notes.push_back(std::to_string(optional) + " optional mod(s) were skipped; there's no picker for them yet.");
+		plan.notes.push_back(std::to_string(optional) + " optional mod(s) weren't chosen and were skipped.");
 	if (unsupported > 0)
 		plan.notes.push_back(std::to_string(unsupported) + " mod(s) of unsupported types (mcpc, decomp, millenaire) were skipped.");
 	return true;

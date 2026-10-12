@@ -14,6 +14,43 @@ static int ClampWindowSide(int value)
 	return value <= 0 ? 0 : std::max(kMinWindowSide, value);
 }
 
+// Reads launch options over the values already in l (so defaults stay for missing keys).
+static void LaunchFromJson(const json& launch, LaunchSettings& l)
+{
+	l.maxMemoryMb = std::clamp(launch.value("maxMemoryMb", l.maxMemoryMb), kMinMemoryMb, kMaxMemoryMb);
+	l.minMemoryMb = std::clamp(launch.value("minMemoryMb", l.minMemoryMb), 0, l.maxMemoryMb);
+	l.javaPath = launch.value("javaPath", l.javaPath);
+	l.jvmArgs = launch.value("jvmArgs", l.jvmArgs);
+	l.windowWidth = ClampWindowSide(launch.value("windowWidth", l.windowWidth));
+	l.windowHeight = ClampWindowSide(launch.value("windowHeight", l.windowHeight));
+	l.fullscreen = launch.value("fullscreen", l.fullscreen);
+	l.afterLaunch = static_cast<AfterLaunch>(std::clamp(launch.value("afterLaunch", static_cast<int>(l.afterLaunch)), 0, 2));
+}
+
+static json LaunchToJson(const LaunchSettings& l)
+{
+	return {
+		{ "minMemoryMb", l.minMemoryMb },
+		{ "maxMemoryMb", l.maxMemoryMb },
+		{ "javaPath", l.javaPath },
+		{ "jvmArgs", l.jvmArgs },
+		{ "windowWidth", l.windowWidth },
+		{ "windowHeight", l.windowHeight },
+		{ "fullscreen", l.fullscreen },
+		{ "afterLaunch", static_cast<int>(l.afterLaunch) },
+	};
+}
+
+LaunchSettings LaunchSettingsFor(const Settings& settings, const std::string& packId)
+{
+	const auto it = settings.packLaunch.find(packId);
+	if (it == settings.packLaunch.end())
+		return settings.launch;
+	LaunchSettings launch = it->second;
+	launch.afterLaunch = settings.launch.afterLaunch; // a launcher-wide choice
+	return launch;
+}
+
 Settings LoadSettings(const std::string& path)
 {
 	Settings settings;
@@ -35,15 +72,15 @@ Settings LoadSettings(const std::string& path)
 		LaunchSettings& l = settings.launch;
 		// Before the Settings page, memory was a top-level key.
 		l.maxMemoryMb = j.value("maxMemoryMb", l.maxMemoryMb);
-		const json launch = j.value("launch", json::object());
-		l.maxMemoryMb = std::clamp(launch.value("maxMemoryMb", l.maxMemoryMb), kMinMemoryMb, kMaxMemoryMb);
-		l.minMemoryMb = std::clamp(launch.value("minMemoryMb", l.minMemoryMb), 0, l.maxMemoryMb);
-		l.javaPath = launch.value("javaPath", l.javaPath);
-		l.jvmArgs = launch.value("jvmArgs", l.jvmArgs);
-		l.windowWidth = ClampWindowSide(launch.value("windowWidth", l.windowWidth));
-		l.windowHeight = ClampWindowSide(launch.value("windowHeight", l.windowHeight));
-		l.fullscreen = launch.value("fullscreen", l.fullscreen);
-		l.afterLaunch = static_cast<AfterLaunch>(std::clamp(launch.value("afterLaunch", 0), 0, 2));
+		LaunchFromJson(j.value("launch", json::object()), l);
+		const json packLaunch = j.value("packLaunch", json::object());
+		for (const auto& [packId, launch] : packLaunch.items()) {
+			if (packId.empty() || !launch.is_object())
+				continue;
+			LaunchSettings pack = l; // missing keys fall back to the global options
+			LaunchFromJson(launch, pack);
+			settings.packLaunch[packId] = pack;
+		}
 
 		const json gameOptions = j.value("gameOptions", json::object());
 		settings.gameOptions.everyLaunch = gameOptions.value("everyLaunch", settings.gameOptions.everyLaunch);
@@ -84,7 +121,6 @@ bool SaveSettings(const std::string& path, const Settings& settings)
 	std::ofstream ofs(path, std::ios::trunc);
 	if (!ofs.is_open())
 		return false;
-	const LaunchSettings& l = settings.launch;
 	json j;
 	j["uiScale"] = std::round(settings.uiScale * 100.0) / 100.0; // 1.1, not 1.100000023841858
 	j["discoverSources"] = settings.discoverSources;
@@ -94,16 +130,14 @@ bool SaveSettings(const std::string& path, const Settings& settings)
 	j["searchLimit"] = settings.searchLimit;
 	j["microsoftClientId"] = settings.microsoftClientId;
 	j["curseForgeApiKey"] = settings.curseForgeApiKey;
-	j["launch"] = {
-		{ "minMemoryMb", l.minMemoryMb },
-		{ "maxMemoryMb", l.maxMemoryMb },
-		{ "javaPath", l.javaPath },
-		{ "jvmArgs", l.jvmArgs },
-		{ "windowWidth", l.windowWidth },
-		{ "windowHeight", l.windowHeight },
-		{ "fullscreen", l.fullscreen },
-		{ "afterLaunch", static_cast<int>(l.afterLaunch) },
-	};
+	j["launch"] = LaunchToJson(settings.launch);
+	json packLaunch = json::object();
+	for (const auto& [packId, launch] : settings.packLaunch) {
+		json entry = LaunchToJson(launch);
+		entry.erase("afterLaunch"); // always the global choice
+		packLaunch[packId] = entry;
+	}
+	j["packLaunch"] = packLaunch;
 	j["gameOptions"] = {
 		{ "everyLaunch", settings.gameOptions.everyLaunch },
 		{ "values", settings.gameOptions.values },
