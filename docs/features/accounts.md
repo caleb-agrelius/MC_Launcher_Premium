@@ -8,10 +8,10 @@ Who Minecraft is launched as. Shown in the **ACCOUNT** section of the sidebar.
 - One account at a time.
 
 ## Microsoft sign-in (`src/Network/MicrosoftAuth.{h,cpp}`)
-- Needs an Azure app (client) ID, set in Settings > Account (saved as `"microsoftClientId"` in `settings.json`). The app must be registered for personal Microsoft accounts with public client flows enabled, **and Mojang must approve it for the Minecraft API**. Without approval, the last step fails with a message saying so. With no client ID, **Sign in with Microsoft** is disabled and has a tooltip explaining why.
-- Flow (device code; no browser embedding or redirect server):
-  1. `StartMicrosoftDeviceCode()` asks `login.microsoftonline.com/consumers` for a code (scope `XboxLive.signin offline_access`). The sidebar shows the URL and code, with **Copy code & open page** (copies the code and opens the browser) and **Cancel**.
-  2. `FinishMicrosoftDeviceCode()` polls the token endpoint at the requested interval (handling `authorization_pending` and `slow_down`) until the player finishes, declines, the code expires, or the attempt is cancelled.
+- Uses the launcher’s default Azure app (client) ID, which can be changed in Settings > Account (saved as `"microsoftClientId"` in `settings.json`). The app must be registered for personal Microsoft accounts with public client flows enabled, **and Mojang must approve it for the Minecraft API**. Without approval, the last step fails with a message saying so. If the client ID is cleared, **Sign in with Microsoft** is disabled.
+- Flow (authorization code with PKCE; no manual code entry):
+  1. `SignInWithMicrosoft()` opens the Microsoft sign-in page in the system browser and starts a temporary listener on `localhost`.
+  2. After the player signs in, Microsoft redirects to the listener. The app validates the OAuth state and exchanges the authorization code using its PKCE verifier.
   3. Xbox Live user token, then XSTS token, then `login_with_xbox` (Minecraft access token, about 24 h), then `/minecraft/profile` for the name and UUID.
 - Errors are explained for common Xbox `XErr` codes (no Xbox profile, unsupported country, adult verification, child account), a 403 from Minecraft services (client ID not approved), and a 404 profile (doesn't own Java Edition).
 - Before each launch, a Microsoft account whose token expires within 5 minutes is refreshed with `RefreshMicrosoftAccount()` (refresh token, then the same Xbox/Minecraft steps), and the saved account is updated.

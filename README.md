@@ -17,7 +17,7 @@ A Minecraft Java Edition modpack launcher built with C++ and Dear ImGui.
 - Play it: the launcher downloads the pack's mods, Minecraft, a Mojang Java runtime and the mod loader (Fabric, Quilt, Forge or NeoForge), then starts the game. See [docs/features/launching.md](docs/features/launching.md).
 - Sign in with a Microsoft account, or play offline with a username. See [docs/features/accounts.md](docs/features/accounts.md).
 
-Microsoft sign-in needs an Entra app client ID set as `"microsoftClientId"` in `settings.json` and approval for the Minecraft API. See the [sign-in setup guide](docs/features/account-sign-in.md) and [planned features](docs/features/planned.md).
+Microsoft sign-in uses a default Entra app client ID, editable in Settings > Account, and requires approval for the Minecraft API. See the [sign-in setup guide](docs/features/account-sign-in.md) and [planned features](docs/features/planned.md).
 
 ## Prerequisites (Windows)
 

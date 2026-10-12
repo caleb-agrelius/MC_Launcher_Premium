@@ -29,9 +29,9 @@ struct Settings {
 	bool reduceMotion = false;   // no image fade-ins or toast slide-ins
 	bool showGalleryBanners = true;
 	int searchLimit = 30;        // results per Modrinth search
-	// Azure app (client) ID used for Microsoft sign-in. Mojang must approve it
-	// for the Minecraft API. Empty disables Microsoft sign-in.
-	std::string microsoftClientId;
+	// Public Azure app client ID used for Microsoft sign-in. The app must still
+	// be approved for the Minecraft API. Empty disables Microsoft sign-in.
+	std::string microsoftClientId = "838edcea-b214-4030-b620-4e436525b305";
 	LaunchSettings launch;
 };
 

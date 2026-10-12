@@ -492,9 +492,8 @@ int main(int argc, char** argv)
 
 		// ---- Account (UI thread only) ----
 		Account account = LoadAccount(kAccountFile);
-		enum class SignIn { Idle, Starting, WaitingForPlayer };
+		enum class SignIn { Idle, Starting };
 		SignIn signIn = SignIn::Idle;
-		DeviceCode signInCode;
 		std::string signInError;
 		auto signInCancel = std::make_shared<std::atomic<bool>>(false);
 		char offlineName[17] = "";
@@ -514,24 +513,11 @@ int main(int argc, char** argv)
 			signInError.clear();
 			signInCancel = std::make_shared<std::atomic<bool>>(false);
 			const std::string clientId = settings.microsoftClientId;
-			StartWorker(workers, [&http, &uiQueue, &signIn, &signInCode, &signInError, &setAccount, &log,
+			StartWorker(workers, [&http, &uiQueue, &signIn, &signInError, &setAccount, &log,
 				clientId, cancel = signInCancel]() {
-				DeviceCode code;
 				std::string error;
-				if (!StartMicrosoftDeviceCode(http, clientId, code, &error, cancel.get())) {
-					uiQueue.Post([&signIn, &signInError, &log, error]() {
-						signIn = SignIn::Idle;
-						signInError = error;
-						log << "Microsoft sign-in failed: " << error << "\n";
-					});
-					return;
-				}
-				uiQueue.Post([&signIn, &signInCode, code]() {
-					signInCode = code;
-					signIn = SignIn::WaitingForPlayer;
-				});
 				Account signedIn;
-				const bool ok = FinishMicrosoftDeviceCode(http, clientId, code, signedIn, &error, cancel.get());
+				const bool ok = SignInWithMicrosoft(http, clientId, signedIn, &error, cancel.get());
 				uiQueue.Post([&signIn, &signInError, &setAccount, &log, ok, signedIn, error, cancel]() {
 					signIn = SignIn::Idle;
 					if (ok) {
@@ -847,20 +833,12 @@ int main(int argc, char** argv)
 			} else if (signIn == SignIn::Starting) {
 				Widgets::Spinner(Theme::C().accent);
 				ImGui::SameLine();
-				ImGui::TextDisabled("Contacting Microsoft...");
-			} else if (signIn == SignIn::WaitingForPlayer) {
-				ImGui::TextWrapped("Go to %s and enter this code:", signInCode.verificationUri.c_str());
-				ImGui::PushFont(fonts.bold, Theme::kFontHeading);
-				ImGui::TextUnformatted(signInCode.userCode.c_str());
-				ImGui::PopFont();
-				if (ImGui::Button("Copy code & open page", ImVec2(-1.0f, 0.0f))) {
-					ImGui::SetClipboardText(signInCode.userCode.c_str());
-					OpenUrl(signInCode.verificationUri);
-				}
-				if (ImGui::Button("Cancel", ImVec2(-1.0f, 0.0f))) {
+				ImGui::TextDisabled(signInCancel->load()
+					? "Cancelling sign-in..." : "Waiting for sign-in in your browser...");
+				ImGui::BeginDisabled(signInCancel->load());
+				if (ImGui::Button("Cancel", ImVec2(-1.0f, 0.0f)))
 					signInCancel->store(true);
-					signIn = SignIn::Idle;
-				}
+				ImGui::EndDisabled();
 			} else {
 				const bool hasClientId = !settings.microsoftClientId.empty();
 				ImGui::BeginDisabled(!hasClientId);
