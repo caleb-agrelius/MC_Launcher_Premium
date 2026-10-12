@@ -39,7 +39,7 @@ Live modpack search and version lookup against the public Modrinth API (`https:/
 - `HttpClient::Get(url, body, err, cancel, headers)` fetches into memory, with a 20 s connect timeout and a 60 s total timeout.
 - `HttpClient::Post(url, jsonBody, body, err, cancel, headers)` sends JSON (`Content-Type` and `Accept: application/json`) with the same timeouts.
 - `headers` are extra request headers, e.g. an API key. HTTP errors are reported as `"HTTP <status>"`.
-- Each thread reuses one curl handle, so repeated requests keep their connection open. The thread that destroys `HttpClient` frees its own handle first; every other thread that made requests must have exited by then (the app joins its workers and image threads before that).
+- Each thread reuses one curl handle, so repeated requests keep their connection open. `HttpClient::ReleaseThreadHandle()` frees the calling thread's handle early; workers call it when their task ends. The thread that destroys `HttpClient` frees its own handle first; every other thread that made requests must have exited by then (the app joins its workers and image threads before that).
 - `HttpClient::UrlEncode()` percent-encodes query parameters.
 - Every request sends `User-Agent: MC_Launcher_Premium/0.1` (`HttpClient::kUserAgent`), as Modrinth asks clients to identify themselves. Modrinth's rate limit is 300 requests per minute.
 

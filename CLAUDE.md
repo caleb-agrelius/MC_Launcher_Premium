@@ -9,11 +9,12 @@ A C++ Dear ImGui desktop app (GLFW + OpenGL3) for browsing, downloading, and ext
 | Doc | Read when working on |
 |---|---|
 | [app-shell.md](docs/features/app-shell.md) | Startup/shutdown, window, render loop, sidebar navigation, logging |
-| [ui-theme.md](docs/features/ui-theme.md) | Colors, fonts, DPI and UI scaling, `settings.json`, shared widgets (`src/UI/Theme`, `src/UI/Widgets`) |
+| [ui-theme.md](docs/features/ui-theme.md) | Color themes, fonts, DPI and UI scaling, shared widgets, toasts (`src/UI/Theme`, `src/UI/Widgets`, `src/UI/Toasts`) |
+| [settings.md](docs/features/settings.md) | Settings page, `settings.json` fields, Minecraft launch defaults (`src/UI/SettingsPage`, `src/Storage/Settings`) |
 | [images.md](docs/features/images.md) | Pack icons and banners: `ImageCache` (download, decode, GL textures) |
 | [modpack-index.md](docs/features/modpack-index.md) | `resources/index.json` (offline fallback), `LoadIndex`, `Modpack`/`PackFile` structs |
 | [pack-sources.md](docs/features/pack-sources.md) | Source dispatcher (`PackSources`), search filters, Discover sub-pages, install plans (`InstallPlan`, `RunInstallPlan`) |
-| [curseforge.md](docs/features/curseforge.md) | CurseForge client, API key setup (`BuildSecrets.h.in`, `MCLP_CURSEFORGE_API_KEY`), blocked files, Modrinth hash fallback |
+| [curseforge.md](docs/features/curseforge.md) | CurseForge client, API key setup (Settings `curseForgeApiKey`, `MCLP_CURSEFORGE_API_KEY`), blocked files, Modrinth hash fallback |
 | [ftb.md](docs/features/ftb.md) | FTB client: in-memory search over all packs, version manifests, one-at-a-time downloads |
 | [technic.md](docs/features/technic.md) | Technic client: `build` parameter, Solder vs single-zip packs, local filters |
 | [atlauncher.md](docs/features/atlauncher.md) | ATLauncher client: CDN pack list, `Configs.json`, mod types and folders |
@@ -22,7 +23,9 @@ A C++ Dear ImGui desktop app (GLFW + OpenGL3) for browsing, downloading, and ext
 | [downloads.md](docs/features/downloads.md) | `HttpClient`, download state map and threading, Downloads page |
 | [installation.md](docs/features/installation.md) | Zip extraction (`InstallZip`), the `installs/` layout |
 | [library.md](docs/features/library.md) | My Library page |
-| [planned.md](docs/features/planned.md) | Features that aren't implemented yet (play, Minecraft download, sign-in) |
+| [launching.md](docs/features/launching.md) | PLAY: `.mrpack` instances, Minecraft/Java/loader install, version JSON, launch command |
+| [accounts.md](docs/features/accounts.md) | Microsoft sign-in, offline mode, `account.dat` |
+| [planned.md](docs/features/planned.md) | Features that aren't implemented yet |
 
 ## Keeping docs current
 

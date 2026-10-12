@@ -24,7 +24,8 @@ Browse modpacks and start downloads and installs. UI code is the `Page::Discover
   - the total match count ("18.8K modpacks on Modrinth")
   - a red error. For Modrinth this is "Modrinth unavailable (...) - showing local packs".
 - **Offline fallback (Modrinth only):** if the search fails, the list shows packs from `resources/index.json` whose name or description contains the query (case-insensitive). See [modpack-index.md](modpack-index.md).
-- Each search shows up to 30 results (`kSearchLimit`). There is no paging yet.
+- Each search shows up to `settings.searchLimit` results (30 by default, 10–100, set in Settings > Downloads). CurseForge caps a page at 50. There is no paging yet.
+- **Ctrl F** opens Discover and puts the cursor in the current source's search box.
 
 ## Pack list (left, 340px, scaled)
 - The heading is the source's browse label (Modrinth: "MOST DOWNLOADED") when there's no query, filter or sort, and "RESULTS" otherwise.
@@ -37,6 +38,7 @@ Browse modpacks and start downloads and installs. UI code is the `Page::Discover
 ## Pack details (right)
 - **Hero banner** (`Widgets::HeroBanner`), sized to about a third of the pane width (200–340px, scaled):
   - Background, bottom to top: the pack's Modrinth color with a faint Minecraft-style block pattern; the small gallery thumbnail from the search result; the full-size gallery image once it has loaded. Each image fades in, and is scaled to fill and cropped.
+  - With **Gallery banners** turned off in Settings > Appearance, only the color and pattern are shown and no gallery images are downloaded.
   - When a Modrinth pack is selected for the first time (other sources don't do this), a background lookup (`FetchModrinthBanner`) finds the full-size image. If it fails, the thumbnail stays and the lookup isn't retried.
   - A gradient into the panel color keeps the text readable. On top are the pack icon, the name in large bold text, "by <author>", and chips for the Minecraft version, the loaders, and the pack version.
 - Below the banner, online packs show a downloads chip (when the count is known) and a link to the pack's page (`websiteUrl`, e.g. `modrinth.com/modpack/<slug>`) that opens in the browser (`ImGui::TextLinkOpenURL`). Then comes the wrapped description.
@@ -61,6 +63,6 @@ Browse modpacks and start downloads and installs. UI code is the `Page::Discover
 
 - **Download** and **Retry** start a background download. See [downloads.md](downloads.md).
 - **Install files** extracts the downloaded file into `installs/<pack id>/` (see [installation.md](installation.md)). When extraction succeeds, the pack is added to My Library (see [library.md](library.md)).
-- A large, disabled **PLAY — COMING SOON** button sits at the bottom. See [planned.md](planned.md).
+- A large **PLAY** button sits at the bottom. It's enabled when the pack is in My Library and isn't already being prepared or played; clicking it starts playing and switches to My Library. Otherwise it's disabled, with a hint to install the pack's files. See [launching.md](launching.md).
 
 If nothing is selected, the pane shows "No modpacks match your search."

@@ -99,8 +99,8 @@ bool IsSourceAvailable(PackSource source, std::string* reason)
 {
 	if (source == PackSource::CurseForge && CurseForgeApiKey().empty()) {
 		if (reason)
-			*reason = "CurseForge needs an API key. Set MCLP_CURSEFORGE_API_KEY, or configure the build with "
-				"-DCURSEFORGE_API_KEY=<key> (see README.md).";
+			*reason = "CurseForge needs an API key. Add one in Settings > Downloads, or set the "
+				"MCLP_CURSEFORGE_API_KEY environment variable (see README.md).";
 		return false;
 	}
 	return true;

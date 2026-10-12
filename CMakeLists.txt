@@ -26,35 +26,40 @@ FetchContent_MakeAvailable(imgui_backend_source)
 
 add_executable(MC_Launcher_Premium
   src/main.cpp
+  src/Platform.cpp
+  src/Game/GameFiles.cpp
+  src/Game/Launcher.cpp
+  src/Game/Loaders.cpp
+  src/Game/PackInstance.cpp
   src/Model/Modpack.cpp
   src/Network/AtLauncher.cpp
   src/Network/CurseForge.cpp
   src/Network/Ftb.cpp
   src/Network/HttpClient.cpp
+  src/Network/MicrosoftAuth.cpp
   src/Network/Modrinth.cpp
   src/Network/PackSources.cpp
   src/Network/Technic.cpp
+  src/Storage/Account.cpp
   src/Storage/InstallPlan.cpp
   src/Storage/Installer.cpp
   src/Storage/Library.cpp
   src/Storage/Settings.cpp
   src/UI/ImageCache.cpp
+  src/UI/SettingsPage.cpp
   src/UI/Theme.cpp
+  src/UI/Toasts.cpp
   src/UI/Widgets.cpp
   src/Util/Hash.cpp
   src/Util/Paths.cpp
+  src/Util/Process.cpp
+  src/Util/Sha1.cpp
   ${imgui_backend_source_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
   ${imgui_backend_source_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
 )
 
-# CurseForge API key: never commit it. Pass -DCURSEFORGE_API_KEY=<key> when configuring
-# (it stays in the build folder's CMakeCache.txt), or set MCLP_CURSEFORGE_API_KEY at runtime.
-set(CURSEFORGE_API_KEY "" CACHE STRING "CurseForge API key built into the app (optional)")
-configure_file(src/BuildSecrets.h.in ${CMAKE_CURRENT_BINARY_DIR}/generated/BuildSecrets.h @ONLY)
-
 target_include_directories(MC_Launcher_Premium PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/src
-  ${CMAKE_CURRENT_BINARY_DIR}/generated
   ${imgui_backend_source_SOURCE_DIR}/backends
   ${Stb_INCLUDE_DIR}
 )
@@ -76,6 +81,7 @@ endif()
 
 if (WIN32)
   target_compile_definitions(MC_Launcher_Premium PRIVATE "_CRT_SECURE_NO_WARNINGS" "GLFW_INCLUDE_NONE")
+  target_link_libraries(MC_Launcher_Premium PRIVATE bcrypt shell32 ws2_32)
 endif()
 
 # Visual Studio: make F5 launch the app (not ALL_BUILD), running from the repo root.

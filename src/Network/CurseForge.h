@@ -15,9 +15,14 @@ class HttpClient;
 // come back without a download URL. Those are looked up on Modrinth by SHA-1, and if that
 // fails they're returned as blocked (url empty) with a link to download them by hand.
 
-// The key from the MCLP_CURSEFORGE_API_KEY environment variable, else the one built in
-// with -DCURSEFORGE_API_KEY. Empty if neither is set.
+// The key saved in Settings (see SetCurseForgeApiKey), else the MCLP_CURSEFORGE_API_KEY
+// environment variable. Empty if neither is set. Safe to call from any thread.
 std::string CurseForgeApiKey();
+// Sets the key from Settings (surrounding spaces are trimmed; empty means "use the
+// environment variable"). Call at startup and whenever the setting changes.
+void SetCurseForgeApiKey(const std::string& key);
+// The MCLP_CURSEFORGE_API_KEY environment variable, or empty if it isn't set.
+std::string CurseForgeEnvApiKey();
 
 bool SearchCurseForgeModpacks(HttpClient& http,
 							  const std::string& query,

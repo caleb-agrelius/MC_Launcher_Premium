@@ -43,6 +43,21 @@ public:
 			  const std::atomic<bool>* cancel = nullptr,
 			  const std::vector<std::string>& headers = {});
 
+	// Sends a request and returns the response body and HTTP status even for error
+	// statuses (sign-in APIs explain failures in 4xx bodies). A non-empty body is
+	// sent as a POST. Returns false only if no response arrived (network error, cancel).
+	bool Request(const std::string& url,
+				 const std::vector<std::string>& headers,
+				 const std::string& requestBody,
+				 std::string& responseBody,
+				 long& status,
+				 std::string* err = nullptr,
+				 const std::atomic<bool>* cancel = nullptr);
+
+	// Frees the calling thread's curl handle now instead of at thread exit. Worker threads
+	// call this before reporting they're done, so joining them never waits on curl cleanup.
+	static void ReleaseThreadHandle();
+
 	// Percent-encodes text for use in a URL query parameter.
 	static std::string UrlEncode(const std::string& text);
 };

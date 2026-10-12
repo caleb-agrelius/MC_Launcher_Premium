@@ -3,9 +3,10 @@
 The CurseForge Discover sub-page: search, version lookup, and whole-pack installs through the CurseForge API (`https://api.curseforge.com/v1`). Code: `src/Network/CurseForge.{h,cpp}`, called through [pack-sources.md](pack-sources.md).
 
 ## API key
-- Every request sends `x-api-key`. `CurseForgeApiKey()` returns the environment variable `MCLP_CURSEFORGE_API_KEY` if it is set. Otherwise it returns the key built in at configure time.
-- To build a key in, configure with `-DCURSEFORGE_API_KEY=<key>`. CMake writes it into `build/generated/BuildSecrets.h` from `src/BuildSecrets.h.in`. The key stays in the build folder; never commit it. Setup steps are in the README.
-- With no key, the sub-page is disabled and shows "CurseForge needs an API key...". No request is sent.
+- Every request sends `x-api-key`. `CurseForgeApiKey()` returns the key from Settings > Downloads (`curseForgeApiKey` in `settings.json`) if it's set, otherwise the `MCLP_CURSEFORGE_API_KEY` environment variable. It is safe to call from any thread.
+- `main()` passes the Settings value to `SetCurseForgeApiKey()` at startup and whenever the Settings page changes. Surrounding spaces are trimmed. When the effective key changes, the CurseForge sub-page searches again.
+- The key is never built into the app or stored in the repo. `settings.json` is gitignored. Setup steps are in the README.
+- With no key, the sub-page is disabled and shows "CurseForge needs an API key. Add one in Settings > Downloads, or set the MCLP_CURSEFORGE_API_KEY environment variable". No request is sent.
 - A rejected key (HTTP 403) shows as "CurseForge unavailable (CurseForge rejected the API key (HTTP 403))".
 
 ## Search (`SearchCurseForgeModpacks`)

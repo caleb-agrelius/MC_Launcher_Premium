@@ -1,7 +1,6 @@
 #include "CurseForge.h"
 #include "HttpClient.h"
 
-#include "BuildSecrets.h"
 #include "Storage/Installer.h"
 #include "Util/Hash.h"
 
@@ -13,6 +12,7 @@
 #include <filesystem>
 #include <iterator>
 #include <map>
+#include <mutex>
 #include <set>
 
 namespace fs = std::filesystem;
@@ -22,7 +22,19 @@ static const char* kApiBase = "https://api.curseforge.com/v1";
 static constexpr int kMinecraftGameId = 432;
 static constexpr int kModpackClassId = 4471;
 
-std::string CurseForgeApiKey()
+static std::mutex g_settingsKeyMutex;
+static std::string g_settingsKey;
+
+void SetCurseForgeApiKey(const std::string& key)
+{
+	static const char* kSpace = " \t\r\n";
+	const std::size_t first = key.find_first_not_of(kSpace);
+	const std::size_t last = key.find_last_not_of(kSpace);
+	std::lock_guard<std::mutex> lock(g_settingsKeyMutex);
+	g_settingsKey = first == std::string::npos ? std::string() : key.substr(first, last - first + 1);
+}
+
+std::string CurseForgeEnvApiKey()
 {
 #ifdef _WIN32
 	char* value = nullptr;
@@ -37,7 +49,17 @@ std::string CurseForgeApiKey()
 	if (const char* value = std::getenv("MCLP_CURSEFORGE_API_KEY"); value && *value)
 		return value;
 #endif
-	return MCLP_CURSEFORGE_API_KEY_BUILTIN;
+	return {};
+}
+
+std::string CurseForgeApiKey()
+{
+	{
+		std::lock_guard<std::mutex> lock(g_settingsKeyMutex);
+		if (!g_settingsKey.empty())
+			return g_settingsKey;
+	}
+	return CurseForgeEnvApiKey();
 }
 
 static std::vector<std::string> KeyHeader()

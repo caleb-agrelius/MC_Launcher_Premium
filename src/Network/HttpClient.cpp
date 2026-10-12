@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <memory>
 #include <utility>
+#include <vector>
 
 struct ProgressData {
 	std::function<void(double,double)> callback;
@@ -262,6 +263,51 @@ bool HttpClient::Post(const std::string& url,
 		return false;
 	}
 	return true;
+}
+
+bool HttpClient::Request(const std::string& url,
+						 const std::vector<std::string>& headers,
+						 const std::string& requestBody,
+						 std::string& responseBody,
+						 long& status,
+						 std::string* err,
+						 const std::atomic<bool>* cancel)
+{
+	responseBody.clear();
+	status = 0;
+	CURL* curl = AcquireHandle();
+	if (!curl) {
+		if (err) *err = "Failed to initialize curl";
+		return false;
+	}
+
+	HeaderList headerList;
+	for (const std::string& header : headers)
+		headerList.Add(header);
+	ProgressData pd{nullptr, cancel};
+	ApplyCommonOptions(curl, url, &pd, headerList);
+	curl_easy_setopt(curl, CURLOPT_FAILONERROR, 0L);
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_string);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &responseBody);
+	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 60L);
+	if (!requestBody.empty()) {
+		curl_easy_setopt(curl, CURLOPT_POSTFIELDS, requestBody.c_str());
+		curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(requestBody.size()));
+	}
+
+	CURLcode res = curl_easy_perform(curl);
+	if (res != CURLE_OK) {
+		if (err) *err = DescribeError(curl, res, cancel);
+		responseBody.clear();
+		return false;
+	}
+	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+	return true;
+}
+
+void HttpClient::ReleaseThreadHandle()
+{
+	CurrentThreadHandle().Release();
 }
 
 std::string HttpClient::UrlEncode(const std::string& text)
