@@ -174,7 +174,7 @@ bool SearchCurseForgeModpacks(HttpClient& http,
 
 	std::string path = "/mods/search?gameId=" + std::to_string(kMinecraftGameId) +
 		"&classId=" + std::to_string(kModpackClassId) +
-		"&index=0&pageSize=" + std::to_string(std::clamp(limit, 1, 50));
+		"&index=" + std::to_string(std::max(0, filters.offset)) + "&pageSize=" + std::to_string(std::clamp(limit, 1, 50));
 	if (sortField != 0)
 		path += "&sortField=" + std::to_string(sortField) + (sortField == 4 ? "&sortOrder=asc" : "&sortOrder=desc");
 	if (!query.empty())

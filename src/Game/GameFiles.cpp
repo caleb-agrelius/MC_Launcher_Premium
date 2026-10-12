@@ -3,6 +3,7 @@
 #include "Network/HttpClient.h"
 #include "Storage/Installer.h"
 #include "Util/Paths.h"
+#include "Util/SharedFiles.h"
 #include "Util/Sha1.h"
 
 #include <algorithm>
@@ -101,6 +102,10 @@ static bool DownloadOne(HttpClient& http, const DownloadJob& job, std::string& e
 	std::error_code ec;
 	fs::create_directories(LongPath(job.path.parent_path()), ec);
 	const fs::path part = UniquePartPath(job.path);
+	// Another pack already has this exact file: link to the shared copy instead.
+	const std::string shareKey = job.share ? SharedFiles::KeyFor(job.sha1) : std::string();
+	if (!shareKey.empty() && SharedFiles::LinkTo(shareKey, job.size, job.path))
+		return true;
 	for (int attempt = 1; attempt <= kDownloadAttempts; ++attempt) {
 		if (!NeedsDownload(job))
 			return true; // someone else finished it meanwhile
@@ -119,8 +124,10 @@ static bool DownloadOne(HttpClient& http, const DownloadJob& job, std::string& e
 		std::error_code renameError;
 		for (int tries = 0; tries < 10; ++tries) {
 			fs::rename(LongPath(part), LongPath(job.path), renameError);
-			if (!renameError)
+			if (!renameError) {
+				SharedFiles::Add(shareKey, job.path); // let other packs share it
 				return true;
+			}
 			if (tries == 5) {
 				std::error_code removeError;
 				fs::remove(LongPath(job.path), removeError);

@@ -34,6 +34,7 @@ struct ModrinthSearchOptions {
 	std::string loader;      // e.g. "fabric" (a Modrinth category)
 	std::string index;       // relevance | downloads | follows | newest | updated; empty = downloads
 	                         // for an empty query, relevance otherwise
+	int offset = 0;          // results to skip (paging)
 };
 
 // Searches Modrinth modpacks. An empty query lists the most downloaded packs.

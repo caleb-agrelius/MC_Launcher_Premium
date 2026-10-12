@@ -14,7 +14,12 @@ Play uses the pack's active installed version: its install folder (`PlayRequest:
 - **Whole-pack installs** (CurseForge, FTB, Technic, ATLauncher), recognized by a `pack.json` in the install folder (`IsWholePackInstall`). The install plan already filled the game folder, `<install folder>/minecraft/`, so steps 1 and 2 are replaced by `ReadInstalledPack()`:
   - It reads the Minecraft version, `loader` and `loaderVersion` from `pack.json`. `ParseLoaderName` maps `forge`, `neoforge`, `fabric` and `quilt` (any case). An unknown loader fails with a message naming it.
   - `NormalizeLoaderVersion` strips the forms sources wrap versions in: a `forge-`/`neoforge-`/`fabric-`/`quilt-` prefix, a leading `<mc>-` and a trailing `-<mc>`. `forge-47.2.0`, `1.20.1-47.2.0` and `47.2.0-1.20.1` all become `47.2.0`.
-  - **No loader declared** (Technic single-zip packs): the loader is detected from `minecraft/bin/version.json`, else the `version.json` inside `minecraft/bin/modpack.jar`, by finding the loader's own library (`net.minecraftforge:forge`, `net.minecraftforge:minecraftforge`, `net.neoforged:neoforge` or `forge`, `net.fabricmc:fabric-loader`, `org.quiltmc:quilt-loader`), like Prism's `TechnicPackProcessor`. If none is found, the pack launches as vanilla.
+  - **No loader declared** (Technic single-zip packs): the loader is detected from `minecraft/bin/version.json`, else the `version.json` inside `minecraft/bin/modpack.jar`, by finding the loader's own library (`net.minecraftforge:forge`, `net.minecraftforge:minecraftforge`, `net.neoforged:neoforge` or `forge`, `net.fabricmc:fabric-loader`, `org.quiltmc:quilt-loader`), like Prism's `TechnicPackProcessor`. If none is found there, Forge's universal jar in `minecraft/jarmods/` is checked the same way (old ATLauncher packs list Forge as a `forge` jar mod). If none is found, the pack launches as vanilla.
+  - **Old Forge from the pack's own jar:** when the loader was found in a jar (`InstalledPack::loaderJar`) and the Minecraft version is before 1.13 (`IsLegacyForgeMinecraft`), Forge is installed from that jar instead of its installer, because those installers can't run headless (`InstallForgeFromJar`, `src/Game/Loaders.cpp`):
+    - The jar's `version.json` is written to `versions/<id>/<id>.json`, with `inheritsFrom` and `jar` set to the Minecraft version.
+    - The Forge library is the jar itself, copied into `libraries/` (no download). Library URLs on the retired `files.minecraftforge.net` move to `maven.minecraftforge.net`, other `http://` URLs become `https://`, and libraries marked `clientreq: false` are dropped.
+    - Forge for Minecraft 1.6, 1.7.2, and 1.7.10 builds before 10.13.2.1230 crashes on Java 8 while sorting its tweakers. For those, `LegacyJavaFixerJob` puts LegacyJavaFixer 1.0 (Forge's own fix, from its maven, SHA-1 checked) in the game folder's `mods/` (`NeedsLegacyJavaFixer`). Mojang has no older Java for these versions.
+    - Checked live with ATLauncher's Survivalists' Nightmare (Minecraft 1.6.4, Forge 9.11.1.965 from its jar mod): Minecraft 1.6.4 started and FML loaded its 6 mods.
   - A missing game folder fails with "Install it again".
 
 1. **Read the pack:** `ReadMrpackIndex()` (`src/Game/PackInstance.cpp`) reads `modrinth.index.json` from the install folder. It takes the Minecraft version and loader from `dependencies` (`fabric-loader`, `quilt-loader`, `neoforge`, `forge`) and the client files: entries with `env.client == "unsupported"` are skipped, and paths that are absolute or climb out of the instance are rejected.
@@ -31,7 +36,11 @@ Play uses the pack's active installed version: its install folder (`PlayRequest:
    - **Fabric / Quilt:** fetches the loader's ready-made profile JSON from `meta.fabricmc.net` / `meta.quiltmc.org` into `versions/<id>/`, skipped if it already exists.
    - **Forge / NeoForge:** downloads the official installer into `minecraft/installers/` and reads the version id from `version.json` inside it. Unless that version and all its generated libraries already exist, it runs the installer headless (`--installClient <root>`, retried with `--install-client`) with the runtime's console `java.exe`. Output goes to `minecraft/logs/loader-installer.log`. A `launcher_profiles.json` stub is created because the installer requires it. NeoForge for 1.20.1 uses the old `net.neoforged:forge` artifact. Installers without `version.json` (very old Forge) fail with a clear error.
 7. Resolve the loader's version and download its extra libraries.
-8. **Launch:** versions whose asset index sets `map_to_resources` (before 1.6) first get their assets copied by name into `<game folder>/resources/`, missing ones only. Then it builds the command line and runs `javaw.exe` from the game folder, without a console. stdout/stderr are appended to `<game folder>/logs/launcher-output.log`. The worker waits until the game exits. A non-zero exit code is reported on the card.
+8. **Jar mods:** classic jar mods (zips in the game folder's `jarmods/` without a `version.json`, i.e. Minecraft 1.5 and earlier) are patched into a copy of the game jar, `<game folder>/.mclp/patched-client.jar`, which then replaces the client jar on the classpath (`FindJarMods`, `BuildPatchedJar` in `src/Game/JarMods.cpp`):
+   - The order is the one the pack's `pack.json` `files` lists them in, then any others by name. Later mods override earlier ones, and `META-INF/` is left out, since its signatures would no longer match.
+   - The patched jar is rebuilt only when the game jar or a jar mod changes: their names, sizes and times are recorded in `patched-client.jar.inputs`.
+   - Jars with a `version.json` are a loader (Forge 1.6 and later), not jar mods, and are installed as described above.
+9. **Launch:** versions whose asset index sets `map_to_resources` (before 1.6) first get their assets copied by name into `<game folder>/resources/`, missing ones only. Then it builds the command line and runs `javaw.exe` from the game folder, without a console. stdout/stderr are appended to `<game folder>/logs/launcher-output.log`. The worker waits until the game exits. A non-zero exit code is reported on the card.
 
 ## Version JSON handling (`src/Game/GameFiles.cpp`)
 - `ResolveVersion()` follows `inheritsFrom` and merges from vanilla up. Children override `mainClass`, `type`, `minecraftArguments`, `assetIndex`, `javaVersion` and `logging`, and append to `arguments.jvm`/`arguments.game`. The client jar comes from the version that has `downloads.client` (or `jar`).
@@ -51,12 +60,15 @@ Play uses the pack's active installed version: its install folder (`PlayRequest:
 - A play that fails (not cancelled) also shows an error toast. An unexpected exception during preparation is caught and reported as "Unexpected error: ..." instead of ending the app.
 - For Java 9 and newer, JVM arguments go in `.mclp-jvm-args.txt` in the game folder and are passed as `@file`, to stay under Windows' command-line limit. The main class and game arguments, including the access token, stay on the command line.
 
+- Every launch also passes `-Dfml.ignoreInvalidMinecraftCertificates=true` and `-Dfml.ignorePatchDiscrepancies=true`, as Prism and MultiMC do. Old Forge checks Mojang's signature on the game jar, which current Java 8 rejects because the jar is SHA-1 signed, and then refuses to start. Versions that don't read these flags ignore them.
+
 ## Folders (gitignored, in the data folder)
-- `minecraft/`: shared `versions/`, `libraries/`, `assets/`, `runtime/`, `installers/`, `logs/`, `launcher_profiles.json`
+- `minecraft/`: shared `versions/`, `libraries/`, `assets/`, `runtime/`, `installers/`, `logs/`, `launcher_profiles.json`, and `shared-files/` (see [shared-files.md](shared-files.md))
 - `instances/<pack id>/` or `instances/<pack id>@<version>/`: `.mrpack` game folders (mods, config, saves, logs), one per installed version
 
 ## Limitations
 - Windows x64 only (process launching and the Java runtime platform).
 - Mod files are kept by size, not re-hashed on every launch. **Manage > Repair files** in My Library re-checks them by hash.
-- ATLauncher `jar` and `forge` jar mods (saved to `jarmods/` by the install plan) aren't added to the game jar, so very old packs that rely on them may not start.
+- Classic jar mods for Minecraft 1.5 and earlier have unit checks, but haven't been tried with a real pack: ATLauncher's current pack list has none.
+- Dedicated servers don't install old Forge from a pack's jar; whole-pack servers still need the loader declared in `pack.json`.
 - Closing the launcher stops preparation but leaves a running game open. Only **Stop game** ends it from the launcher: it sets `PlayRequest::stopGame`, which makes `RunProcess` terminate the process (its `kill` flag) and `PlayModpack` return "Stopped". That shows a "Minecraft was closed" toast instead of an error.

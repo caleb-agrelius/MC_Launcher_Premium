@@ -11,6 +11,7 @@
 #include "Game/PackInstance.h"
 #include "Game/ServerSetup.h"
 #include "Util/Process.h"
+#include "Util/SharedFiles.h"
 #include "Util/Text.h"
 #include "imgui_stdlib.h"
 #include "Model/Modpack.h"
@@ -253,7 +254,11 @@ struct SourceView {
 	std::string searchStatus;
 	bool searchFailed = false;
 	std::uint64_t totalHits = 0;
-	int revision = 0; // bumped whenever packs is replaced, so Discover re-merges
+	int revision = 0; // bumped whenever packs is replaced or extended, so Discover re-merges
+	bool loadingMore = false; // fetching the next page for "Load more"
+	std::string loadMoreError;
+	// True when the source has results beyond the ones loaded.
+	bool HasMore() const { return !searchFailed && !searching && packs.size() < totalHits; }
 };
 
 // Discover's combined search: one query and set of filters, sent to every selected
@@ -699,6 +704,8 @@ int main(int argc, char** argv)
 			});
 		};
 		SetCurseForgeApiKey(settings.curseForgeApiKey);
+		const fs::path sharedFilesDir = fs::absolute(fs::path(kGameRoot) / "shared-files");
+		SharedFiles::Configure(sharedFilesDir, settings.shareModFiles);
 		// Installed packs and their versions (UI thread only). Saved to library.json so My
 		// Library survives restarts. Versions whose install folder is gone are dropped, and so
 		// are packs left with none.
@@ -950,19 +957,39 @@ int main(int argc, char** argv)
 			std::shared_ptr<std::atomic<bool>> cancel = std::make_shared<std::atomic<bool>>(false);
 			std::shared_ptr<std::atomic<bool>> stop = std::make_shared<std::atomic<bool>>(false); // force-close the game
 		};
+		// Keyed by playKey(): one entry per installed version, so two versions of a pack can be
+		// prepared or played at the same time.
 		std::map<std::string, PlayState> plays;
 		std::mutex playsMutex;
-		// Asks a pack's play or repair worker to stop; the step shows "Cancelling..." until it has.
-		auto cancelPlay = [&](const std::string& packId) {
+		// "<pack id>@<version key>" for a pack's active installed version.
+		auto playKey = [&](const Modpack& pack) -> std::string {
+			const InstalledVersion* v = activeVersionOf(pack);
+			return pack.id + "@" + (v ? v->key : VersionKey(pack));
+		};
+		// True when the given installed version (or, with an empty key, any version of the pack)
+		// is being prepared, repaired or played.
+		auto versionBusy = [&](const std::string& packId, const std::string& versionKey) {
 			std::lock_guard<std::mutex> lock(playsMutex);
-			const auto it = plays.find(packId);
+			const std::string prefix = packId + "@";
+			for (const auto& [key, play] : plays) {
+				const bool match = versionKey.empty() ? key.rfind(prefix, 0) == 0 : key == prefix + versionKey;
+				if (match && (play.busy || play.playing))
+					return true;
+			}
+			return false;
+		};
+		// Asks a version's play or repair worker (by play key) to stop; the step shows
+		// "Cancelling..." until it has.
+		auto cancelPlay = [&](const std::string& key) {
+			std::lock_guard<std::mutex> lock(playsMutex);
+			const auto it = plays.find(key);
 			if (it == plays.end() || !it->second.busy || it->second.playing)
 				return;
 			it->second.cancel->store(true);
 			it->second.step = kCancellingStep;
 			it->second.progress = -1.0;
 		};
-		std::string stopConfirmPackId; // pack whose "Stop game" confirmation is open
+		std::string stopConfirmPackId; // play key of the version whose "Stop game" confirmation is open
 
 		// ---- Servers ----
 		std::map<std::string, ServerState> servers; // keyed by pack id; entries only added on the UI thread
@@ -1211,14 +1238,14 @@ int main(int argc, char** argv)
 		auto startPlay = [&](const Modpack& pack) {
 			if (account.type == Account::Type::None) {
 				std::lock_guard<std::mutex> lock(playsMutex);
-				plays[pack.id].error = "Sign in with Microsoft or choose an offline name in the sidebar first.";
+				plays[playKey(pack)].error = "Sign in with Microsoft or choose an offline name in the sidebar first.";
 				return;
 			}
 			auto cancel = std::make_shared<std::atomic<bool>>(false);
 			auto stop = std::make_shared<std::atomic<bool>>(false);
 			{
 				std::lock_guard<std::mutex> lock(playsMutex);
-				PlayState& state = plays[pack.id];
+				PlayState& state = plays[playKey(pack)];
 				state = PlayState{};
 				state.busy = true;
 				state.step = "Starting";
@@ -1240,12 +1267,13 @@ int main(int argc, char** argv)
 			const AfterLaunch afterLaunch = settings.launch.afterLaunch;
 			log << "Play " << packId << " as " << account.name << "\n";
 			log.flush();
-			StartWorker(workers, [&http, &uiQueue, &plays, &playsMutex, &updateAccount, &log, window, request, clientId, packId,
+			const std::string stateKey = playKey(pack);
+			StartWorker(workers, [&http, &uiQueue, &plays, &playsMutex, &updateAccount, &log, window, request, clientId, packId, stateKey,
 				packName, afterLaunch, cancel, stop]() mutable {
 				bool started = false; // Minecraft's process is running
 				auto progress = [&](const std::string& step, double fraction) {
 					std::lock_guard<std::mutex> lock(playsMutex);
-					PlayState& state = plays[packId];
+					PlayState& state = plays[stateKey];
 					state.step = cancel->load() ? std::string(kCancellingStep) : step;
 					state.progress = fraction;
 					state.playing = step == "Playing";
@@ -1283,7 +1311,7 @@ int main(int argc, char** argv)
 				}
 				{
 					std::lock_guard<std::mutex> lock(playsMutex);
-					PlayState& state = plays[packId];
+					PlayState& state = plays[stateKey];
 					state.busy = false;
 					state.playing = false;
 					state.error = (ok || cancel->load() || stop->load()) ? std::string() : error;
@@ -1305,23 +1333,58 @@ int main(int argc, char** argv)
 			});
 		};
 
-		auto startSearch = [&](SourceView& view) {
-			const int generation = ++view.searchGeneration;
+		// Runs a search for a source view. With append, fetches the next page (starting after
+		// the results already loaded) and adds it to them, for "Load more".
+		auto startSearch = [&](SourceView& view, bool append = false) {
+			// A new search makes older results (and pages still loading) stale; a page doesn't.
+			const int generation = append ? view.searchGeneration : ++view.searchGeneration;
 			const std::string query = view.search;
 			SearchFilters filters;
 			filters.gameVersion = view.gameVersion;
 			if (view.loader > 0 && view.loader <= static_cast<int>(view.caps.loaders.size()))
 				filters.loader = view.caps.loaders[static_cast<std::size_t>(view.loader - 1)];
 			filters.sort = view.sort;
+			filters.offset = append ? static_cast<int>(view.packs.size()) : 0;
 			const int limit = settings.searchLimit;
-			view.searching = true;
-			StartWorker(workers, [&http, &uiQueue, &shuttingDown, &view, &localPacks, &log, query, filters, limit, generation]() {
+			if (append) {
+				view.loadingMore = true;
+				view.loadMoreError.clear();
+			} else {
+				view.searching = true;
+				view.loadingMore = false;
+				view.loadMoreError.clear();
+			}
+			StartWorker(workers, [&http, &uiQueue, &shuttingDown, &view, &localPacks, &log, query, filters, limit, generation, append]() {
 				SourceSearchResult result;
 				std::string error;
 				const bool ok = SearchPacks(http, view.source, query, filters, limit, result, &error, &shuttingDown);
-				uiQueue.Post([&view, &localPacks, &log, query, generation, ok, result, error]() {
+				uiQueue.Post([&view, &localPacks, &log, query, filters, generation, append, ok, result, error]() {
 					if (generation != view.searchGeneration)
 						return;
+					if (append) {
+						view.loadingMore = false;
+						if (!ok) {
+							view.loadMoreError = error;
+							log << PackSourceName(view.source) << " page at " << filters.offset << " failed: " << error << "\n";
+							return;
+						}
+						// Results can shift between pages (e.g. a pack's rank changes), so skip repeats.
+						std::set<std::string> seen;
+						for (const Modpack& pack : view.packs)
+							seen.insert(pack.id);
+						std::size_t added = 0;
+						for (const Modpack& pack : result.packs) {
+							if (seen.insert(pack.id).second) {
+								view.packs.push_back(pack);
+								++added;
+							}
+						}
+						// An empty page means the source has nothing more, whatever its total said.
+						view.totalHits = result.packs.empty() ? view.packs.size() : std::max<std::uint64_t>(result.totalHits, view.packs.size());
+						++view.revision;
+						log << PackSourceName(view.source) << " page at " << filters.offset << ": " << added << " more\n";
+						return;
+					}
 					const char* sourceName = PackSourceName(view.source);
 					view.searching = false;
 					view.searchFailed = !ok;
@@ -1526,7 +1589,7 @@ int main(int argc, char** argv)
 			auto cancel = std::make_shared<std::atomic<bool>>(false);
 			{
 				std::lock_guard<std::mutex> lock(playsMutex);
-				PlayState& state = plays[pack.id];
+				PlayState& state = plays[playKey(pack)];
 				state = PlayState{};
 				state.busy = true;
 				state.step = "Repairing";
@@ -1540,10 +1603,11 @@ int main(int argc, char** argv)
 			const std::string packId = pack.id;
 			const std::string packName = pack.name;
 			log << "Repair " << packId << " " << pack.version << "\n";
-			StartWorker(workers, [&http, &uiQueue, &plays, &playsMutex, &log, request, packId, packName, cancel]() {
+			const std::string stateKey = playKey(pack);
+			StartWorker(workers, [&http, &uiQueue, &plays, &playsMutex, &log, request, packId, packName, cancel, stateKey]() {
 				auto progress = [&](const std::string& step, double fraction) {
 					std::lock_guard<std::mutex> lock(playsMutex);
-					PlayState& state = plays[packId];
+					PlayState& state = plays[stateKey];
 					state.step = cancel->load() ? std::string(kCancellingStep) : step;
 					state.progress = fraction;
 				};
@@ -1556,7 +1620,7 @@ int main(int argc, char** argv)
 				}
 				{
 					std::lock_guard<std::mutex> lock(playsMutex);
-					PlayState& state = plays[packId];
+					PlayState& state = plays[stateKey];
 					state.busy = false;
 					state.error = (ok || cancel->load()) ? std::string() : error;
 				}
@@ -1638,9 +1702,14 @@ int main(int argc, char** argv)
 				}
 			}
 			saveDownloads();
-			if (!libraryPacks.count(pack.id)) {
+			{
+				// Forget the removed versions' play state (all of them for the whole pack).
 				std::lock_guard<std::mutex> lock(playsMutex);
-				plays.erase(pack.id);
+				const std::string prefix = pack.id + "@";
+				for (auto it = plays.begin(); it != plays.end();) {
+					const bool removed = wholePack ? it->first.rfind(prefix, 0) == 0 : it->first == prefix + versionKey;
+					it = removed ? plays.erase(it) : std::next(it);
+				}
 			}
 			log << "Uninstall " << pack.id << (wholePack ? std::string(" (all versions)") : " " + versionKey) << "\n";
 			StartWorker(workers, [&uiQueue, &log, folders, packId = pack.id, label]() {
@@ -1656,6 +1725,8 @@ int main(int argc, char** argv)
 					if (ec && failed.empty())
 						failed = dir.string() + ": " + ec.message();
 				}
+				// Shared mod files only this pack used are now unused.
+				SharedFiles::Prune();
 				uiQueue.Post([&log, packId, label, failed]() {
 					if (failed.empty()) {
 						Toasts::Push(Toasts::Kind::Success, "Uninstalled " + label, "Its files were deleted.");
@@ -1773,12 +1844,12 @@ int main(int argc, char** argv)
 			running->second.copying = true;
 			const fs::path fromDir = fs::absolute(fs::u8path(from->gameDir));
 			const fs::path toDir = fs::absolute(fs::u8path(to->gameDir));
-			StartWorker(workers, [&uiQueue, &shuttingDown, &packUpdates, &libraryPacks, &plays, &playsMutex, &uninstallPack, &log,
+			StartWorker(workers, [&uiQueue, &shuttingDown, &packUpdates, &libraryPacks, &versionBusy, &uninstallPack, &log,
 				packId = pack.id, fromDir, toDir]() {
 				std::size_t copied = 0;
 				std::string error;
 				const bool copiedOk = CarryOverPlayerData(fromDir, toDir, copied, &error, &shuttingDown);
-				uiQueue.Post([&packUpdates, &libraryPacks, &plays, &playsMutex, &uninstallPack, &log, packId, copiedOk, copied, error]() {
+				uiQueue.Post([&packUpdates, &libraryPacks, &versionBusy, &uninstallPack, &log, packId, copiedOk, copied, error]() {
 					const auto running = packUpdates.find(packId);
 					if (running == packUpdates.end())
 						return;
@@ -1795,12 +1866,7 @@ int main(int argc, char** argv)
 							name + " " + update.toVersion + " is installed, but " + error + ". The old version was kept.");
 						return;
 					}
-					bool playing = false;
-					{
-						std::lock_guard<std::mutex> lock(playsMutex);
-						const auto it = plays.find(packId);
-						playing = it != plays.end() && (it->second.busy || it->second.playing);
-					}
+					const bool playing = versionBusy(packId, update.fromKey);
 					if (update.removeOld && !playing && FindInstalledVersion(entry->second, update.fromKey)) {
 						uninstallPack(entry->second, update.fromKey);
 						Toasts::Push(Toasts::Kind::Success, "Updated " + name + " to " + update.toVersion,
@@ -1972,6 +2038,72 @@ int main(int argc, char** argv)
 				});
 			});
 		};
+
+		// ---- Shared mod files (Settings > Downloads) ----
+		auto describeSharing = [](const SharedFiles::Stats& stats) {
+			if (stats.files == 0)
+				return std::string("Nothing is shared yet.");
+			return std::to_string(stats.files) + " file(s) stored (" + FormatFileSize(stats.bytes) + "), " +
+				std::to_string(stats.shared) + " used by more than one pack, " + FormatFileSize(stats.saved) + " saved.";
+		};
+		settingsContext.countSharing = [&]() {
+			if (settingsContext.sharingBusy)
+				return;
+			settingsContext.sharingBusy = true;
+			StartWorker(workers, [&uiQueue, &settingsContext, describeSharing]() {
+				const std::string text = describeSharing(SharedFiles::StoreStats());
+				uiQueue.Post([&settingsContext, text]() {
+					settingsContext.sharingBusy = false;
+					settingsContext.sharingStats = text;
+				});
+			});
+		};
+		settingsContext.shareExisting = [&]() {
+			if (settingsContext.sharingBusy)
+				return;
+			// Every installed version's game folder, and every server folder.
+			std::vector<fs::path> gameDirs;
+			for (const auto& [id, pack] : libraryPacks) {
+				for (const InstalledVersion& v : pack.installedVersions)
+					gameDirs.push_back(fs::absolute(fs::u8path(v.gameDir)));
+			}
+			std::error_code ec;
+			if (fs::is_directory(kServersRoot, ec)) {
+				for (const auto& entry : fs::directory_iterator(kServersRoot, ec))
+					if (entry.is_directory(ec))
+						gameDirs.push_back(fs::absolute(entry.path()));
+			}
+			settingsContext.sharingBusy = true;
+			settingsContext.sharingStatus = "Looking for identical files...";
+			log << "Sharing files in " << gameDirs.size() << " folder(s)\n";
+			StartWorker(workers, [&uiQueue, &shuttingDown, &settingsContext, &log, describeSharing, gameDirs]() {
+				auto progress = [&](std::size_t done, std::size_t total) {
+					if (done % 25 == 0 || done == total)
+						uiQueue.Post([&settingsContext, done, total]() {
+							settingsContext.sharingStatus = "Checking files (" + std::to_string(done) + "/" + std::to_string(total) + ")";
+						});
+				};
+				const SharedFiles::ShareResult result = SharedFiles::ShareExisting(gameDirs, progress, &shuttingDown);
+				const std::string stats = describeSharing(SharedFiles::StoreStats());
+				uiQueue.Post([&settingsContext, &log, result, stats]() {
+					settingsContext.sharingBusy = false;
+					settingsContext.sharingStats = stats;
+					settingsContext.sharingStatus = "Checked " + std::to_string(result.scanned) + " file(s): " +
+						(result.linked == 0 ? std::string("no new duplicates.")
+							: std::to_string(result.linked) + " now shared, " + FormatFileSize(result.saved) + " freed.") +
+						(result.error.empty() ? std::string() : " " + result.error + ".");
+					log << "Shared " << result.linked << " of " << result.scanned << " file(s), freed " << result.saved << " bytes"
+						<< (result.error.empty() ? std::string() : ": " + result.error) << "\n";
+					Toasts::Push(Toasts::Kind::Success, "Shared mod files", settingsContext.sharingStatus);
+				});
+			});
+		};
+		// Stored files no pack uses any more (after uninstalls outside this run, too).
+		StartWorker(workers, [&uiQueue, &log]() {
+			const std::uint64_t freed = SharedFiles::Prune();
+			if (freed > 0)
+				uiQueue.Post([&log, freed]() { log << "Shared files: removed " << freed << " unused byte(s)\n"; });
+		});
 
 		while (!glfwWindowShouldClose(window)) {
 			glfwPollEvents();
@@ -2508,6 +2640,34 @@ int main(int argc, char** argv)
 				}
 				if (discover.merged.empty() && searchingNames.empty() && !discover.activeSources.empty())
 					ImGui::TextDisabled("No modpacks found.");
+				// Next page from every source that has more.
+				if (searchingNames.empty() && !discover.merged.empty()) {
+					bool more = false;
+					bool loading = false;
+					std::string pageError;
+					for (PackSource source : discover.activeSources) {
+						const SourceView& view = views[source];
+						more = more || view.HasMore();
+						loading = loading || view.loadingMore;
+						if (!view.loadMoreError.empty() && pageError.empty())
+							pageError = std::string(PackSourceName(source)) + ": " + view.loadMoreError;
+					}
+					ImGui::Spacing();
+					if (loading) {
+						Widgets::Spinner(Theme::C().accent);
+						ImGui::SameLine();
+						ImGui::TextDisabled("Loading more...");
+					} else if (more) {
+						if (ImGui::Button("Load more", ImVec2(-1.0f, 0.0f))) {
+							for (PackSource source : discover.activeSources) {
+								if (views[source].HasMore())
+									startSearch(views[source], true);
+							}
+						}
+						if (!pageError.empty())
+							Widgets::WrappedText(Theme::C().error, ("Couldn't load more: " + pageError).c_str());
+					}
+				}
 				Widgets::EndScrollArea();
 				ImGui::SameLine(0.0f, 0.0f);
 				if (Widgets::PaneSplitter("##discover_split", &listWidth, 240.0f, discoverAvail - 420.0f))
@@ -2768,16 +2928,13 @@ int main(int argc, char** argv)
 					ImGui::PushFont(fonts.bold, Theme::kFontHeading);
 					ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, S(8.0f));
 					const auto libraryPack = libraryPacks.find(pack.id);
-					bool playBusy = false;
-					{
-						std::lock_guard<std::mutex> lock(playsMutex);
-						const auto it = plays.find(pack.id);
-						playBusy = it != plays.end() && it->second.busy;
-					}
 					// Plays the version shown here when it's installed (making it the active one),
 					// else the pack's active version.
 					const InstalledVersion* shownInstalled = libraryPack != libraryPacks.end() && pack.filesLoaded
 						? FindInstalledVersion(libraryPack->second, VersionKey(pack)) : nullptr;
+					const InstalledVersion* toPlay = shownInstalled ? shownInstalled
+						: libraryPack != libraryPacks.end() ? ActiveInstalledVersion(libraryPack->second) : nullptr;
+					const bool playBusy = toPlay && versionBusy(pack.id, toPlay->key);
 					ImGui::BeginDisabled(libraryPack == libraryPacks.end() || playBusy);
 					if (ImGui::Button(playBusy ? "PLAYING" : "PLAY", ImVec2(-1.0f, S(52.0f)))) {
 						if (shownInstalled && shownInstalled->key != libraryPack->second.activeVersion) {
@@ -2921,12 +3078,23 @@ int main(int argc, char** argv)
 				const float iconSize = S(56.0f);
 				int cardIndex = 0;
 				for (auto& [packId, pack] : libraryPacks) {
+					// The card shows the active version's play state; other versions can be running too.
 					PlayState play;
+					std::vector<std::string> otherRunning; // version names
+					std::set<std::string> runningKeys;
 					{
 						std::lock_guard<std::mutex> lock(playsMutex);
-						const auto it = plays.find(packId);
+						const auto it = plays.find(playKey(pack));
 						if (it != plays.end())
 							play = it->second;
+						for (const InstalledVersion& v : pack.installedVersions) {
+							const auto other = plays.find(packId + "@" + v.key);
+							if (other == plays.end() || !(other->second.busy || other->second.playing))
+								continue;
+							runningKeys.insert(v.key);
+							if (v.key != pack.activeVersion)
+								otherRunning.push_back(v.version.empty() ? v.key : v.version);
+						}
 					}
 					Widgets::BeginEntrance(pageShownAt, cardIndex++);
 					BeginCard(pack.id.c_str());
@@ -2951,13 +3119,15 @@ int main(int argc, char** argv)
 					std::string switchTo;
 					if (multipleVersions) {
 						ImGui::SetNextItemWidth(S(190.0f));
-						ImGui::BeginDisabled(play.busy || updating);
+						ImGui::BeginDisabled(updating);
 						if (Widgets::BeginSelect("##installed_version", pack.version.c_str())) {
 							for (const InstalledVersion& v : pack.installedVersions) {
 								ImGui::PushID(v.key.c_str());
 								std::string minecraft = v.gameVersion.empty() ? std::string() : "Minecraft " + v.gameVersion;
 								if (!v.contentChanges.empty())
 									minecraft += minecraft.empty() ? "modified" : ", modified";
+								if (runningKeys.count(v.key))
+									minecraft += minecraft.empty() ? "running" : ", running";
 								if (Widgets::ListItem(v.version.empty() ? v.key.c_str() : v.version.c_str(), v.key == pack.activeVersion,
 										true, minecraft.c_str()))
 									switchTo = v.key;
@@ -2967,7 +3137,8 @@ int main(int argc, char** argv)
 						}
 						ImGui::EndDisabled();
 						ImGui::SetItemTooltip("%d versions installed. PLAY starts the one picked here; each has its own "
-							"mods, settings and worlds. Install more from Discover.", static_cast<int>(pack.installedVersions.size()));
+							"mods, settings and worlds, and several can run at once. Install more from Discover.",
+							static_cast<int>(pack.installedVersions.size()));
 						ImGui::SameLine();
 						ImGui::AlignTextToFramePadding();
 					}
@@ -2981,6 +3152,13 @@ int main(int argc, char** argv)
 					if (!switchTo.empty()) {
 						SelectInstalledVersion(pack, switchTo);
 						SaveLibrary(libraryPacks, log);
+					}
+					if (!otherRunning.empty()) {
+						std::string names;
+						for (std::size_t i = 0; i < otherRunning.size(); ++i)
+							names += (i ? ", " : "") + otherRunning[i];
+						ImGui::TextColored(Theme::C().accent, "Also running: %s", names.c_str());
+						ImGui::SetItemTooltip("Pick it in the version list to see its progress or stop it.");
 					}
 					if (play.playing) {
 						ImGui::TextColored(Theme::C().accent, "Minecraft is running");
@@ -3008,14 +3186,14 @@ int main(int argc, char** argv)
 					if (play.playing) {
 						AlignRightForButtons({ "Stop game" });
 						if (Widgets::DangerButton("Stop game"))
-							stopConfirmPackId = pack.id;
+							stopConfirmPackId = playKey(pack);
 						ImGui::SetItemTooltip("Force-close Minecraft");
 					} else if (play.busy) {
 						const bool cancelling = play.cancel->load();
 						AlignRightForButtons({ cancelling ? "Cancelling..." : "Cancel" });
 						ImGui::BeginDisabled(cancelling);
 						if (ImGui::Button(cancelling ? "Cancelling..." : "Cancel"))
-							cancelPlay(pack.id);
+							cancelPlay(playKey(pack));
 						ImGui::EndDisabled();
 					} else {
 						AlignRightForButtons(hostable ? std::vector<const char*>{ "Server", "Open folder", "Manage", "  PLAY  " }
@@ -3758,7 +3936,7 @@ int main(int argc, char** argv)
 				context.droppedPaths = droppedPaths;
 				{
 					std::lock_guard<std::mutex> lock(playsMutex);
-					const auto it = plays.find(pack.id);
+					const auto it = plays.find(playKey(pack));
 					if (it != plays.end()) {
 						context.playBusy = it->second.busy;
 						context.playing = it->second.playing;
@@ -3772,8 +3950,8 @@ int main(int argc, char** argv)
 				switch (request.action) {
 				case ManageAction::Back: page = Page::Library; break;
 				case ManageAction::Play: startPlay(pack); break;
-				case ManageAction::CancelPlay: cancelPlay(pack.id); break;
-				case ManageAction::StopGame: stopConfirmPackId = pack.id; break;
+				case ManageAction::CancelPlay: cancelPlay(playKey(pack)); break;
+				case ManageAction::StopGame: stopConfirmPackId = playKey(pack); break;
 				case ManageAction::LaunchSettings: launchSettingsPackId = pack.id; break;
 				case ManageAction::Repair: startRepair(pack); break;
 				case ManageAction::Update: startUpdateCheck(pack); break;
@@ -3891,9 +4069,17 @@ int main(int argc, char** argv)
 					: account.type == Account::Type::Offline ? "Offline (singleplayer)" : "No account yet";
 				const std::string oldCurseForgeKey = CurseForgeApiKey();
 				settingsContext.shownAt = pageShownAt;
+				{
+					// Sharing existing files renames mod jars, which a running game has open.
+					std::lock_guard<std::mutex> lock(playsMutex);
+					settingsContext.sharingBlocked = std::any_of(plays.begin(), plays.end(),
+						[](const auto& entry) { return entry.second.busy || entry.second.playing; });
+				}
 				if (DrawSettingsPage(settings, settingsContext)) {
 					settingsDirty = true;
 					SetCurseForgeApiKey(settings.curseForgeApiKey);
+					if (SharedFiles::Enabled() != settings.shareModFiles)
+						SharedFiles::Configure(sharedFilesDir, settings.shareModFiles);
 					// A new key: refresh Discover's search on the next visit.
 					if (CurseForgeApiKey() != oldCurseForgeKey && views.count(PackSource::CurseForge) > 0)
 						discover.searchPending = true;
@@ -4117,12 +4303,7 @@ int main(int argc, char** argv)
 								ImGui::TextDisabled("%s", v.gameDir.c_str());
 						}
 						ImGui::Spacing();
-						bool busy = packUpdates.count(pack.id) > 0;
-						{
-							std::lock_guard<std::mutex> lock(playsMutex);
-							const auto play = plays.find(pack.id);
-							busy = busy || (play != plays.end() && play->second.busy);
-						}
+						bool busy = packUpdates.count(pack.id) > 0 || versionBusy(pack.id, one ? one->key : std::string());
 						{
 							std::lock_guard<std::mutex> lock(downloadsMutex);
 							for (const auto& [key, state] : downloads)
@@ -4220,12 +4401,7 @@ int main(int argc, char** argv)
 							ImGui::SetItemTooltip("Deletes the old version's folders once everything has been copied, "
 								"including its saves folder. Leave it off to keep the old version installed.");
 						}
-						bool busy = packUpdates.count(pack.id) > 0;
-						{
-							std::lock_guard<std::mutex> lock(playsMutex);
-							const auto play = plays.find(pack.id);
-							busy = busy || (play != plays.end() && (play->second.busy || play->second.playing));
-						}
+						bool busy = packUpdates.count(pack.id) > 0 || versionBusy(pack.id, pack.activeVersion);
 						{
 							std::lock_guard<std::mutex> lock(downloadsMutex);
 							for (const auto& [key, state] : downloads)

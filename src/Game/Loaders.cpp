@@ -6,6 +6,7 @@
 #include <miniz/miniz.h>
 #include <nlohmann/json.hpp>
 
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 
@@ -168,6 +169,122 @@ static bool InstallForgeLike(HttpClient& http, const fs::path& root, LoaderKind 
 	}
 	if (err) *err = std::string("The ") + LoaderName(kind) + " installer failed. See " + log.string();
 	return false;
+}
+
+bool IsLegacyForgeMinecraft(const std::string& minecraftVersion)
+{
+	// "1.12.2" -> 12; anything not shaped like 1.x is treated as modern.
+	if (minecraftVersion.rfind("1.", 0) != 0)
+		return false;
+	const int minor = std::atoi(minecraftVersion.c_str() + 2);
+	return minor > 0 && minor < 13;
+}
+
+bool NeedsLegacyJavaFixer(const std::string& minecraftVersion, const std::string& forgeVersion)
+{
+	if (minecraftVersion.rfind("1.6", 0) == 0 || minecraftVersion == "1.7.2")
+		return true;
+	if (minecraftVersion != "1.7.10")
+		return false;
+	// 1.7.10 builds from 10.13.2.1230 on include the fix; the build is the last number.
+	const std::size_t dot = forgeVersion.find_last_of('.');
+	const int build = std::atoi(forgeVersion.c_str() + (dot == std::string::npos ? 0 : dot + 1));
+	return build > 0 && build < 1230;
+}
+
+DownloadJob LegacyJavaFixerJob(const fs::path& gameDir)
+{
+	DownloadJob job;
+	job.url = "https://maven.minecraftforge.net/net/minecraftforge/lex/legacyjavafixer/1.0/legacyjavafixer-1.0.jar";
+	job.sha1 = "a11b502bef19f49bfc199722b94da5f3d7b470a8";
+	job.size = 6245;
+	job.path = gameDir / "mods" / "legacyjavafixer-1.0.jar";
+	return job;
+}
+
+bool InstallForgeFromJar(const fs::path& root, const fs::path& forgeJar, const std::string& minecraftVersion,
+	std::string& versionId, std::string* err)
+{
+	mz_zip_archive zip;
+	std::memset(&zip, 0, sizeof(zip));
+	if (!mz_zip_reader_init_file(&zip, forgeJar.string().c_str(), 0)) {
+		if (err) *err = "Couldn't open " + forgeJar.filename().string();
+		return false;
+	}
+	std::size_t size = 0;
+	void* data = mz_zip_reader_extract_file_to_heap(&zip, "version.json", &size, 0);
+	mz_zip_reader_end(&zip);
+	if (!data) {
+		if (err) *err = forgeJar.filename().string() + " has no version.json, so it isn't a Forge universal jar";
+		return false;
+	}
+	json version;
+	try {
+		version = json::parse(std::string(static_cast<const char*>(data), size));
+	}
+	catch (const std::exception& ex) {
+		mz_free(data);
+		if (err) *err = std::string("Couldn't read Forge's version.json: ") + ex.what();
+		return false;
+	}
+	mz_free(data);
+	versionId = version.value("id", "");
+	if (versionId.empty() || versionId.find_first_of("/\\:") != std::string::npos) {
+		if (err) *err = "Forge's version.json has no usable id";
+		return false;
+	}
+	// Old Forge version files list every library themselves; inherit the rest from vanilla.
+	if (!version.contains("inheritsFrom"))
+		version["inheritsFrom"] = minecraftVersion;
+	if (!version.contains("jar"))
+		version["jar"] = minecraftVersion;
+
+	json libraries = json::array();
+	std::string forgeLibrary;
+	for (json library : version.value("libraries", json::array())) {
+		if (library.contains("clientreq") && !library.value("clientreq", true))
+			continue; // server-only
+		const std::string name = library.value("name", "");
+		if (name.rfind("net.minecraftforge:forge:", 0) == 0 || name.rfind("net.minecraftforge:minecraftforge:", 0) == 0) {
+			// Forge itself: this very jar, copied in below (nothing to download).
+			forgeLibrary = name;
+			library = { { "name", name }, { "downloads", { { "artifact", { { "path", MavenPath(name) }, { "url", "" } } } } } };
+		} else if (library.contains("url") && library["url"].is_string()) {
+			std::string url = library["url"].get<std::string>();
+			for (const char* old : { "http://files.minecraftforge.net/maven/", "https://files.minecraftforge.net/maven/" }) {
+				if (url.rfind(old, 0) == 0)
+					url = "https://maven.minecraftforge.net/" + url.substr(std::strlen(old));
+			}
+			if (url.rfind("http://", 0) == 0)
+				url = "https://" + url.substr(7);
+			library["url"] = url;
+		}
+		library.erase("checksums");
+		libraries.push_back(std::move(library));
+	}
+	if (forgeLibrary.empty()) {
+		if (err) *err = "Forge's version.json doesn't list Forge itself";
+		return false;
+	}
+	version["libraries"] = libraries;
+
+	std::error_code ec;
+	const fs::path library = root / "libraries" / fs::u8path(MavenPath(forgeLibrary));
+	fs::create_directories(library.parent_path(), ec);
+	fs::copy_file(forgeJar, library, fs::copy_options::overwrite_existing, ec);
+	if (ec) {
+		if (err) *err = "Couldn't copy Forge into the libraries folder: " + ec.message();
+		return false;
+	}
+	const fs::path path = VersionJsonPath(root, versionId);
+	fs::create_directories(path.parent_path(), ec);
+	std::ofstream ofs(path, std::ios::trunc);
+	ofs << version.dump(2) << "\n";
+	if (!ofs.good()) {
+		if (err) *err = "Couldn't write " + path.string();
+		return false;
+	}
+	return true;
 }
 
 bool InstallLoader(HttpClient& http, const fs::path& root, LoaderKind kind, const std::string& minecraftVersion,

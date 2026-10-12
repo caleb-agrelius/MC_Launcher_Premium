@@ -68,6 +68,7 @@ Settings LoadSettings(const std::string& path)
 		settings.searchLimit = std::clamp(j.value("searchLimit", settings.searchLimit), kMinSearchLimit, kMaxSearchLimit);
 		settings.microsoftClientId = j.value("microsoftClientId", settings.microsoftClientId);
 		settings.curseForgeApiKey = j.value("curseForgeApiKey", settings.curseForgeApiKey);
+		settings.shareModFiles = j.value("shareModFiles", settings.shareModFiles);
 		const json paneWidths = j.value("paneWidths", json::object()); // items() must not outlive it
 		for (const auto& [pane, width] : paneWidths.items()) {
 			if (width.is_number())
@@ -135,6 +136,7 @@ bool SaveSettings(const std::string& path, const Settings& settings)
 	j["searchLimit"] = settings.searchLimit;
 	j["microsoftClientId"] = settings.microsoftClientId;
 	j["curseForgeApiKey"] = settings.curseForgeApiKey;
+	j["shareModFiles"] = settings.shareModFiles;
 	json paneWidths = json::object();
 	for (const auto& [pane, width] : settings.paneWidths)
 		paneWidths[pane] = std::round(width);

@@ -47,7 +47,7 @@ Technic answers `401 Unauthorized` unless every request carries a `build` value.
   - If the build has a `forge` version, it's recorded as the loader. Otherwise a note explains that the loader ships as files.
 - **Single zip:** the zip is downloaded and unpacked into `minecraft/`.
   - There's no hash to check.
-  - A note says the loader isn't declared. When the pack is played, the loader is detected from `bin/version.json` or the `version.json` inside `bin/modpack.jar` (see [launching.md](launching.md)).
+  - A note says the loader isn't declared. When the pack is played, the loader is detected from `bin/version.json` or the `version.json` inside `bin/modpack.jar` (see [launching.md](launching.md)). Forge before Minecraft 1.13 found this way is installed from `bin/modpack.jar` itself, since its old installer can't run headless.
 
 ## Verification
 Checked against the live API with a scratch harness:

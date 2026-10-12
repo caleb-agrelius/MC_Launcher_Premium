@@ -833,6 +833,38 @@ bool DrawDownloads(Settings& settings, const SettingsPageContext& context)
 	}
 	EndCard();
 
+	BeginCard("sharing_card");
+	CardTitle("Shared mod files", "Mods and resource and shader packs that several packs use are kept once on "
+		"disk, as hard links to one copy in minecraft/shared-files. Each pack still sees ordinary files: removing or "
+		"turning off a mod in one pack doesn't touch the others. Explorer counts each link at full size, so folder "
+		"sizes don't show the saving. Packs on another drive than the launcher get their own copies.");
+	if (BeginRows("sharing_rows")) {
+		Row("Share identical files", "Off: new installs get their own copies. Files already shared stay shared.");
+		changed |= Widgets::Toggle("##share_mod_files", &settings.shareModFiles);
+		Row("Packs already installed", "Finds identical mods in your packs and servers and keeps one copy of each. "
+			"Close running games first, since their mods are in use.");
+		if (context.sharingStats.empty() && !context.sharingBusy && context.countSharing)
+			context.countSharing();
+		ImGui::BeginDisabled(!settings.shareModFiles || context.sharingBusy || context.sharingBlocked);
+		if (ImGui::Button("Share files packs already have") && context.shareExisting)
+			context.shareExisting();
+		ImGui::EndDisabled();
+		if (context.sharingBlocked)
+			ImGui::SetItemTooltip("Close Minecraft first: its mods are in use.");
+		if (context.sharingBusy) {
+			ImGui::SameLine();
+			Widgets::Spinner(Theme::C().accent);
+		}
+		ImGui::PushFont(nullptr, Theme::kFontSmall);
+		if (!context.sharingStatus.empty())
+			ImGui::TextWrapped("%s", context.sharingStatus.c_str());
+		if (!context.sharingStats.empty())
+			ImGui::TextDisabled("%s", context.sharingStats.c_str());
+		ImGui::PopFont();
+		EndRows();
+	}
+	EndCard();
+
 	BeginCard("folders_card");
 	CardTitle("Folders");
 	if (BeginRows("folder_rows")) {

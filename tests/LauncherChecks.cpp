@@ -1,5 +1,7 @@
 #include "Game/InstanceContent.h"
+#include "Game/JarMods.h"
 #include "Game/JavaFinder.h"
+#include "Game/Loaders.h"
 #include "Game/PackCreator.h"
 #include "Game/PackInstance.h"
 #include "Game/ServerSetup.h"
@@ -12,11 +14,13 @@
 #include "Util/Paths.h"
 #include "Util/Process.h"
 #include "Util/Sha1.h"
+#include "Util/SharedFiles.h"
 #include "Util/Text.h"
 #include "imgui_internal.h"
 
 #include <miniz/miniz.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -514,6 +518,155 @@ static void WriteJar(const fs::path& path, const std::vector<std::pair<std::stri
 	mz_zip_writer_end(&zip);
 }
 
+// Shared mod files: keys, shareable paths, sharing existing copies, linking new installs,
+// refusing a damaged stored copy, and pruning unused files.
+static void SharedFileChecks(const fs::path& dir)
+{
+	Check(SharedFiles::KeyFor("ABCDEF0123456789ABCDEF0123456789ABCDEF01") == "sha1-abcdef0123456789abcdef0123456789abcdef01" &&
+		SharedFiles::KeyFor("", "0123456789abcdef0123456789abcdef") == "md5-0123456789abcdef0123456789abcdef" &&
+		SharedFiles::KeyFor("short", "").empty(), "Share keys");
+	Check(SharedFiles::IsShareablePath("mods/a.jar") && SharedFiles::IsShareablePath("resourcepacks/x.zip") &&
+		!SharedFiles::IsShareablePath("config/a.json") && !SharedFiles::IsShareablePath("saves/w/level.dat") &&
+		!SharedFiles::IsShareablePath("../mods/a.jar"), "Only mods and resource/shader packs are shared");
+
+	const fs::path store = dir / "shared" / "store";
+	const fs::path a = dir / "shared" / "packA", b = dir / "shared" / "packB", c = dir / "shared" / "packC";
+	const std::string jar(200000, 'j');
+	Write(a / "mods" / "same.jar", jar);
+	Write(b / "mods" / "same.jar", jar);
+	Write(b / "mods" / "other.jar", "different");
+	Write(b / "config" / "same.jar", jar); // not in a shared folder
+	SharedFiles::Configure(store, true);
+	const SharedFiles::ShareResult shared = SharedFiles::ShareExisting({ a, b }, nullptr, nullptr);
+	Check(shared.error.empty(), "Sharing failed: " + shared.error);
+	Check(shared.scanned == 3 && shared.linked == 1 && shared.saved == jar.size(),
+		"One duplicate should be shared (linked " + std::to_string(shared.linked) + ")");
+	Check(fs::equivalent(a / "mods" / "same.jar", b / "mods" / "same.jar") && Read(b / "mods" / "same.jar") == jar,
+		"The copies should now be one file with the same contents");
+	Check(!fs::equivalent(b / "config" / "same.jar", a / "mods" / "same.jar"), "Configs are never shared");
+	SharedFiles::Stats stats = SharedFiles::StoreStats();
+	Check(stats.files == 2 && stats.shared == 1 && stats.saved == jar.size(), "Store stats");
+	Check(SharedFiles::ShareExisting({ a, b }, nullptr, nullptr).linked == 0, "Sharing again changes nothing");
+
+	// A new install of the same file links to the stored copy.
+	const std::string key = SharedFiles::KeyFor(Sha1File((a / "mods" / "same.jar").string()));
+	Check(SharedFiles::LinkTo(key, jar.size(), c / "mods" / "same.jar") &&
+		fs::equivalent(c / "mods" / "same.jar", a / "mods" / "same.jar"), "A new install should link to the stored copy");
+	Check(!SharedFiles::LinkTo(key, jar.size() + 1, c / "mods" / "wrong-size.jar"), "A size mismatch isn't linked");
+
+	// Turning a mod off in one pack (a rename) leaves the others alone.
+	fs::rename(c / "mods" / "same.jar", c / "mods" / "same.jar.disabled");
+	Check(fs::exists(a / "mods" / "same.jar") && fs::exists(b / "mods" / "same.jar"), "Disabling in one pack keeps the others");
+
+	// A stored copy whose contents changed is dropped instead of handed out.
+	const std::string otherKey = SharedFiles::KeyFor(Sha1File((b / "mods" / "other.jar").string()));
+	{
+		std::ofstream damage(b / "mods" / "other.jar", std::ios::binary | std::ios::in | std::ios::out);
+		damage << "X"; // writes through the link into the stored copy
+	}
+	Check(!SharedFiles::LinkTo(otherKey, 0, c / "mods" / "other.jar") && !fs::exists(c / "mods" / "other.jar"),
+		"A damaged stored copy must not be linked");
+
+	// Off: nothing is linked or stored.
+	SharedFiles::Configure(store, false);
+	Check(!SharedFiles::LinkTo(key, jar.size(), c / "mods" / "again.jar"), "Sharing off links nothing");
+	SharedFiles::Configure(store, true);
+
+	// Prune deletes stored files no pack uses any more.
+	fs::remove_all(a);
+	fs::remove_all(b);
+	fs::remove_all(c);
+	const std::uint64_t freed = SharedFiles::Prune();
+	const SharedFiles::Stats left = SharedFiles::StoreStats();
+	Check(freed == jar.size() && left.files == 0, "Prune should free unused stored files (freed " + std::to_string(freed) +
+		", left " + std::to_string(left.files) + " file(s), " + std::to_string(left.bytes) + " bytes)");
+	SharedFiles::Configure({}, false);
+}
+
+// Jar mods: pack.json order, layering over the game jar, META-INF removal, and skipping rebuilds.
+static void JarModChecks(const fs::path& dir)
+{
+	const fs::path install = dir / "jarmods-install";
+	const fs::path game = install / "minecraft";
+	const fs::path client = dir / "client.jar";
+	WriteJar(client, { { "a/A.class", "vanilla A" }, { "b/B.class", "vanilla B" }, { "META-INF/MOJANG.SF", "sig" } });
+	WriteJar(game / "jarmods" / "z-forge.zip", { { "b/B.class", "forge B" }, { "f/Forge.class", "forge" }, { "META-INF/MANIFEST.MF", "m" } });
+	WriteJar(game / "jarmods" / "a-optifine.zip", { { "b/B.class", "optifine B" }, { "o/O.class", "optifine" } });
+	WriteJar(game / "jarmods" / "extra.zip", { { "x/X.class", "extra" } });
+	// The pack installs Forge first, then OptiFine; extra.zip isn't listed and goes last.
+	Write(install / "pack.json", R"({"files":["mods/m.jar","jarmods/z-forge.zip","jarmods/a-optifine.zip"]})");
+	const std::vector<fs::path> mods = FindJarMods(install, game);
+	Check(mods.size() == 3 && mods[0].filename() == "z-forge.zip" && mods[1].filename() == "a-optifine.zip" &&
+		mods[2].filename() == "extra.zip", "Jar mods should follow pack.json, then names");
+	Check(FindJarMods(dir / "nothing", dir / "nothing").empty(), "No jarmods folder means no jar mods");
+
+	const fs::path patched = game / ".mclp" / "patched-client.jar";
+	std::string error;
+	Check(BuildPatchedJar(client, mods, patched, &error), "Patching failed: " + error);
+	mz_zip_archive zip{};
+	Check(mz_zip_reader_init_file(&zip, patched.string().c_str(), 0) != 0, "Patched jar unreadable");
+	auto entry = [&](const char* name) -> std::string {
+		std::size_t size = 0;
+		void* data = mz_zip_reader_extract_file_to_heap(&zip, name, &size, 0);
+		if (!data)
+			return "<missing>";
+		std::string text(static_cast<const char*>(data), size);
+		mz_free(data);
+		return text;
+	};
+	const std::string a = entry("a/A.class"), b = entry("b/B.class"), f = entry("f/Forge.class"), o = entry("o/O.class"),
+		x = entry("x/X.class"), sig = entry("META-INF/MOJANG.SF"), manifest = entry("META-INF/MANIFEST.MF");
+	const mz_uint count = mz_zip_reader_get_num_files(&zip);
+	mz_zip_reader_end(&zip);
+	Check(a == "vanilla A" && b == "optifine B" && f == "forge" && o == "optifine" && x == "extra",
+		"Later jar mods should override earlier ones (B=" + b + ")");
+	Check(sig == "<missing>" && manifest == "<missing>" && count == 5, "META-INF should be left out");
+
+	// Unchanged inputs: the jar isn't rebuilt (same write time). A changed mod rebuilds it.
+	const auto built = fs::last_write_time(patched);
+	std::this_thread::sleep_for(std::chrono::milliseconds(20));
+	Check(BuildPatchedJar(client, mods, patched, &error) && fs::last_write_time(patched) == built, "Unchanged inputs shouldn't rebuild");
+	WriteJar(game / "jarmods" / "extra.zip", { { "x/X.class", "extra v2" }, { "y/Y.class", "new" } });
+	Check(BuildPatchedJar(client, mods, patched, &error), "Rebuild failed: " + error);
+	mz_zip_archive again{};
+	Check(mz_zip_reader_init_file(&again, patched.string().c_str(), 0) != 0 && mz_zip_reader_get_num_files(&again) == 6,
+		"A changed jar mod should rebuild the patched jar");
+	mz_zip_reader_end(&again);
+	Check(!BuildPatchedJar(client, { game / "jarmods" / "missing.zip" }, dir / "bad.jar", &error) && !error.empty(),
+		"A missing jar mod should fail with an error");
+
+	// A Forge universal jar (it has a version.json) is a loader, not a jar mod.
+	const std::string forgeJson = R"({"id":"1.6.4-Forge9.11.1.965","mainClass":"net.minecraft.launchwrapper.Launch",
+		"minecraftArguments":"--tweakClass cpw.mods.fml.common.launcher.FMLTweaker","libraries":[
+		{"name":"net.minecraftforge:minecraftforge:9.11.1.965"},
+		{"name":"org.scala-lang:scala-library:2.10.2","url":"http://files.minecraftforge.net/maven/","checksums":["x"],"clientreq":true},
+		{"name":"net.minecraft:launchwrapper:1.8"},
+		{"name":"net.minecraft:server-only:1.0","clientreq":false}]})";
+	const fs::path universal = game / "jarmods" / "forge-1.6.4-9.11.1.965-universal.jar";
+	WriteJar(universal, { { "version.json", forgeJson }, { "cpw/Fml.class", "fml" } });
+	const std::vector<fs::path> withForge = FindJarMods(install, game);
+	Check(std::none_of(withForge.begin(), withForge.end(), [&](const fs::path& p) { return p.filename() == universal.filename(); }),
+		"A jar with a version.json is a loader, not a jar mod");
+	Check(IsLegacyForgeMinecraft("1.6.4") && IsLegacyForgeMinecraft("1.12.2") && !IsLegacyForgeMinecraft("1.13") &&
+		!IsLegacyForgeMinecraft("1.20.1") && !IsLegacyForgeMinecraft("26.2"), "Legacy Forge versions");
+	const fs::path root = dir / "legacy-forge-root";
+	std::string versionId;
+	Check(InstallForgeFromJar(root, universal, "1.6.4", versionId, &error), "Forge from its jar failed: " + error);
+	const json written = json::parse(Read(root / "versions" / versionId / (versionId + ".json")));
+	Check(versionId == "1.6.4-Forge9.11.1.965" && written.value("inheritsFrom", "") == "1.6.4" && written.value("jar", "") == "1.6.4",
+		"Forge's version should inherit from vanilla");
+	const json libs = written["libraries"];
+	Check(libs.size() == 3 && libs[0]["downloads"]["artifact"].value("url", "x").empty() &&
+		libs[1].value("url", "") == "https://maven.minecraftforge.net/" && !libs[1].contains("checksums") &&
+		libs[2].value("name", "") == "net.minecraft:launchwrapper:1.8",
+		"Forge library from the jar, moved maven URL, server-only library dropped");
+	Check(NeedsLegacyJavaFixer("1.6.4", "9.11.1.965") && NeedsLegacyJavaFixer("1.7.2", "10.12.2.1161") &&
+		NeedsLegacyJavaFixer("1.7.10", "10.13.0.1180") && !NeedsLegacyJavaFixer("1.7.10", "10.13.4.1614") &&
+		!NeedsLegacyJavaFixer("1.12.2", "14.23.5.2860"), "LegacyJavaFixer only for Forge that needs it");
+	Check(fs::is_regular_file(root / "libraries" / "net/minecraftforge/minecraftforge/9.11.1.965/minecraftforge-9.11.1.965.jar"),
+		"The universal jar should be copied in as the Forge library");
+}
+
 // Manage > Content: listing, switching off and on, removing, and reading mod names from jars.
 // Automatic Java: version parsing, finding Java homes in folders, and picking per Minecraft version.
 static void JavaChecks(const fs::path& dir)
@@ -734,6 +887,8 @@ int main(int argc, char** argv)
 		PackEditChecks(dir);
 		PackCreatorChecks(dir);
 		JavaChecks(dir);
+		JarModChecks(dir);
+		SharedFileChecks(dir);
 		std::cout << "Window settings, server setup, cards and console checks passed\n";
 		return 0;
 	} catch (const std::exception& ex) {

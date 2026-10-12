@@ -19,7 +19,11 @@ Browse modpacks and start downloads and installs. UI code is the `Page::Discover
 - The status line shows searching source names, displayed results, per-source totals and errors, and skipped-source reasons in a tooltip.
 - With several sources, **Best match** interleaves results by source rank; **Most downloads** and **Name** sort the combined list. With one source, its native sorts are available.
 - **Offline fallback (Modrinth only):** if the search fails, the list shows packs from `resources/index.json` whose name or description contains the query (case-insensitive). See [modpack-index.md](modpack-index.md).
-- Each search shows up to `settings.searchLimit` results (30 by default, 10–100, set in Settings > Downloads). CurseForge caps a page at 50. There is no paging yet.
+- Each search shows up to `settings.searchLimit` results (30 by default, 10–100, set in Settings > Downloads). CurseForge caps a page at 50.
+- **Load more:** when any searched source has more results than it has returned (`SourceView::HasMore`), a **Load more** button sits at the end of the list. It asks each such source for its next page (`startSearch(view, true)`, with `SearchFilters::offset` set to the number already loaded) and adds the results below the current ones. Repeats are skipped, and the selection and scroll position stay put.
+  - While pages load, the button becomes "Loading more...". A failed page shows "Couldn't load more: <source>: <error>" and the button stays, so it can be retried.
+  - An empty page ends that source's results. A new search discards pages still loading.
+  - The merged list keeps its order: with several sources, new pages continue the interleaving by rank, or are sorted in when the list is sorted by downloads or name.
 - **Ctrl F** opens Discover and focuses the shared search box.
 
 ## Pack list (left, 340px scaled by default)

@@ -267,7 +267,8 @@ bool SearchFtbModpacks(HttpClient& http,
 	}
 
 	out.totalHits = matches.size();
-	for (std::size_t i = 0; i < matches.size() && static_cast<int>(i) < limit; ++i)
+	const std::size_t first = static_cast<std::size_t>(std::max(0, filters.offset));
+	for (std::size_t i = first; i < matches.size() && i < first + static_cast<std::size_t>(limit); ++i)
 		out.packs.push_back(matches[i]->pack);
 	return true;
 }

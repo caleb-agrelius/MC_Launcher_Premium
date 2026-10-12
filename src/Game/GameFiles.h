@@ -24,6 +24,9 @@ struct DownloadJob {
 	std::string sha1;        // checked after download when not empty
 	std::uint64_t size = 0;  // an existing file of this size is kept; 0 = keep any existing file
 	bool executable = false; // unused on Windows
+	// Mods and other read-only pack content: reuse an identical stored copy (a hard link)
+	// instead of downloading, and store the download for other packs (see SharedFiles).
+	bool share = false;
 };
 
 // Downloads every job that's missing, using several threads. Each file is

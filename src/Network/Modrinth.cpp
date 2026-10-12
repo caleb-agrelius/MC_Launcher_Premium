@@ -47,6 +47,8 @@ bool SearchModrinthModpacks(HttpClient& http,
 		HttpClient::UrlEncode(facets.dump()) +
 		"&limit=" + std::to_string(limit) +
 		"&index=" + index;
+	if (options.offset > 0)
+		url += "&offset=" + std::to_string(options.offset);
 	if (!query.empty())
 		url += "&query=" + HttpClient::UrlEncode(query);
 

@@ -149,6 +149,7 @@ public:
 		ModrinthSearchOptions options;
 		options.gameVersion = filters.gameVersion;
 		options.loader = filters.loader;
+		options.offset = filters.offset;
 		if (filters.sort > 0 && filters.sort < static_cast<int>(std::size(kModrinthIndexes)))
 			options.index = kModrinthIndexes[filters.sort];
 		ModrinthSearchResult result;

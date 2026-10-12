@@ -12,6 +12,7 @@
 
 #include "Util/Paths.h"
 #include "Util/Text.h"
+#include "Util/SharedFiles.h"
 #include "Util/Sha1.h"
 
 namespace fs = std::filesystem;
@@ -174,8 +175,21 @@ bool ReadInstalledPack(const fs::path& installDir, InstalledPack& out, std::stri
 		}
 		std::error_code ec;
 		if (out.loader == LoaderKind::Vanilla && fs::is_regular_file(bin / "modpack.jar", ec) &&
-			ReadZipEntry(bin / "modpack.jar", "version.json", text) && LoaderFromVersionJson(text, out))
+			ReadZipEntry(bin / "modpack.jar", "version.json", text) && LoaderFromVersionJson(text, out)) {
 			out.loaderSource = "bin/modpack.jar";
+			out.loaderJar = bin / "modpack.jar";
+		}
+		// Old ATLauncher packs list Forge's universal jar as a "forge" jar mod (in jarmods/).
+		const fs::path jarmods = installDir / "minecraft" / "jarmods";
+		if (out.loader == LoaderKind::Vanilla && fs::is_directory(jarmods, ec)) {
+			for (const auto& entry : fs::directory_iterator(jarmods, ec)) {
+				if (entry.is_regular_file(ec) && ReadZipEntry(entry.path(), "version.json", text) && LoaderFromVersionJson(text, out)) {
+					out.loaderSource = "jarmods/" + entry.path().filename().u8string();
+					out.loaderJar = entry.path();
+					break;
+				}
+			}
+		}
 	}
 
 	if (out.minecraftVersion.empty()) {
@@ -244,6 +258,7 @@ bool ReadMrpackIndex(const fs::path& extractedDir, MrpackIndex& out, std::string
 			job.path = relative.lexically_normal();
 			job.sha1 = file.value("hashes", json::object()).value("sha1", "");
 			job.size = file.value("fileSize", 0ULL);
+			job.share = SharedFiles::IsShareablePath(job.path);
 			out.files.push_back(std::move(job));
 		}
 	}

@@ -26,7 +26,10 @@ struct InstalledPack {
 	std::string minecraftVersion;
 	LoaderKind loader = LoaderKind::Vanilla;
 	std::string loaderVersion; // normalized for InstallLoader (e.g. "47.2.0", not "forge-47.2.0")
-	std::string loaderSource;  // where the loader came from, for messages: "pack.json" or "bin/modpack.jar"
+	std::string loaderSource;  // where the loader came from, for messages: "pack.json", "bin/modpack.jar", "jarmods/..."
+	// The jar the loader was detected from (Technic's bin/modpack.jar, or a Forge universal jar
+	// an ATLauncher pack lists as a jar mod). Old Forge is installed from it (InstallForgeFromJar).
+	std::filesystem::path loaderJar;
 	std::string version;       // the pack's own version (pack.json "version", else "sourceVersionId")
 	std::vector<std::string> clientOnlyFiles; // paths under minecraft/ the source marks client-only
 };

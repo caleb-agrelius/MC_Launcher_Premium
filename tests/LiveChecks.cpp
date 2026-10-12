@@ -153,6 +153,35 @@ static void CheckPackCreation(HttpClient& http, const fs::path& workRoot)
 		!FindContentDownload(http, { ContentKind::Mods, "", "1.20.1", "forge" }, "sodium", download, &error), error);
 }
 
+// Discover paging: page 2 (offset = page size) continues page 1 with no repeats.
+static void CheckPaging(HttpClient& http, PackSource source, const std::string& query)
+{
+	const std::string name = std::string(PackSourceName(source)) + " paging";
+	constexpr int kPage = 10;
+	SearchFilters filters;
+	SourceSearchResult first, second;
+	std::string error;
+	if (!SearchPacks(http, source, query, filters, kPage, first, &error)) {
+		Report(name, false, "page 1: " + error);
+		return;
+	}
+	filters.offset = static_cast<int>(first.packs.size());
+	if (!SearchPacks(http, source, query, filters, kPage, second, &error)) {
+		Report(name, false, "page 2: " + error);
+		return;
+	}
+	std::set<std::string> ids;
+	for (const Modpack& pack : first.packs)
+		ids.insert(pack.id);
+	std::size_t repeats = 0;
+	for (const Modpack& pack : second.packs)
+		repeats += ids.count(pack.id);
+	const bool ok = first.packs.size() == kPage && !second.packs.empty() && repeats == 0 && first.totalHits > kPage;
+	Report(name, ok, std::to_string(first.packs.size()) + " + " + std::to_string(second.packs.size()) + " of " +
+		std::to_string(first.totalHits) + ", " + std::to_string(repeats) + " repeated; page 2 starts with " +
+		(second.packs.empty() ? std::string("-") : second.packs.front().name));
+}
+
 int main()
 {
 	HttpClient http;
@@ -163,6 +192,12 @@ int main()
 	CheckSource(http, PackSource::ATLauncher, "", workRoot);
 	CheckSource(http, PackSource::Technic, "tekkit", workRoot);
 	CheckClientOnlyLookup(http);
+	CheckPaging(http, PackSource::Modrinth, "");
+	CheckPaging(http, PackSource::FTB, "");
+	CheckPaging(http, PackSource::ATLauncher, "");
+	CheckPaging(http, PackSource::Technic, "");
+	if (!CurseForgeApiKey().empty())
+		CheckPaging(http, PackSource::CurseForge, "");
 	CheckPackCreation(http, workRoot);
 	if (!CurseForgeApiKey().empty())
 		CheckSource(http, PackSource::CurseForge, "", workRoot);

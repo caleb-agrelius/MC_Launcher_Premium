@@ -25,6 +25,14 @@ struct SettingsPageContext {
 	bool javasScanned = false;
 	bool javasScanning = false;
 	std::function<void()> scanJavas;
+	// Shared mod files (Settings > Downloads): a summary of the store, whether a share or
+	// stats job is running, the last result, and the jobs to start.
+	std::string sharingStats;          // empty until counted
+	bool sharingBusy = false;
+	bool sharingBlocked = false;       // a game is running, so its mod files are in use
+	std::string sharingStatus;         // progress or the last result
+	std::function<void()> shareExisting;
+	std::function<void()> countSharing;
 };
 
 // Draws the Settings page into the current window. Edits settings in place and returns
