@@ -9,8 +9,9 @@ Each tab is a set of cards with a label (and hint) on the left and the control o
 
 | Tab | Contents |
 |---|---|
-| **Appearance** | Theme picker (a grid of `ThemeCard`s, applied on click); UI scale slider (75–200%) with **Reset**; **Reduce motion** and **Gallery banners** toggles |
+| **Appearance** | Theme picker (a grid of `ThemeCard`s, applied on click, plus **Create your own**); the custom theme editor when a custom theme is selected (see [ui-theme.md](ui-theme.md)); UI scale slider (75–200%) with **Reset** (the only place to change it besides the keyboard shortcuts); **Reduce motion** and **Gallery banners** toggles |
 | **Minecraft** | Defaults used for every pack when Play is pressed (see [launching.md](launching.md)). **Memory:** maximum (`-Xmx`, 1 GB up to the PC's RAM, warning above 75% of it) and starting (`-Xms`, Automatic or a fixed amount) sliders in 0.5 GB steps. **Java:** executable path (empty = Mojang's runtime; a red note appears if the path doesn't exist) and extra JVM arguments. **Game window:** fullscreen, custom window size (off = Minecraft's 854 x 480), and what the launcher does when the game starts. **Reset Minecraft settings to defaults** |
+| **Game options** | Vanilla Minecraft options applied to every pack (see below): how they're applied (every launch, or only a pack's first launch), how many are on, **Turn all off**, then cards for Video, Controls, Sound, Chat & accessibility, and First launch |
 | **Account** | The current account (name and type, or "Not signed in") with a pointer to the sidebar's ACCOUNT section, and the **Azure client ID** used for Microsoft sign-in (`microsoftClientId`, see [accounts.md](accounts.md)) |
 | **Downloads** | Results per search (10–100); the `downloads/`, `installs/`, `instances/` and `minecraft/` paths with **Open** buttons |
 | **About** | Version, Windows display scaling, system memory, the data folder (with **Open**), keyboard shortcuts, and a Modrinth / not-affiliated note |
@@ -35,5 +36,15 @@ Saved in the data folder (gitignored). A missing or invalid file gives the defau
 | `launch.windowWidth` / `windowHeight` | 0 / 0 | 0 = Minecraft's default size; otherwise at least 320 |
 | `launch.fullscreen` | false | |
 | `launch.afterLaunch` | 0 | 0 keep open, 1 minimize, 2 close (`AfterLaunch`) |
+| `gameOptions.everyLaunch` | true | false = apply only the first time each pack starts |
+| `gameOptions.values` | `{}` | options.txt key -> value, only for options turned on |
+| `customThemes` | `[]` | Custom themes, see [ui-theme.md](ui-theme.md) |
 
 How the `launch` values are applied is described in [launching.md](launching.md).
+
+## Game options (`src/Game/GameOptions.{h,cpp}`)
+- `GameOptionDefs()` lists the vanilla options the page offers, with their options.txt key, group, label, hint, type (`Toggle`, `Slider`, `Choice`, `Text`), vanilla default, and for sliders the range and unit conversion. Keys and value formats follow recent Minecraft (1.19+); versions that don't know a key ignore it.
+- Each row has an on/off switch. Off (the default) means the option isn't written, so the pack's or the player's own setting stays. Turning it on stores the vanilla default; the control next to it then edits the value.
+- Sliders are shown in friendly units and converted when saved (`GameOptionToDisplay` / `GameOptionFromDisplay`): field of view in degrees (Minecraft stores (degrees - 70) / 40), mouse sensitivity in % (stored / 200), volumes and other 0-1 values in %. Max framerate 260 shows as "Unlimited".
+- Inverted toggles (e.g. **Skip the accessibility intro**, stored as `onboardAccessibility:false`) show "on" when the stored value is `false`.
+- `ApplyGameOptions()` runs at Play after the pack's overrides are copied (see [launching.md](launching.md)). It rewrites `instances/<pack id>/options.txt`, replacing the lines for options that are on and appending missing ones, and keeps every other line. The file is written to a temporary file and renamed into place. With **Only the first time each pack starts**, `.mclp-options-applied` in the instance marks it as done.

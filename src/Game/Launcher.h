@@ -17,15 +17,19 @@ struct PlayRequest {
 	std::filesystem::path instanceDir;  // instances/<pack id>/ (the game directory)
 	Account account;                    // must have a valid access token
 	LaunchSettings launch;              // memory, Java, JVM arguments, window size
+	GameOptionsSettings gameOptions;    // vanilla options.txt values applied to the instance
+	const std::atomic<bool>* stopGame = nullptr; // set to force-close the running game
 };
 
 // Splits a JVM argument string on spaces; double quotes group words ("-Dname=a b").
 std::vector<std::string> SplitArguments(const std::string& text);
 
-// Everything needed to play a modpack, in order: mods and overrides, vanilla
-// Minecraft, Java, the mod loader, then the game itself. Blocks until Minecraft
-// exits. When cancel is set before launch it stops; after launch the game keeps
-// running and PlayModpack returns false with err = "Cancelled".
+// Everything needed to play a modpack, in order: mods and overrides, game options,
+// vanilla Minecraft, Java, the mod loader, then the game itself. Blocks until
+// Minecraft exits. When cancel is set before launch it stops; after launch the game
+// keeps running and PlayModpack returns false with err = "Cancelled". When
+// request.stopGame is set while the game runs, the game is killed and
+// PlayModpack returns false with err = "Stopped".
 // progress receives "Playing" (fraction 1) once the game has started.
 bool PlayModpack(HttpClient& http,
 				 const PlayRequest& request,
