@@ -142,6 +142,13 @@ bool ReadInstalledPack(const fs::path& installDir, InstalledPack& out, std::stri
 		out.minecraftVersion = j.value("minecraft", "");
 		loaderName = j.value("loader", "");
 		loaderVersion = j.value("loaderVersion", "");
+		out.version = j.value("version", "");
+		if (out.version.empty())
+			out.version = j.value("sourceVersionId", "");
+		for (const auto& path : j.value("clientOnlyFiles", json::array())) {
+			if (path.is_string())
+				out.clientOnlyFiles.push_back(path.get<std::string>());
+		}
 	}
 	catch (const std::exception& ex) {
 		if (err) *err = std::string("Couldn't read pack.json: ") + ex.what();

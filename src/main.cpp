@@ -7,6 +7,7 @@
 #include "Game/Launcher.h"
 #include "Game/ServerSetup.h"
 #include "Util/Process.h"
+#include "Util/Text.h"
 #include "imgui_stdlib.h"
 #include "Model/Modpack.h"
 #include "Platform.h"
@@ -159,14 +160,30 @@ struct ServerState {
 	bool running = false;        // as of last frame, to notice when the server stops
 	double stopRequestedAt = -1.0;
 	char command[256] = "";
+	bool hostIpCustom = false; // Host IP: typing an address instead of picking one
+	std::string hostIpEdit;    // the address being typed, applied once it's valid
 	std::uint64_t seenLines = 0; // console lines when last drawn, to auto-scroll on new output
+	std::vector<ServerMod> mods; // servers/<id>/mods, for turning mods on and off
+	bool modsLoaded = false;
+	std::string modFilter;
+	std::string modError;
+	bool dockerBusy = false;   // a "docker compose" command is running
+	std::string dockerMessage; // the last Docker action's result
+	bool dockerFailed = false;
 	// Setup, written by the worker under serversMutex.
 	bool busy = false;
+	bool deleting = false; // busy deleting the server folder, which can't be cancelled
 	std::string step;
 	double progress = -1.0;
 	std::string error;
 	std::shared_ptr<std::atomic<bool>> cancel = std::make_shared<std::atomic<bool>>(false);
 };
+
+// True when id can name a folder under installs/ or servers/ that is safe to delete.
+static bool IsPlainFolderName(const std::string& id)
+{
+	return !id.empty() && id != "." && id != ".." && id.find_first_of("/\\:") == std::string::npos;
+}
 
 // Per-server memory, kept next to the server so it survives reinstalls of the launcher.
 static int LoadServerMemory(const fs::path& serverDir, int fallback)
@@ -415,8 +432,10 @@ static void AlignRightForButton(const char* label)
 }
 
 // Moves the cursor so a row of buttons with these labels ends at the right edge.
-static void AlignRightForButtons(std::initializer_list<const char*> labels)
+static void AlignRightForButtons(const std::vector<const char*>& labels)
 {
+	if (labels.empty())
+		return;
 	const ImGuiStyle& style = ImGui::GetStyle();
 	float width = 0.0f;
 	for (const char* label : labels)
@@ -611,6 +630,16 @@ int main(int argc, char** argv)
 		std::map<std::string, std::string> filesErrors;
 		// Full-size banner lookups, keyed by pack id.
 		std::set<std::string> bannersLoading;
+		// Mod lists for Discover's Mods tab, keyed by ModsKey (pack id and version).
+		std::map<std::string, PackModList> packMods;
+		std::set<std::string> modsLoading;
+		std::map<std::string, std::string> modsErrors;
+		std::string modsFilter;
+		auto modsKey = [](const Modpack& pack) { return pack.id + "@" + pack.sourceVersionId; };
+		// Full descriptions for Discover's Description tab (plain text), keyed by pack id.
+		std::map<std::string, std::string> packDescriptions;
+		std::set<std::string> descriptionsLoading;
+		std::map<std::string, std::string> descriptionErrors;
 
 		std::error_code cwdError;
 		SettingsPageContext settingsContext;
@@ -777,7 +806,10 @@ int main(int argc, char** argv)
 		std::map<std::string, ServerState> servers; // keyed by pack id; entries only added on the UI thread
 		std::mutex serversMutex;
 		std::string serverPackId; // selected on the Servers page
-		const std::string lanAddress = Platform::LocalNetworkAddress();
+		std::string lanAddress = Platform::LocalNetworkAddress();
+		// This PC's addresses for Servers > Host IP. Re-read when the page opens, since VPNs
+		// (Tailscale, ZeroTier, Radmin) add and remove adapters.
+		std::vector<Platform::NetworkAddress> hostAddresses = Platform::LocalNetworkAddresses();
 
 		auto startServerSetup = [&](const Modpack& pack) {
 			auto cancel = std::make_shared<std::atomic<bool>>(false);
@@ -795,6 +827,10 @@ int main(int argc, char** argv)
 			request.extractedDir = fs::absolute(fs::path("installs") / pack.id);
 			request.serverDir = fs::absolute(fs::path(kServersRoot) / pack.id);
 			request.javaPath = settings.launch.javaPath;
+			// Whole-pack installs: Modrinth knows which mods don't run on servers.
+			request.findClientOnly = [&http, cancel](const std::vector<std::string>& sha1s, std::set<std::string>& clientOnly) {
+				return FindModrinthClientOnly(http, sha1s, clientOnly, nullptr, cancel.get());
+			};
 			const std::string packId = pack.id;
 			const std::string packName = pack.name;
 			log << "Setting up server for " << packId << "\n";
@@ -824,6 +860,7 @@ int main(int argc, char** argv)
 						state.info = info;
 						state.props = ReadServerProperties(fs::path(kServersRoot) / packId);
 						state.eula = EulaAccepted(fs::path(kServersRoot) / packId);
+						state.modsLoaded = false;
 						log << "Server for " << packId << " ready: " << info.loader << " " << info.minecraftVersion << "\n";
 						Toasts::Push(Toasts::Kind::Success, "Server files ready", packName + " can now be started.");
 					} else if (!cancelled) {
@@ -834,10 +871,121 @@ int main(int argc, char** argv)
 			});
 		};
 
-		// One-click servers read the modrinth.index.json of an extracted .mrpack, which packs
-		// installed from a source's install plan (CurseForge, FTB, ...) don't have.
+		// Servers whose pack is no longer in My Library (uninstalled without deleting the
+		// server), so they can still be run or deleted. Named after their folder. UI thread only.
+		std::map<std::string, Modpack> orphanServers;
+		auto refreshOrphanServers = [&]() {
+			orphanServers.clear();
+			std::error_code ec;
+			for (const auto& entry : fs::directory_iterator(kServersRoot, ec)) {
+				const std::string id = entry.path().filename().string();
+				if (!entry.is_directory(ec) || libraryPacks.count(id) || !IsPlainFolderName(id))
+					continue;
+				Modpack pack;
+				pack.id = id;
+				pack.name = id;
+				orphanServers[id] = pack;
+			}
+		};
+
+		// Deletes servers/<pack id>/ on a worker. The server must be stopped and not setting up.
+		auto startServerDelete = [&](const std::string& packId, const std::string& packName) {
+			if (!IsPlainFolderName(packId))
+				return;
+			{
+				std::lock_guard<std::mutex> lock(serversMutex);
+				ServerState& state = servers[packId];
+				state.busy = true;
+				state.deleting = true;
+				state.step = "Deleting server files";
+				state.progress = -1.0;
+				state.error.clear();
+			}
+			log << "Deleting server " << packId << "\n";
+			StartWorker(workers, [&uiQueue, &servers, &serversMutex, &orphanServers, &log, packId, packName]() {
+				std::string error;
+				const bool ok = RemoveServer(fs::path(kServersRoot) / packId, &error);
+				uiQueue.Post([&servers, &serversMutex, &orphanServers, &log, packId, packName, ok, error]() {
+					std::lock_guard<std::mutex> lock(serversMutex);
+					ServerState& state = servers.at(packId);
+					if (ok) {
+						state = ServerState{}; // re-read from disk (now empty) next time it's shown
+						orphanServers.erase(packId);
+						Toasts::Push(Toasts::Kind::Success, "Server deleted", packName + "'s server files were removed.");
+					} else {
+						state.busy = false;
+						state.deleting = false;
+						state.error = error;
+						log << "Delete server " << packId << " failed: " << error << "\n";
+						Toasts::Push(Toasts::Kind::Error, "Couldn't delete the server", error);
+					}
+				});
+			});
+		};
+		std::string deleteServerPackId; // server whose "Delete server" confirmation is open
+
+		// Docker (docker-minecraft-server). Checked on a worker each time the Servers page
+		// opens: "docker version" fails when Docker is missing or its engine isn't running.
+		enum class DockerState { Unknown, Checking, Missing, Stopped, Ready };
+		DockerState dockerState = DockerState::Unknown;
+		auto checkDocker = [&]() {
+			if (dockerState == DockerState::Checking)
+				return;
+			dockerState = DockerState::Checking;
+			StartWorker(workers, [&uiQueue, &dockerState, &shuttingDown]() {
+				std::error_code ec;
+				const fs::path logFile = fs::absolute(fs::path(kServersRoot) / "docker-check.log", ec);
+				fs::create_directories(logFile.parent_path(), ec);
+				int exitCode = -1;
+				std::string error;
+				const bool started = RunProcess({ "docker", "version", "--format", "{{.Server.Version}}" }, fs::current_path(ec),
+					logFile, true, &exitCode, &error, &shuttingDown);
+				const DockerState state = !started ? DockerState::Missing : exitCode == 0 ? DockerState::Ready : DockerState::Stopped;
+				uiQueue.Post([&dockerState, state]() { dockerState = state; });
+			});
+		};
+
+		// Writes the server's docker-compose.yml, then runs "docker compose <args>" in its folder.
+		auto startDockerCompose = [&](const std::string& packId, const std::vector<std::string>& args, const std::string& doneMessage) {
+			ServerState& state = servers[packId];
+			const fs::path dir = fs::absolute(fs::path(kServersRoot) / packId);
+			std::string error;
+			if (!WriteDockerCompose(dir, packId, state.info, state.memoryMb, &error)) {
+				state.dockerFailed = true;
+				state.dockerMessage = error;
+				return;
+			}
+			state.dockerBusy = true;
+			state.dockerFailed = false;
+			std::vector<std::string> command = { "docker" };
+			command.insert(command.end(), args.begin(), args.end());
+			state.dockerMessage = "Running";
+			for (const std::string& arg : command)
+				state.dockerMessage += " " + arg;
+			state.dockerMessage += "...";
+			log << "Docker for " << packId << ": " << state.dockerMessage << "\n";
+			StartWorker(workers, [&uiQueue, &servers, &log, &shuttingDown, packId, dir, command, doneMessage]() {
+				int exitCode = -1;
+				std::string error;
+				const fs::path logFile = dir / "logs" / "docker.log";
+				std::error_code ec;
+				fs::create_directories(logFile.parent_path(), ec);
+				const bool ok = RunProcess(command, dir, logFile, true, &exitCode, &error, &shuttingDown, false) && exitCode == 0;
+				if (error.empty() && !ok)
+					error = "Docker exited with code " + std::to_string(exitCode) + ". See " + logFile.string();
+				uiQueue.Post([&servers, &log, packId, ok, error, doneMessage]() {
+					ServerState& state = servers[packId];
+					state.dockerBusy = false;
+					state.dockerFailed = !ok;
+					state.dockerMessage = ok ? doneMessage : error;
+					log << "Docker for " << packId << (ok ? ": done" : " failed: " + error) << "\n";
+				});
+			});
+		};
+
+		// Extracted .mrpacks and whole-pack installs can both be hosted (see ServerSetup.h).
 		auto canHostServer = [](const Modpack& pack) {
-			return !GetSourceCapabilities(pack.source).installsPacks;
+			return CanCreateServer(fs::path("installs") / pack.id);
 		};
 		// The pack's game folder: instances/<id>/ for .mrpack packs, or the folder an install
 		// plan filled, installs/<id>/minecraft/.
@@ -1031,6 +1179,47 @@ int main(int argc, char** argv)
 			});
 		};
 
+		auto startFetchDescription = [&](const Modpack& pack) {
+			descriptionsLoading.insert(pack.id);
+			descriptionErrors.erase(pack.id);
+			StartWorker(workers, [&http, &uiQueue, &shuttingDown, &packDescriptions, &descriptionsLoading, &descriptionErrors, &log, pack]() {
+				std::string text, error;
+				const bool ok = FetchPackDescription(http, pack, text, &error, &shuttingDown);
+				uiQueue.Post([&packDescriptions, &descriptionsLoading, &descriptionErrors, &log, packId = pack.id, ok, text, error]() {
+					descriptionsLoading.erase(packId);
+					if (ok) {
+						packDescriptions[packId] = text;
+					} else {
+						log << "Description for " << packId << " failed: " << error << "\n";
+						descriptionErrors[packId] = error;
+					}
+				});
+			});
+		};
+
+		auto startFetchMods = [&](const Modpack& pack) {
+			const std::string key = modsKey(pack);
+			modsLoading.insert(key);
+			modsErrors.erase(key);
+			// CurseForge reads the pack zip's manifest; it lands where the install looks for it.
+			const std::string workDir = (fs::path("downloads") / pack.id).string();
+			StartWorker(workers, [&http, &uiQueue, &shuttingDown, &packMods, &modsLoading, &modsErrors, &log, pack, key, workDir]() {
+				PackModList list;
+				std::string error;
+				const bool ok = FetchPackMods(http, pack, workDir, list, &error, &shuttingDown);
+				uiQueue.Post([&packMods, &modsLoading, &modsErrors, &log, key, packId = pack.id, ok, list, error]() {
+					modsLoading.erase(key);
+					if (ok) {
+						log << "Mod list for " << packId << ": " << list.mods.size() << " mod(s)\n";
+						packMods[key] = list;
+					} else {
+						log << "Mod list for " << packId << " failed: " << error << "\n";
+						modsErrors[key] = error;
+					}
+				});
+			});
+		};
+
 		// Installs a whole pack (sources whose capabilities say installsPacks): builds the
 		// source's install plan, runs it into installs/<pack id>/, then adds the pack to My Library.
 		auto startPlanInstall = [&](const Modpack& pack) {
@@ -1150,8 +1339,7 @@ int main(int argc, char** argv)
 		// folder, if any, is kept. The deleting runs on a worker so big packs don't stall the UI.
 		auto uninstallPack = [&](const Modpack& pack) {
 			// The id names folders that get deleted, so it must be one plain path segment.
-			if (pack.id.empty() || pack.id == "." || pack.id == ".." ||
-				pack.id.find_first_of("/\\:") != std::string::npos) {
+			if (!IsPlainFolderName(pack.id)) {
 				log << "Refusing to uninstall pack with id \"" << pack.id << "\"\n";
 				Toasts::Push(Toasts::Kind::Error, "Couldn't uninstall " + pack.name, "Its id isn't a valid folder name.");
 				return;
@@ -1200,6 +1388,7 @@ int main(int argc, char** argv)
 			});
 		};
 		std::string uninstallPackId; // pack whose "Uninstall" confirmation is open
+		bool uninstallDeleteServer = false; // its "Also delete its server" checkbox
 		std::string launchSettingsPackId; // pack whose "Launch settings" dialog is open
 
 		// The optional-mods picker shown before installing a pack that has some (ATLauncher).
@@ -1503,6 +1692,12 @@ int main(int argc, char** argv)
 			if (pageKey != shownPageKey) {
 				shownPageKey = pageKey;
 				pageShownAt = ImGui::GetTime();
+				if (page == Page::Servers) {
+					refreshOrphanServers();
+					lanAddress = Platform::LocalNetworkAddress();
+					hostAddresses = Platform::LocalNetworkAddresses();
+					checkDocker();
+				}
 			}
 			Widgets::BeginEntrance(pageShownAt);
 			const char* breadcrumb = page == Page::Discover ? "MINECRAFT  /  MODPACKS"
@@ -1960,7 +2155,8 @@ int main(int argc, char** argv)
 							ImGui::TextDisabled("%s", FormatFileSize(file.size).c_str());
 
 							if (!hasState || (!state.active && state.outPath.empty())) {
-								const char* label = hasState ? "Retry" : "Download";
+								// One step: download, then extract into installs/<pack id>/ right away.
+								const char* label = hasState ? "Retry" : "Install";
 								AlignRightForButton(label);
 								if (ImGui::Button(label)) {
 									DownloadState started;
@@ -1976,7 +2172,7 @@ int main(int argc, char** argv)
 									const fs::path packDownloadDir = fs::path("downloads") / pack.id;
 									const std::string outputPath = (packDownloadDir / file.name).string();
 									StartWorker(workers, [&http, &downloads, &downloadsMutex, &shuttingDown, &uiQueue, &saveDownloads,
-										url, packDownloadDir, outputPath, packName = pack.name]() {
+										&startInstall, url, packDownloadDir, outputPath, pack]() {
 										std::string error;
 										std::error_code dirError;
 										fs::create_directories(packDownloadDir, dirError);
@@ -1991,21 +2187,23 @@ int main(int argc, char** argv)
 											std::lock_guard<std::mutex> lock(downloadsMutex);
 											DownloadState& current = downloads[url];
 											current.active = false;
-											if (ok)
+											if (ok) {
 												current.outPath = outputPath;
-											else
+												current.installing = !shuttingDown.load(); // extraction starts next frame
+											} else {
 												current.error = error;
+											}
 										}
 										if (ok)
 											uiQueue.Post([&saveDownloads]() { saveDownloads(); });
-										if (!shuttingDown.load()) {
-											uiQueue.Post([ok, packName, error]() {
-												if (ok)
-													Toasts::Push(Toasts::Kind::Success, "Download complete", packName + " is ready to install.");
-												else
-													Toasts::Push(Toasts::Kind::Error, "Download failed", packName + ": " + error);
+										if (shuttingDown.load())
+											return; // the file stays downloaded; Install files on Downloads extracts it later
+										if (ok)
+											uiQueue.Post([&startInstall, url, pack, outputPath]() { startInstall(url, pack, outputPath); });
+										else
+											uiQueue.Post([packName = pack.name, error]() {
+												Toasts::Push(Toasts::Kind::Error, "Download failed", packName + ": " + error);
 											});
-										}
 									});
 								}
 								if (hasState && !state.error.empty())
@@ -2024,12 +2222,13 @@ int main(int argc, char** argv)
 								ImGui::AlignTextToFramePadding();
 								ImGui::TextDisabled("Extracting");
 							} else if (state.installed) {
-								AlignRightForButton("Extracted");
+								AlignRightForButton("Installed");
 								ImGui::AlignTextToFramePadding();
-								ImGui::TextColored(Theme::C().accent, "Extracted");
+								ImGui::TextColored(Theme::C().accent, "Installed");
 							} else if (!state.outPath.empty()) {
-								AlignRightForButton("Install files");
-								if (ImGui::Button("Install files"))
+								// Downloaded earlier but not extracted (an older session, or extraction failed).
+								AlignRightForButton("Install");
+								if (ImGui::Button("Install"))
 									startInstall(file.url, pack, state.outPath);
 							}
 
@@ -2065,9 +2264,117 @@ int main(int argc, char** argv)
 					ImGui::PopFont();
 					if (libraryPack == libraryPacks.end())
 						ImGui::TextDisabled(GetSourceCapabilities(pack.source).installsPacks
-							? "Install the pack to play it." : "Download and install the pack's files to play it.");
+							? "Install the pack to play it." : "Install the pack's file to play it.");
 					else
 						ImGui::TextDisabled("Progress and errors appear in My Library.");
+
+					// What's in the pack.
+					ImGui::Dummy(ImVec2(0.0f, S(10.0f)));
+					if (online && ImGui::BeginTabBar("pack_tabs")) {
+						if (ImGui::BeginTabItem("Description")) {
+							const auto description = packDescriptions.find(pack.id);
+							const auto descriptionError = descriptionErrors.find(pack.id);
+							const bool loadingDescription = descriptionsLoading.count(pack.id) > 0;
+							if (description == packDescriptions.end() && !loadingDescription && descriptionError == descriptionErrors.end())
+								startFetchDescription(pack);
+							if (loadingDescription) {
+								Widgets::Spinner(Theme::C().accent);
+								ImGui::SameLine();
+								ImGui::TextDisabled("Loading description...");
+							} else if (descriptionError != descriptionErrors.end()) {
+								Widgets::WrappedText(Theme::C().error, ("Couldn't load the description: " + descriptionError->second).c_str());
+								if (ImGui::Button("Retry##description"))
+									startFetchDescription(pack);
+							} else if (description != packDescriptions.end()) {
+								ImGui::PushFont(nullptr, Theme::kFontBody + 1.0f);
+								ImGui::PushTextWrapPos(0.0f);
+								ImGui::TextUnformatted(description->second.empty() ? "This pack has no description."
+									: description->second.c_str());
+								ImGui::PopTextWrapPos();
+								ImGui::PopFont();
+							}
+							ImGui::EndTabItem();
+						}
+						const std::string key = modsKey(pack);
+						const auto list = packMods.find(key);
+						const std::string modsTab = list != packMods.end() && !list->second.mods.empty()
+							? "Mods (" + std::to_string(list->second.mods.size()) + ")###mods" : std::string("Mods###mods");
+						if (ImGui::BeginTabItem(modsTab.c_str())) {
+							const bool loadingMods = modsLoading.count(key) > 0;
+							const auto modsError = modsErrors.find(key);
+							// CurseForge only lists mods in the pack zip, so it waits for a click.
+							const bool needsClick = pack.source == PackSource::CurseForge;
+							if (pack.filesLoaded && !loadingMods && list == packMods.end() && modsError == modsErrors.end() &&
+								!needsClick && !pack.sourceVersionId.empty())
+								startFetchMods(pack);
+							if (!pack.filesLoaded || loadingMods) {
+								Widgets::Spinner(Theme::C().accent);
+								ImGui::SameLine();
+								ImGui::TextDisabled(!pack.filesLoaded ? "Loading the pack's version..."
+									: needsClick ? "Downloading the pack's manifest..." : "Loading mod list...");
+							} else if (modsError != modsErrors.end()) {
+								Widgets::WrappedText(Theme::C().error, ("Couldn't load the mod list: " + modsError->second).c_str());
+								if (ImGui::Button("Retry##mods"))
+									startFetchMods(pack);
+							} else if (list == packMods.end()) {
+								ImGui::TextDisabled("CurseForge lists a pack's mods in its archive.");
+								if (ImGui::Button("Load mod list"))
+									startFetchMods(pack);
+								ImGui::SetItemTooltip("Downloads the pack's archive to read its manifest. Installing reuses it.");
+							} else {
+								const PackModList& mods = list->second;
+								if (!mods.note.empty())
+									ImGui::TextDisabled("%s", mods.note.c_str());
+								if (mods.mods.empty()) {
+									if (mods.note.empty())
+										ImGui::TextDisabled("This version doesn't list any mods.");
+								} else {
+									ImGui::SetNextItemWidth(-FLT_MIN);
+									ImGui::InputTextWithHint("##mods_filter", "Filter mods...", &modsFilter);
+									const std::string filter = ToLower(modsFilter);
+									int shown = 0;
+									for (std::size_t i = 0; i < mods.mods.size(); ++i) {
+										const PackMod& mod = mods.mods[i];
+										if (!filter.empty() && !ContainsIgnoreCase(mod.name, filter) && !ContainsIgnoreCase(mod.summary, filter))
+											continue;
+										++shown;
+										ImGui::PushID(static_cast<int>(i));
+										ImGui::PushFont(fonts.bold, 0.0f);
+										if (!mod.url.empty())
+											ImGui::TextLinkOpenURL(mod.name.c_str(), mod.url.c_str());
+										else
+											ImGui::TextUnformatted(mod.name.c_str());
+										ImGui::PopFont();
+										if (!mod.version.empty() && mod.version != mod.name) {
+											ImGui::SameLine();
+											ImGui::TextDisabled("%s", mod.version.c_str());
+										}
+										auto tag = [&](const char* text, const ImVec4& tint) {
+											ImGui::SameLine();
+											Widgets::Chip(text, tint);
+										};
+										if (mod.clientOnly)
+											tag("Client only", Theme::C().info);
+										if (mod.serverOnly)
+											tag("Server only", Theme::C().info);
+										if (mod.optional)
+											tag("Optional", Theme::C().textDim);
+										if (!mod.summary.empty()) {
+											ImGui::PushStyleColor(ImGuiCol_Text, Theme::C().textDim);
+											ImGui::TextWrapped("%s", mod.summary.c_str());
+											ImGui::PopStyleColor();
+										}
+										ImGui::Dummy(ImVec2(0.0f, S(2.0f)));
+										ImGui::PopID();
+									}
+									if (shown == 0)
+										ImGui::TextDisabled("No mods match the filter.");
+								}
+							}
+							ImGui::EndTabItem();
+						}
+						ImGui::EndTabBar();
+					}
 				} else if (searchingNames.empty()) {
 					ImGui::TextDisabled("No modpacks match your search.");
 				}
@@ -2099,6 +2406,8 @@ int main(int argc, char** argv)
 					if (!pack.loaders.empty())
 						details += "  \xC2\xB7  " + pack.loaders;
 					ImGui::TextDisabled("%s", details.c_str());
+					if (!pack.description.empty())
+						Widgets::WrappedText(Theme::C().textDim, ShortenText(pack.description, 160).c_str());
 					if (play.playing) {
 						ImGui::TextColored(Theme::C().accent, "Minecraft is running");
 					} else if (play.busy) {
@@ -2130,8 +2439,8 @@ int main(int argc, char** argv)
 						if (ImGui::Button("Cancel"))
 							play.cancel->store(true);
 					} else {
-						AlignRightForButtons(hostable ? std::initializer_list<const char*>{ "Server", "Open folder", "Manage", "  PLAY  " }
-							: std::initializer_list<const char*>{ "Open folder", "Manage", "  PLAY  " });
+						AlignRightForButtons(hostable ? std::vector<const char*>{ "Server", "Open folder", "Manage", "  PLAY  " }
+							: std::vector<const char*>{ "Open folder", "Manage", "  PLAY  " });
 						if (hostable) {
 							if (ImGui::Button("Server")) {
 								serverPackId = pack.id;
@@ -2163,8 +2472,10 @@ int main(int argc, char** argv)
 								startRepair(pack);
 							ImGui::SetItemTooltip("Re-check every pack file and re-download damaged or missing ones");
 							ImGui::Separator();
-							if (ImGui::MenuItem("Uninstall..."))
+							if (ImGui::MenuItem("Uninstall...")) {
 								uninstallPackId = pack.id;
+								uninstallDeleteServer = false;
+							}
 							ImGui::PopFont();
 							ImGui::EndPopup();
 						}
@@ -2199,18 +2510,28 @@ int main(int argc, char** argv)
 					server.running = running;
 				}
 
-				if (libraryPacks.empty()) {
+				// Library packs, plus servers whose pack was uninstalled.
+				std::map<std::string, const Modpack*> serverPacks;
+				for (const auto& [packId, pack] : libraryPacks)
+					serverPacks[packId] = &pack;
+				for (const auto& [packId, pack] : orphanServers) {
+					if (!serverPacks.count(packId))
+						serverPacks[packId] = &pack;
+				}
+				if (serverPacks.empty()) {
 					if (Widgets::EmptyState("No servers yet",
 							"Install a modpack first. Then you can turn it into a server for your friends here.", "Browse modpacks"))
 						page = Page::Discover;
 				} else {
-					if (!libraryPacks.count(serverPackId))
-						serverPackId = libraryPacks.begin()->first;
+					if (!serverPacks.count(serverPackId))
+						serverPackId = serverPacks.begin()->first;
 
 					// Server list: every library pack, with its server status.
 					ImGui::BeginChild("server_list", ImVec2(S(320.0f), 0.0f), ImGuiChildFlags_Borders);
 					Widgets::SectionLabel("YOUR PACKS");
-					for (const auto& [packId, pack] : libraryPacks) {
+					for (const auto& [packId, packPtr] : serverPacks) {
+						const Modpack& pack = *packPtr;
+						const bool inLibrary = libraryPacks.count(packId) > 0;
 						const fs::path dir = fs::path(kServersRoot) / packId;
 						ServerState* serverEntry;
 						{
@@ -2233,9 +2554,10 @@ int main(int argc, char** argv)
 						}
 						const char* tag = server.running ? "Running" : busy ? "Setting up" : server.ready ? "Ready" : nullptr;
 						const ImVec4 tagColor = server.running ? Theme::C().accent : busy ? Theme::C().info : Theme::C().textDim;
-						const std::string meta = CanCreateServer(fs::path("installs") / packId)
+						const std::string meta = !inLibrary ? "Pack uninstalled"
+							: CanCreateServer(fs::path("installs") / packId)
 							? (server.ready ? server.info.loader + " " + server.info.minecraftVersion : "No server yet")
-							: std::string(PackSourceName(pack.source)) + " packs can't host yet";
+							: "Pack files are missing";
 						ImGui::PushID(packId.c_str());
 						if (Widgets::PackRow(pack, images, packId == serverPackId, meta, tag, tagColor))
 							serverPackId = packId;
@@ -2246,7 +2568,7 @@ int main(int argc, char** argv)
 
 					// Details for the selected pack's server.
 					ImGui::BeginChild("server_details", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders);
-					const Modpack& pack = libraryPacks.at(serverPackId);
+					const Modpack& pack = *serverPacks.at(serverPackId);
 					ServerState* serverEntry;
 					{
 						std::lock_guard<std::mutex> lock(serversMutex);
@@ -2254,13 +2576,19 @@ int main(int argc, char** argv)
 					}
 					ServerState& server = *serverEntry;
 					const fs::path serverDir = fs::path(kServersRoot) / serverPackId;
-					const bool supported = CanCreateServer(fs::path("installs") / serverPackId);
-					bool busy;
+					const bool inLibrary = libraryPacks.count(serverPackId) > 0;
+					// supported: the pack can be (re)built into a server. A finished server can still
+					// be run and configured after its pack was uninstalled.
+					const bool supported = inLibrary && CanCreateServer(fs::path("installs") / serverPackId);
+					std::error_code serverDirError;
+					const bool hasServerDir = fs::is_directory(serverDir, serverDirError);
+					bool busy, deleting;
 					std::string step, setupError;
 					double progress;
 					{
 						std::lock_guard<std::mutex> lock(serversMutex);
 						busy = server.busy;
+						deleting = server.deleting;
 						step = server.step;
 						progress = server.progress;
 						setupError = server.error;
@@ -2282,9 +2610,26 @@ int main(int argc, char** argv)
 					ImGui::EndGroup();
 					ImGui::Spacing();
 
-					if (!supported) {
-						Widgets::WrappedText(Theme::C().textDim, (std::string("One-click servers work with Modrinth packs for now. ") +
-							PackSourceName(pack.source) + " packs aren't supported yet.").c_str());
+					if (!supported && !server.ready) {
+						Widgets::WrappedText(Theme::C().textDim, !inLibrary
+							? "This server's pack was uninstalled, and its server files are incomplete."
+							: "This pack's files are missing or incomplete, so it can't be turned into a server. "
+								"Repair or reinstall it from My Library.");
+						if (hasServerDir) {
+							ImGui::Spacing();
+							ImGui::BeginDisabled(busy);
+							if (ImGui::Button("Delete server..."))
+								deleteServerPackId = serverPackId;
+							ImGui::EndDisabled();
+							if (busy) {
+								ImGui::SameLine();
+								Widgets::Spinner(Theme::C().accent);
+								ImGui::SameLine();
+								ImGui::TextDisabled("%s", step.c_str());
+							}
+							if (!setupError.empty())
+								Widgets::WrappedText(Theme::C().error, setupError.c_str());
+						}
 					} else {
 						// 1. Server files.
 						BeginCard("server_files");
@@ -2293,40 +2638,63 @@ int main(int argc, char** argv)
 							Widgets::Spinner(Theme::C().accent);
 							ImGui::SameLine();
 							ImGui::TextDisabled("%s", step.c_str());
-							AlignRightForButton("Cancel");
-							if (ImGui::Button("Cancel##setup")) {
-								std::lock_guard<std::mutex> lock(serversMutex);
-								server.cancel->store(true);
+							if (!deleting) {
+								AlignRightForButton("Cancel");
+								if (ImGui::Button("Cancel##setup")) {
+									std::lock_guard<std::mutex> lock(serversMutex);
+									server.cancel->store(true);
+								}
 							}
 							if (progress >= 0.0)
 								Widgets::ThinProgressBar(static_cast<float>(progress));
 						} else {
 							const char* label = server.ready ? "Update server files" : "Create server files";
+							std::vector<const char*> buttons;
+							if (hasServerDir) {
+								buttons.push_back("Open folder");
+								buttons.push_back("Delete...");
+							}
+							if (supported)
+								buttons.push_back(label);
 							// Wrap the description short of the buttons on its right.
-							float buttonsWidth = ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 2.0f;
-							if (server.ready)
-								buttonsWidth += ImGui::CalcTextSize("Open folder").x + ImGui::GetStyle().FramePadding.x * 2.0f +
+							float buttonsWidth = 0.0f;
+							for (const char* button : buttons)
+								buttonsWidth += ImGui::CalcTextSize(button).x + ImGui::GetStyle().FramePadding.x * 2.0f +
 									ImGui::GetStyle().ItemSpacing.x;
 							ImGui::AlignTextToFramePadding();
 							ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - buttonsWidth - S(16.0f));
-							ImGui::TextDisabled(server.ready ? "Installed in servers/%s" : "Downloads the pack's server mods, its loader's server and Java.",
-								serverPackId.c_str());
+							if (!inLibrary)
+								ImGui::TextDisabled("Installed in servers/%s. Its pack was uninstalled, so it can't be updated.", serverPackId.c_str());
+							else
+								ImGui::TextDisabled(server.ready ? "Installed in servers/%s" : "Downloads the pack's server mods, its loader's server and Java.",
+									serverPackId.c_str());
 							ImGui::PopTextWrapPos();
-							AlignRightForButtons(server.ready ? std::initializer_list<const char*>{ "Open folder", label }
-								: std::initializer_list<const char*>{ label });
-							if (server.ready) {
+							AlignRightForButtons(buttons);
+							if (hasServerDir) {
 								if (ImGui::Button("Open folder##server"))
 									Platform::OpenFolder(serverDir.string());
 								ImGui::SameLine();
+								ImGui::BeginDisabled(server.running);
+								if (ImGui::Button("Delete..."))
+									deleteServerPackId = serverPackId;
+								ImGui::EndDisabled();
+								ImGui::SetItemTooltip(server.running ? "Stop the server first"
+									: "Delete this server's files, world included");
+								if (supported)
+									ImGui::SameLine();
 							}
-							ImGui::BeginDisabled(server.running);
-							if (ImGui::Button(label))
-								startServerSetup(pack);
-							ImGui::EndDisabled();
-							if (server.running)
-								ImGui::SetItemTooltip("Stop the server first");
+							if (supported) {
+								ImGui::BeginDisabled(server.running);
+								if (ImGui::Button(label))
+									startServerSetup(pack);
+								ImGui::EndDisabled();
+								if (server.running)
+									ImGui::SetItemTooltip("Stop the server first");
+							}
 							if (!setupError.empty())
 								Widgets::WrappedText(Theme::C().error, setupError.c_str());
+							for (const std::string& note : server.info.notes)
+								Widgets::WrappedText(Theme::C().textDim, ("Note: " + note).c_str());
 						}
 						EndCard();
 						ImGui::Spacing();
@@ -2349,6 +2717,64 @@ int main(int argc, char** argv)
 						if (ImGui::InputInt("##port", &props.port, 0)) {
 							props.port = std::clamp(props.port, 1024, 65535);
 							propsChanged = true;
+						}
+						label("Host IP");
+						{
+							auto adapterOf = [&](const std::string& address) -> const Platform::NetworkAddress* {
+								for (const Platform::NetworkAddress& item : hostAddresses) {
+									if (item.address == address)
+										return &item;
+								}
+								return nullptr;
+							};
+							const Platform::NetworkAddress* current = adapterOf(props.serverIp);
+							const bool custom = server.hostIpCustom || (!props.serverIp.empty() && !current);
+							std::string preview = custom ? "Custom address" : props.serverIp.empty() ? "All network adapters"
+								: props.serverIp + "  (" + current->adapter + ")";
+							if (ImGui::BeginCombo("##host_ip", preview.c_str())) {
+								if (Widgets::ListItem("All network adapters", !custom && props.serverIp.empty())) {
+									server.hostIpCustom = false;
+									props.serverIp.clear();
+									propsChanged = true;
+								}
+								for (const Platform::NetworkAddress& item : hostAddresses) {
+									const std::string text = item.address + "  (" + item.adapter + ")";
+									if (Widgets::ListItem(text.c_str(), !custom && props.serverIp == item.address)) {
+										server.hostIpCustom = false;
+										props.serverIp = item.address;
+										propsChanged = true;
+									}
+								}
+								if (Widgets::ListItem("Custom address...", custom)) {
+									server.hostIpCustom = true;
+									server.hostIpEdit = props.serverIp;
+								}
+								ImGui::EndCombo();
+							}
+							ImGui::SetItemTooltip("The address the server listens on. Pick one adapter, such as a VPN like "
+								"Tailscale or ZeroTier, to accept players only through it.");
+							if (custom) {
+								if (!server.hostIpCustom) {
+									server.hostIpCustom = true;
+									server.hostIpEdit = props.serverIp;
+								}
+								ImGui::Dummy(ImVec2(0.0f, 0.0f));
+								ImGui::SameLine(labelWidth);
+								ImGui::SetNextItemWidth(-FLT_MIN);
+								if (ImGui::InputTextWithHint("##host_ip_custom", "e.g. 192.168.1.20", &server.hostIpEdit) &&
+									IsValidServerIp(server.hostIpEdit) && server.hostIpEdit != props.serverIp) {
+									props.serverIp = server.hostIpEdit;
+									propsChanged = true;
+								}
+								ImGui::Dummy(ImVec2(0.0f, 0.0f));
+								ImGui::SameLine(labelWidth);
+								if (!IsValidServerIp(server.hostIpEdit))
+									ImGui::TextColored(Theme::C().error, "Enter an IPv4 address like 192.168.1.20, or leave it empty.");
+								else if (!props.serverIp.empty() && !adapterOf(props.serverIp) && props.serverIp != "127.0.0.1")
+									ImGui::TextColored(Theme::C().error, "No adapter on this PC has this address, so the server won't start.");
+								else
+									ImGui::TextDisabled("Empty listens on every adapter.");
+							}
 						}
 						label("Max players");
 						propsChanged |= ImGui::SliderInt("##players", &props.maxPlayers, 1, 100);
@@ -2401,7 +2827,79 @@ int main(int argc, char** argv)
 						EndCard();
 						ImGui::Spacing();
 
-						// 3. Run.
+						// 3. Mods: turn single mods off, e.g. one that crashes the server.
+						if (!server.modsLoaded) {
+							server.mods = ListServerMods(serverDir);
+							server.modsLoaded = true;
+						}
+						if (!server.mods.empty()) {
+							BeginCard("server_mods");
+							Widgets::SectionLabel("MODS");
+							const auto disabledCount = std::count_if(server.mods.begin(), server.mods.end(),
+								[](const ServerMod& mod) { return !mod.enabled; });
+							ImGui::AlignTextToFramePadding();
+							ImGui::TextDisabled("%zu mods, %lld turned off. Mods you turn off stay off when the server files are updated.",
+								server.mods.size(), static_cast<long long>(disabledCount));
+							AlignRightForButton("Refresh");
+							if (ImGui::Button("Refresh##mods")) {
+								server.modsLoaded = false;
+								server.modError.clear();
+							}
+							ImGui::SetItemTooltip("Re-read the server's mods folder");
+							ImGui::SetNextItemWidth(-FLT_MIN);
+							ImGui::InputTextWithHint("##mod_filter", "Filter mods...", &server.modFilter);
+							const std::string filter = ToLower(server.modFilter);
+							std::vector<std::size_t> shown;
+							for (std::size_t i = 0; i < server.mods.size(); ++i) {
+								if (filter.empty() || ContainsIgnoreCase(server.mods[i].fileName, filter))
+									shown.push_back(i);
+							}
+							const float rowHeight = ImGui::GetFrameHeightWithSpacing();
+							const float listHeight = std::min(S(280.0f),
+								rowHeight * static_cast<float>(std::max<std::size_t>(shown.size(), 1)) + ImGui::GetStyle().WindowPadding.y * 2.0f);
+							ImGui::BeginChild("server_mod_list", ImVec2(0.0f, listHeight), ImGuiChildFlags_Borders);
+							ImGui::BeginDisabled(server.running || busy);
+							ImGuiListClipper clipper;
+							clipper.Begin(static_cast<int>(shown.size()), rowHeight);
+							while (clipper.Step()) {
+								for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row) {
+									ServerMod& mod = server.mods[shown[static_cast<std::size_t>(row)]];
+									ImGui::PushID(mod.fileName.c_str());
+									bool on = mod.enabled;
+									if (Widgets::Toggle("##mod_on", &on)) {
+										std::string error;
+										if (SetServerModEnabled(serverDir, mod.fileName, on, &error)) {
+											mod.enabled = on;
+											server.modError.clear();
+											log << "Server " << serverPackId << ": " << (on ? "enabled " : "disabled ") << mod.fileName << "\n";
+										} else {
+											server.modError = error;
+										}
+									}
+									ImGui::SameLine(0.0f, S(10.0f));
+									ImGui::AlignTextToFramePadding();
+									if (mod.enabled)
+										ImGui::TextUnformatted(mod.fileName.c_str());
+									else
+										ImGui::TextDisabled("%s", mod.fileName.c_str());
+									ImGui::SameLine();
+									ImGui::TextDisabled("%s", FormatFileSize(mod.size).c_str());
+									ImGui::PopID();
+								}
+							}
+							if (shown.empty())
+								ImGui::TextDisabled("No mods match the filter.");
+							ImGui::EndDisabled();
+							ImGui::EndChild();
+							if (server.running)
+								ImGui::TextDisabled("Stop the server to turn mods on or off.");
+							if (!server.modError.empty())
+								Widgets::WrappedText(Theme::C().error, server.modError.c_str());
+							EndCard();
+							ImGui::Spacing();
+						}
+
+						// 4. Run.
 						BeginCard("server_run");
 						Widgets::SectionLabel("RUN");
 						bool eula = server.eula;
@@ -2465,14 +2963,19 @@ int main(int argc, char** argv)
 						}
 						// Where players join.
 						ImGui::Spacing();
+						// A server bound to one address only answers there, so show that one.
+						const std::string& boundIp = server.props.serverIp;
+						const bool loopbackOnly = boundIp.rfind("127.", 0) == 0;
 						ImGui::TextDisabled("Join from this PC:");
 						ImGui::SameLine();
-						const std::string localAddress = "localhost:" + std::to_string(server.props.port);
+						const std::string localAddress = (boundIp.empty() ? std::string("localhost") : boundIp) + ":" +
+							std::to_string(server.props.port);
 						ImGui::TextUnformatted(localAddress.c_str());
-						if (!lanAddress.empty()) {
+						const std::string networkIp = boundIp.empty() ? lanAddress : loopbackOnly ? std::string() : boundIp;
+						if (!networkIp.empty()) {
 							ImGui::TextDisabled("Friends on your network:");
 							ImGui::SameLine();
-							const std::string address = lanAddress + ":" + std::to_string(server.props.port);
+							const std::string address = networkIp + ":" + std::to_string(server.props.port);
 							ImGui::TextUnformatted(address.c_str());
 							ImGui::SameLine();
 							if (ImGui::SmallButton("Copy"))
@@ -2481,7 +2984,67 @@ int main(int argc, char** argv)
 						ImGui::TextDisabled("Friends over the internet need port %d forwarded on your router to this PC.", server.props.port);
 						EndCard();
 
-						// 4. Console.
+						// 5. Docker.
+						ImGui::Spacing();
+						BeginCard("server_docker");
+						Widgets::SectionLabel("DOCKER");
+						ImGui::PushStyleColor(ImGuiCol_Text, Theme::C().textDim);
+						ImGui::TextWrapped("Run this server in a container with docker-minecraft-server (itzg/minecraft-server). "
+							"It uses this same folder and world, so don't also start it above.");
+						ImGui::PopStyleColor();
+						const bool dockerReady = dockerState == DockerState::Ready;
+						const bool hostIpSet = !server.props.serverIp.empty();
+						ImGui::BeginDisabled(!server.ready || server.dockerBusy || hostIpSet);
+						if (ImGui::Button("Write compose file")) {
+							std::string error;
+							server.dockerFailed = !WriteDockerCompose(serverDir, serverPackId, server.info, server.memoryMb, &error);
+							server.dockerMessage = server.dockerFailed ? error : "Wrote " + (serverDir / "docker-compose.yml").string();
+						}
+						ImGui::SetItemTooltip("docker-compose.yml in the server folder, for running it yourself or on another machine");
+						ImGui::SameLine();
+						ImGui::BeginDisabled(!dockerReady || !server.eula || server.running);
+						if (ImGui::Button("Start in Docker"))
+							startDockerCompose(serverPackId, { "compose", "up", "-d" },
+								"Started. Watch it with \"docker compose logs -f\" in the server folder.");
+						ImGui::EndDisabled();
+						if (!server.eula)
+							ImGui::SetItemTooltip("Agree to the Minecraft EULA first");
+						else if (server.running)
+							ImGui::SetItemTooltip("Stop the server above first");
+						ImGui::SameLine();
+						ImGui::BeginDisabled(!dockerReady);
+						if (ImGui::Button("Stop in Docker"))
+							startDockerCompose(serverPackId, { "compose", "down" }, "Stopped. The world was saved.");
+						ImGui::EndDisabled();
+						ImGui::EndDisabled();
+						if (!server.ready)
+							ImGui::TextDisabled("Create the server files first.");
+						else if (hostIpSet)
+							ImGui::TextColored(Theme::C().error, "Set Host IP to \"All network adapters\" to use Docker. Docker publishes the port itself.");
+						if (dockerState == DockerState::Checking || dockerState == DockerState::Unknown) {
+							Widgets::Spinner(Theme::C().accent);
+							ImGui::SameLine();
+							ImGui::TextDisabled("Looking for Docker...");
+						} else if (dockerState == DockerState::Missing) {
+							ImGui::TextDisabled("Docker isn't installed. You can still write the compose file.");
+							ImGui::SameLine();
+							ImGui::TextLinkOpenURL("Get Docker", "https://docs.docker.com/get-started/get-docker/");
+						} else if (dockerState == DockerState::Stopped) {
+							ImGui::TextColored(Theme::C().error, "Docker is installed, but its engine isn't running. Start Docker Desktop.");
+							ImGui::SameLine();
+							if (ImGui::SmallButton("Check again"))
+								checkDocker();
+						}
+						if (server.dockerBusy) {
+							Widgets::Spinner(Theme::C().accent);
+							ImGui::SameLine();
+						}
+						if (!server.dockerMessage.empty()) {
+							Widgets::WrappedText(server.dockerFailed ? Theme::C().error : Theme::C().textDim, server.dockerMessage.c_str());
+						}
+						EndCard();
+
+						// 6. Console.
 						if (server.process) {
 							ImGui::Spacing();
 							Widgets::SectionLabel("CONSOLE");
@@ -2536,7 +3099,7 @@ int main(int argc, char** argv)
 					snapshot.assign(downloads.begin(), downloads.end());
 				}
 				if (snapshot.empty() && Widgets::EmptyState("No downloads yet",
-						"Pick a modpack on Discover and press Download.", "Browse modpacks"))
+						"Pick a modpack on Discover and press Install.", "Browse modpacks"))
 					page = Page::Discover;
 				const float iconSize = S(56.0f);
 				int cardIndex = 0;
@@ -2732,6 +3295,43 @@ int main(int argc, char** argv)
 				}
 			}
 
+			// "Delete server" confirmation.
+			if (!deleteServerPackId.empty()) {
+				ImGui::OpenPopup("Delete server?");
+				ImGui::SetNextWindowSize(ImVec2(S(460.0f), 0.0f));
+				if (ImGui::BeginPopupModal("Delete server?", nullptr, ImGuiWindowFlags_NoResize)) {
+					const auto libraryPack = libraryPacks.find(deleteServerPackId);
+					const std::string name = libraryPack != libraryPacks.end() ? libraryPack->second.name : deleteServerPackId;
+					ImGui::TextWrapped("%s's server will be deleted: its world, configuration, whitelist and logs. "
+						"The pack stays in My Library. This can't be undone.", name.c_str());
+					ImGui::TextDisabled("%s", (fs::path(kServersRoot) / deleteServerPackId).string().c_str());
+					ImGui::Spacing();
+					bool blocked = false;
+					{
+						std::lock_guard<std::mutex> lock(serversMutex);
+						const auto it = servers.find(deleteServerPackId);
+						blocked = it != servers.end() && (it->second.running || it->second.busy);
+					}
+					if (blocked)
+						ImGui::TextColored(Theme::C().error, "Stop the server and wait for setup to finish first.");
+					ImGui::PushStyleColor(ImGuiCol_Button, Theme::Mix(Theme::C().cardBg, Theme::C().error, 0.55f));
+					ImGui::BeginDisabled(blocked);
+					if (ImGui::Button("Delete server")) {
+						startServerDelete(deleteServerPackId, name);
+						deleteServerPackId.clear();
+						ImGui::CloseCurrentPopup();
+					}
+					ImGui::EndDisabled();
+					ImGui::PopStyleColor();
+					ImGui::SameLine();
+					if (ImGui::Button("Keep it##server")) {
+						deleteServerPackId.clear();
+						ImGui::CloseCurrentPopup();
+					}
+					ImGui::EndPopup();
+				}
+			}
+
 			// "Uninstall" confirmation.
 			if (!uninstallPackId.empty()) {
 				const auto it = libraryPacks.find(uninstallPackId);
@@ -2757,14 +3357,32 @@ int main(int argc, char** argv)
 							for (const auto& [key, state] : downloads)
 								busy = busy || (state.pack.id == pack.id && (state.active || state.installing));
 						}
+						const fs::path packServerDir = fs::path(kServersRoot) / pack.id;
+						std::error_code serverDirError;
+						if (fs::is_directory(packServerDir, serverDirError)) {
+							ImGui::Checkbox("Also delete its server", &uninstallDeleteServer);
+							ImGui::SetItemTooltip("Deletes %s, including the server's world. Otherwise the server is kept "
+								"and still listed on the Servers page.", packServerDir.string().c_str());
+							if (uninstallDeleteServer) {
+								std::lock_guard<std::mutex> lock(serversMutex);
+								const auto server = servers.find(pack.id);
+								busy = busy || (server != servers.end() && (server->second.running || server->second.busy));
+							}
+						} else {
+							uninstallDeleteServer = false;
+						}
 						if (busy)
-							ImGui::TextColored(Theme::C().error, "Close the game and wait for downloads or installs of this pack to finish first.");
+							ImGui::TextColored(Theme::C().error, uninstallDeleteServer
+								? "Close the game, stop the server, and wait for downloads, installs and server setup to finish first."
+								: "Close the game and wait for downloads or installs of this pack to finish first.");
 						ImGui::PushStyleColor(ImGuiCol_Button, Theme::Mix(Theme::C().cardBg, Theme::C().error, 0.55f));
 						ImGui::BeginDisabled(busy);
 						if (ImGui::Button("Uninstall")) {
 							if (settings.packLaunch.erase(pack.id) > 0)
 								settingsDirty = true;
 							uninstallPack(pack);
+							if (uninstallDeleteServer)
+								startServerDelete(pack.id, pack.name);
 							uninstallPackId.clear();
 							ImGui::CloseCurrentPopup();
 						}

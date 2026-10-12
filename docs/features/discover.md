@@ -49,16 +49,22 @@ Browse modpacks and start downloads and installs. UI code is the `Page::Discover
 
 | File state | Shown |
 |---|---|
-| Never downloaded | **Download** button |
+| Never installed | **Install** button |
 | Download finished with an error | **Retry** button plus a red "Download failed: ..." message |
 | Downloading | "Downloading" (with a percentage once the total size is known) plus a thin progress bar |
-| Downloaded, not extracted | **Install files** button |
 | Extracting | "Extracting" plus a thin progress bar |
-| Extracted | "Extracted" (green) |
-| Extraction failed | **Install files** again, plus a red "Extraction failed: ..." message |
+| Installed | "Installed" (green) |
+| Downloaded but not extracted (an earlier session, or extraction failed) | **Install** button, which extracts the existing download |
+| Extraction failed | **Install** again, plus a red "Extraction failed: ..." message |
 
-- **Download** and **Retry** start a background download. See [downloads.md](downloads.md).
-- **Install files** extracts the downloaded file into `installs/<pack id>/` (see [installation.md](installation.md)). When extraction succeeds, the pack is added to My Library (see [library.md](library.md)).
-- A large **PLAY** button sits at the bottom. It's enabled when the pack is in My Library and isn't already being prepared or played; clicking it starts playing and switches to My Library. Otherwise it's disabled, with a hint to install the pack's files. See [launching.md](launching.md).
+- **Install** and **Retry** are one step: a background download (see [downloads.md](downloads.md)), then extraction into `installs/<pack id>/` as soon as it finishes (see [installation.md](installation.md)). The worker marks the file as extracting under the same lock that records the finished download, so no intermediate button flashes, then the UI thread starts `startInstall`. When extraction succeeds, the pack is added to My Library (see [library.md](library.md)) with an "Files extracted" toast. Download failures show a toast. If the launcher is closing when a download finishes, the file stays downloaded and can be extracted later from Discover or the Downloads page.
+- A large **PLAY** button sits below the install section. It's enabled when the pack is in My Library and isn't already being prepared or played; clicking it starts playing and switches to My Library. Otherwise it's disabled, with a hint to install the pack's files. See [launching.md](launching.md).
+- Online packs then show a tab bar with **Description** and **Mods** tabs.
+- The **Description** tab shows the pack's full description (`FetchPackDescription`, see [pack-sources.md](pack-sources.md#descriptions)) as wrapped plain text, while the line under the banner stays the source's short summary. It loads in the background the first time it's shown for a pack and is cached by pack id for the session (`packDescriptions`). A failure shows the error and **Retry**. A pack with no text shows "This pack has no description."
+- The **Mods** tab lists the mods in the pack's latest version (`FetchPackMods`, see [pack-sources.md](pack-sources.md#mod-lists)):
+  - It loads in the background the first time the tab is shown for a pack version, once the version lookup has finished. Lists are cached per pack id and version (`packMods`, keyed `<pack id>@<sourceVersionId>`) for the session. CurseForge waits for a **Load mod list** click, because reading its manifest downloads the pack archive (which a later install reuses).
+  - The tab title shows the count once loaded, e.g. **Mods (51)**. A filter box matches names and summaries.
+  - Each mod shows its name (a link to its page when known), its version or file name, **Client only**, **Server only** and **Optional** tags, and a dimmed summary.
+  - Failures show the error and a **Retry** button. The source's note (e.g. "Only mods hosted on Modrinth are listed.") appears above the list.
 
 If nothing is selected, the pane shows "No modpacks match your search."

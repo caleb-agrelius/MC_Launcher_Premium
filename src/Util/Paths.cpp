@@ -7,7 +7,7 @@ namespace fs = std::filesystem;
 // Leave room for names appended later, e.g. ".part".
 static constexpr std::size_t kLongPathThreshold = 240;
 
-fs::path LongPath(const fs::path& path)
+fs::path ExtendedPath(const fs::path& path)
 {
 #ifdef _WIN32
 	const std::wstring& native = path.native();
@@ -15,12 +15,27 @@ fs::path LongPath(const fs::path& path)
 		return path;
 	std::error_code ec;
 	const fs::path absolute = fs::absolute(path, ec).lexically_normal();
-	if (ec || absolute.native().size() < kLongPathThreshold)
+	if (ec)
 		return path;
 	const std::wstring& full = absolute.native();
 	if (full.rfind(L"\\\\", 0) == 0)
 		return fs::path(L"\\\\?\\UNC\\" + full.substr(2)); // \\server\share\...
 	return fs::path(L"\\\\?\\" + full);
+#else
+	return path;
+#endif
+}
+
+fs::path LongPath(const fs::path& path)
+{
+#ifdef _WIN32
+	if (path.native().rfind(L"\\\\?\\", 0) == 0)
+		return path;
+	std::error_code ec;
+	const fs::path absolute = fs::absolute(path, ec).lexically_normal();
+	if (ec || absolute.native().size() < kLongPathThreshold)
+		return path;
+	return ExtendedPath(absolute);
 #else
 	return path;
 #endif

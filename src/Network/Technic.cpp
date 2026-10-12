@@ -275,3 +275,35 @@ bool BuildTechnicPlan(HttpClient& http,
 	plan.maxConcurrent = 4;
 	return true;
 }
+
+bool FetchTechnicPackMods(HttpClient& http,
+						  const Modpack& pack,
+						  std::vector<PackMod>& out,
+						  std::string* err,
+						  const std::atomic<bool>* cancel)
+{
+	out.clear();
+	if (!pack.sourceIsSolder || pack.sourceUrl.empty())
+		return true; // a single zip: the mods are only known once it's unpacked
+	json build;
+	if (!GetJson(http, pack.sourceUrl + "/modpack/" + HttpClient::UrlEncode(pack.sourceId) + "/" +
+			HttpClient::UrlEncode(pack.sourceVersionId) + "?include=mods", build, err, cancel))
+		return false;
+	try {
+		for (const auto& item : build.value("mods", json::array())) {
+			PackMod mod;
+			mod.name = StringOrEmpty(item, "pretty_name");
+			if (mod.name.empty())
+				mod.name = StringOrEmpty(item, "name");
+			mod.version = StringOrEmpty(item, "version");
+			mod.summary = StringOrEmpty(item, "description");
+			mod.url = StringOrEmpty(item, "link");
+			out.push_back(std::move(mod));
+		}
+	}
+	catch (const std::exception& ex) {
+		if (err) *err = std::string("Unexpected Solder build: ") + ex.what();
+		return false;
+	}
+	return true;
+}

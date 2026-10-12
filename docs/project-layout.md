@@ -35,10 +35,11 @@
 | `src/Util/Hash.*`, `src/Util/Sha1.*` | SHA-1 and MD5 |
 | `src/Util/Paths.*` | Long (260+ character) Windows paths |
 | `src/Util/Process.*` | Process launching and interactive server console |
+| `src/Util/Text.*` | Markdown/HTML descriptions to plain text, shortening |
 | `src/assets/` | `minecraft_fox.glb` |
 | `resources/index.json` | Offline fallback pack list |
 | `docs/features/` | Feature documentation, indexed in `CLAUDE.md` |
-| `tests/` | Regression checks and Windows window smoke test |
+| `tests/` | Regression checks, opt-in live API checks (`LiveChecks.cpp`), and Windows window smoke test |
 | `mcdebug.cmd` | Build and run helper (see the [README](../README.md#mcdebug)) |
 
 ## Data folder

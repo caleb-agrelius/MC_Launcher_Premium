@@ -31,6 +31,13 @@ bool FetchTechnicVersion(HttpClient& http,
 						 std::string* err = nullptr,
 						 const std::atomic<bool>* cancel = nullptr);
 
+// A Solder build's mods. Single-zip packs succeed with an empty list.
+bool FetchTechnicPackMods(HttpClient& http,
+						  const Modpack& pack,
+						  std::vector<PackMod>& out,
+						  std::string* err = nullptr,
+						  const std::atomic<bool>* cancel = nullptr);
+
 bool BuildTechnicPlan(HttpClient& http,
 					  const Modpack& pack,
 					  InstallPlan& plan,

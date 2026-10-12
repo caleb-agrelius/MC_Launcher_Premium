@@ -74,6 +74,7 @@ static bool WritePackJson(const InstallPlan& plan, const std::string& path, cons
 		{ "loaderVersion", plan.loaderVersion },
 		{ "blockedFiles", blockedJson },
 		{ "notes", plan.notes },
+		{ "clientOnlyFiles", plan.clientOnlyFiles },
 	};
 	std::ofstream ofs(path, std::ios::trunc);
 	if (!ofs.is_open())

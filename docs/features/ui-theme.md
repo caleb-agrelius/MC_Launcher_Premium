@@ -66,7 +66,7 @@ Color themes, fonts, DPI and UI scaling, shared drawing helpers, and toast notif
   | `info` | Loader chips, info notices and toasts |
   | `light` | True for light themes: ImGui's light base style, darker chip text, dark outlines, light title bar |
 
-- `Apply` derives the remaining ImGui colors (hover and active shades, slider grabs, scrollbars) from these by mixing (`Theme::Mix`).
+- `Apply` derives every other ImGui color from these by mixing (`Theme::Mix`) and transparency (`Theme::WithAlpha`). That covers hover and active shades, slider grabs and scrollbars, plus dialog title bars (`TitleBg*`), the dimmed page behind dialogs (`ModalWindowDimBg`), tabs (`Tab*`, e.g. Discover's Description and Mods tabs), links (`TextLink`), separators, resize grips, tables, tree lines and drag targets. So no dialog or tab keeps ImGui's default blue. `launcher_checks` (`ThemeColorChecks`) fails if any built-in theme leaves a visible color slot at ImGui's stock value.
 - To add a built-in theme, add an entry to `kThemes` in `Theme.cpp`. It appears on Settings > Appearance automatically.
 
 ## Custom themes

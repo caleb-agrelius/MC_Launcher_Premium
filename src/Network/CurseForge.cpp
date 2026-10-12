@@ -450,22 +450,11 @@ bool ResolveCurseForgeFiles(HttpClient& http,
 	return true;
 }
 
-bool BuildCurseForgePlan(HttpClient& http,
-						 const Modpack& pack,
-						 const std::string& workDir,
-						 InstallPlan& plan,
-						 std::function<void(const std::string&)> status,
-						 std::string* err,
-						 const std::atomic<bool>* cancel)
+// Downloads the pack's zip (pack.sourceVersionId) into workDir, unless a copy with the
+// right SHA-1 is already there, and reads its manifest.json.
+static bool DownloadPackManifest(HttpClient& http, const Modpack& pack, const std::string& workDir, std::string& zipPath,
+	CurseForgeManifest& manifest, std::string* err, const std::atomic<bool>* cancel)
 {
-	plan = {};
-	auto report = [&](const char* text) {
-		if (status)
-			status(text);
-	};
-
-	// 1. The pack's own zip.
-	report("Downloading pack archive");
 	json fileResponse;
 	if (!ApiGet(http, "/mods/" + HttpClient::UrlEncode(pack.sourceId) + "/files/" + HttpClient::UrlEncode(pack.sourceVersionId),
 			fileResponse, err, cancel))
@@ -487,8 +476,9 @@ bool BuildCurseForgePlan(HttpClient& http,
 	}
 	if (zipName.empty() || !IsSafeRelativePath(zipName) || fs::path(zipName).has_parent_path())
 		zipName = "pack-" + pack.sourceVersionId + ".zip";
-	const std::string zipPath = (fs::path(workDir) / zipName).string();
+	zipPath = (fs::path(workDir) / zipName).string();
 	std::error_code ec;
+	fs::create_directories(workDir, ec);
 	const bool cached = fs::is_regular_file(zipPath, ec) && !zipSha1.empty() && Sha1HexOfFile(zipPath) == zipSha1;
 	if (!cached) {
 		std::string error;
@@ -503,15 +493,34 @@ bool BuildCurseForgePlan(HttpClient& http,
 		}
 	}
 
-	// 2. Its manifest.
 	std::string manifestText;
 	if (!ReadZipEntry(zipPath, "manifest.json", manifestText, err))
 		return false;
+	return ParseCurseForgeManifest(manifestText, manifest, err);
+}
+
+bool BuildCurseForgePlan(HttpClient& http,
+						 const Modpack& pack,
+						 const std::string& workDir,
+						 InstallPlan& plan,
+						 std::function<void(const std::string&)> status,
+						 std::string* err,
+						 const std::atomic<bool>* cancel)
+{
+	plan = {};
+	auto report = [&](const char* text) {
+		if (status)
+			status(text);
+	};
+
+	// 1. The pack's own zip and its manifest.
+	report("Downloading pack archive");
+	std::string zipPath;
 	CurseForgeManifest manifest;
-	if (!ParseCurseForgeManifest(manifestText, manifest, err))
+	if (!DownloadPackManifest(http, pack, workDir, zipPath, manifest, err, cancel))
 		return false;
 
-	// 3. Every required file.
+	// 2. Every required file.
 	report("Resolving mod files");
 	std::vector<CurseForgeFileRef> refs;
 	std::size_t optional = 0;
@@ -536,5 +545,67 @@ bool BuildCurseForgePlan(HttpClient& http,
 	plan.maxConcurrent = 6;
 	if (optional > 0)
 		plan.notes.push_back(std::to_string(optional) + " optional file(s) in the manifest were skipped.");
+	return true;
+}
+
+bool FetchCurseForgePackMods(HttpClient& http,
+							 const Modpack& pack,
+							 const std::string& workDir,
+							 std::vector<PackMod>& out,
+							 std::string* err,
+							 const std::atomic<bool>* cancel)
+{
+	out.clear();
+	std::string zipPath;
+	CurseForgeManifest manifest;
+	if (!DownloadPackManifest(http, pack, workDir, zipPath, manifest, err, cancel))
+		return false;
+	if (manifest.files.empty())
+		return true;
+	json request = { { "modIds", json::array() } };
+	std::map<std::int64_t, bool> required;
+	for (const CurseForgeManifest::File& file : manifest.files) {
+		request["modIds"].push_back(file.projectId);
+		required[file.projectId] = required[file.projectId] || file.required;
+	}
+	json response;
+	if (!ApiPost(http, "/mods", request, response, err, cancel))
+		return false;
+	try {
+		for (const auto& project : response.at("data")) {
+			PackMod mod;
+			mod.name = StringOrEmpty(project, "name");
+			mod.summary = StringOrEmpty(project, "summary");
+			if (project.contains("links") && project["links"].is_object())
+				mod.url = StringOrEmpty(project["links"], "websiteUrl");
+			// classId 6 is mods; resource packs (12) and shaders (6552) are labelled.
+			const int classId = project.value("classId", 6);
+			if (classId == 12)
+				mod.version = "Resource pack";
+			else if (classId == 6552)
+				mod.version = "Shader pack";
+			const auto it = required.find(project.value("id", std::int64_t{ 0 }));
+			mod.optional = it != required.end() && !it->second;
+			out.push_back(std::move(mod));
+		}
+	}
+	catch (const std::exception& ex) {
+		if (err) *err = std::string("Unexpected CurseForge mods response: ") + ex.what();
+		return false;
+	}
+	return true;
+}
+
+bool FetchCurseForgeDescription(HttpClient& http,
+								const Modpack& pack,
+								std::string& out,
+								std::string* err,
+								const std::atomic<bool>* cancel)
+{
+	out.clear();
+	json response;
+	if (!ApiGet(http, "/mods/" + HttpClient::UrlEncode(pack.sourceId) + "/description", response, err, cancel))
+		return false;
+	out = StringOrEmpty(response, "data");
 	return true;
 }

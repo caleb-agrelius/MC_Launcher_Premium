@@ -361,6 +361,8 @@ bool BuildFtbPlan(HttpClient& http,
 				if (err) *err = "Unsafe path in FTB manifest: " + planned.relPath;
 				return false;
 			}
+			if (file.value("clientonly", false))
+				plan.clientOnlyFiles.push_back(planned.relPath);
 			if (planned.url.empty() && file.contains("curseforge") && file["curseforge"].is_object()) {
 				const json& cf = file["curseforge"];
 				CurseForgeFileRef ref;
@@ -393,5 +395,59 @@ bool BuildFtbPlan(HttpClient& http,
 	}
 	if (serverOnly > 0)
 		plan.notes.push_back(std::to_string(serverOnly) + " server-only file(s) were skipped.");
+	return true;
+}
+
+bool FetchFtbPackMods(HttpClient& http,
+					  const Modpack& pack,
+					  std::vector<PackMod>& out,
+					  std::string* err,
+					  const std::atomic<bool>* cancel)
+{
+	out.clear();
+	json version;
+	if (!GetJson(http, "/modpack/" + HttpClient::UrlEncode(pack.sourceId) + "/" + HttpClient::UrlEncode(pack.sourceVersionId),
+			version, err, cancel))
+		return false;
+	try {
+		for (const auto& file : version.value("files", json::array())) {
+			if (StringOrEmpty(file, "type") != "mod")
+				continue;
+			PackMod mod;
+			mod.version = StringOrEmpty(file, "name");
+			mod.name = mod.version;
+			if (mod.name.size() > 4 && ToLower(mod.name.substr(mod.name.size() - 4)) == ".jar")
+				mod.name.erase(mod.name.size() - 4);
+			mod.clientOnly = file.value("clientonly", false);
+			mod.serverOnly = file.value("serveronly", false);
+			mod.optional = file.value("optional", false);
+			if (file.contains("curseforge") && file["curseforge"].is_object()) {
+				const json& curseforge = file["curseforge"];
+				const std::string project = curseforge.contains("project") && curseforge["project"].is_number()
+					? std::to_string(curseforge["project"].get<std::int64_t>()) : StringOrEmpty(curseforge, "project");
+				if (!project.empty())
+					mod.url = "https://www.curseforge.com/projects/" + project;
+			}
+			out.push_back(std::move(mod));
+		}
+	}
+	catch (const std::exception& ex) {
+		if (err) *err = std::string("Unexpected FTB version: ") + ex.what();
+		return false;
+	}
+	return true;
+}
+
+bool FetchFtbDescription(HttpClient& http,
+						 const Modpack& pack,
+						 std::string& out,
+						 std::string* err,
+						 const std::atomic<bool>* cancel)
+{
+	out.clear();
+	json detail;
+	if (!GetJson(http, "/modpack/" + HttpClient::UrlEncode(pack.sourceId), detail, err, cancel))
+		return false;
+	out = StringOrEmpty(detail, "description");
 	return true;
 }
