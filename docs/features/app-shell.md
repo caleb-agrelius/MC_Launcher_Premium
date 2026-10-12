@@ -17,7 +17,7 @@ Window, rendering loop, navigation, theme, and logging.
 
 ## Layout
 One full-window ImGui window with no title bar, split into:
-- **Sidebar** (230px, scaled): a grass-block logo drawn from small squares, "MC Launcher" with a "PREMIUM · JAVA" tag, and the nav entries **Discover**, **My Library**, and **Downloads** (`Widgets::NavItem`; the selected one has a green bar and bold text). The footer holds the **UI scale** control (`-`, the current percentage, which resets to 100% when clicked, and `+`) and a "Launching: coming soon" note.
+- **Sidebar** (230px, scaled): a grass-block logo drawn from small squares, "MC Launcher" with a "PREMIUM · JAVA" tag, and the nav entries **Discover**, **My Library**, and **Downloads** (`Widgets::NavItem`; the selected one has a green bar and bold text), then the **ACCOUNT** section (see [accounts.md](accounts.md)). The footer holds the **UI scale** control (`-`, the current percentage, which resets to 100% when clicked, and `+`).
 - **Main content:** a header (green "MINECRAFT / MODPACKS" breadcrumb, a large bold page title, and a subtitle), then the active page.
 
 Navigation state is the `Page` enum (`Discover`, `Library`, `Downloads`). Discover is the default.
@@ -43,4 +43,4 @@ Colors, fonts, and scaling live in `src/UI/Theme.{h,cpp}`. See [ui-theme.md](ui-
 - `PackIconItem(pack, images, size)` lays out a pack icon as an item.
 
 ## Runtime files (gitignored, created in the data folder)
-`app.log`, `imgui.ini` (ImGui layout persistence), `settings.json` (UI scale), `downloads/`, `installs/`.
+`app.log`, `imgui.ini` (ImGui layout persistence), `settings.json` (UI scale), `library.json` (My Library, see [library.md](library.md)), `downloads.json` (finished downloads, see [downloads.md](downloads.md)), `account.dat` (see [accounts.md](accounts.md)), `minecraft/` and `instances/` (see [launching.md](launching.md)), `downloads/`, `installs/`.

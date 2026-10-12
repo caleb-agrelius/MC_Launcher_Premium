@@ -17,7 +17,9 @@ A C++ Dear ImGui desktop app (GLFW + OpenGL3) for browsing, downloading, and ext
 | [downloads.md](docs/features/downloads.md) | `HttpClient`, download state map and threading, Downloads page |
 | [installation.md](docs/features/installation.md) | Zip extraction (`InstallZip`), the `installs/` layout |
 | [library.md](docs/features/library.md) | My Library page |
-| [planned.md](docs/features/planned.md) | Features that aren't implemented yet (play, Minecraft download, sign-in) |
+| [launching.md](docs/features/launching.md) | PLAY: `.mrpack` instances, Minecraft/Java/loader install, version JSON, launch command |
+| [accounts.md](docs/features/accounts.md) | Microsoft sign-in, offline mode, `account.dat` |
+| [planned.md](docs/features/planned.md) | Features that aren't implemented yet |
 
 ## Keeping docs current
 

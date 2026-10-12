@@ -3,7 +3,6 @@ project(MC_Launcher_Premium LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(MCLP_MICROSOFT_CLIENT_ID "" CACHE STRING "Microsoft Entra application client ID for Minecraft sign-in")
 
 message(STATUS "Configuring MC_Launcher_Premium - prefer vcpkg-managed dependencies. If packages are missing, run vcpkg install for glfw3 glad imgui nlohmann-json curl miniz")
 
@@ -27,15 +26,23 @@ FetchContent_MakeAvailable(imgui_backend_source)
 
 add_executable(MC_Launcher_Premium
   src/main.cpp
+  src/Game/GameFiles.cpp
+  src/Game/Launcher.cpp
+  src/Game/Loaders.cpp
+  src/Game/PackInstance.cpp
   src/Model/Modpack.cpp
   src/Network/HttpClient.cpp
   src/Network/MicrosoftAuth.cpp
   src/Network/Modrinth.cpp
+  src/Storage/Account.cpp
   src/Storage/Installer.cpp
+  src/Storage/Library.cpp
   src/Storage/Settings.cpp
   src/UI/ImageCache.cpp
   src/UI/Theme.cpp
   src/UI/Widgets.cpp
+  src/Util/Process.cpp
+  src/Util/Sha1.cpp
   ${imgui_backend_source_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
   ${imgui_backend_source_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
 )
@@ -53,10 +60,6 @@ target_link_libraries(MC_Launcher_Premium PRIVATE
   nlohmann_json::nlohmann_json
   CURL::libcurl
   WebP::webp
-)
-
-target_compile_definitions(MC_Launcher_Premium PRIVATE
-  MCLP_MICROSOFT_CLIENT_ID="${MCLP_MICROSOFT_CLIENT_ID}"
 )
 
 if (miniz_FOUND)

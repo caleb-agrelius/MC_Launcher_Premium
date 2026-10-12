@@ -3,6 +3,7 @@
 #include <atomic>
 #include <string>
 #include <functional>
+#include <vector>
 
 // Minimal HTTP client wrapper using libcurl. Every request sends kUserAgent
 // (Modrinth asks API clients to identify themselves).
@@ -29,22 +30,16 @@ public:
 			 std::string* err = nullptr,
 			 const std::atomic<bool>* cancel = nullptr);
 
-	// Sends a POST request and returns the response body and HTTP status.
-	bool Post(const std::string& url,
-			  const std::string& requestBody,
-			  const std::string& contentType,
-			  std::string& responseBody,
-			  long& statusCode,
-			  std::string* err = nullptr,
-			  const std::atomic<bool>* cancel = nullptr);
-
-	// Sends a GET request with a bearer token and returns the response body and HTTP status.
-	bool GetWithBearer(const std::string& url,
-					   const std::string& accessToken,
-					   std::string& responseBody,
-					   long& statusCode,
-					   std::string* err = nullptr,
-					   const std::atomic<bool>* cancel = nullptr);
+	// Sends a request and returns the response body and HTTP status even for error
+	// statuses (sign-in APIs explain failures in 4xx bodies). A non-empty body is
+	// sent as a POST. Returns false only if no response arrived (network error, cancel).
+	bool Request(const std::string& url,
+				 const std::vector<std::string>& headers,
+				 const std::string& requestBody,
+				 std::string& responseBody,
+				 long& status,
+				 std::string* err = nullptr,
+				 const std::atomic<bool>* cancel = nullptr);
 
 	// Percent-encodes text for use in a URL query parameter.
 	static std::string UrlEncode(const std::string& text);

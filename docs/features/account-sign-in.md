@@ -1,47 +1,32 @@
-# Microsoft / Minecraft sign-in
+# Microsoft / Minecraft sign-in setup
 
-The launcher signs users in through the Microsoft identity platform using the
-OAuth 2.0 authorization code flow with PKCE. It then exchanges the Microsoft
-access token with Xbox Live, XSTS, and Minecraft Services and verifies that the
-account has a Minecraft: Java Edition profile.
+The launcher uses Microsoft's OAuth device-code flow, then exchanges the
+Microsoft access token with Xbox Live, XSTS, and Minecraft Services. No embedded
+browser, redirect URI, or client secret is required.
 
-## Microsoft app registration
+## Entra app registration
 
-Sign-in requires an application registered for public desktop clients. Create
-one in the Microsoft Entra admin center:
+1. In Microsoft Entra, open **App registrations** and register an application
+   that supports **personal Microsoft accounts**.
+2. In **Authentication**, enable **Allow public client flows**. Device-code
+   sign-in does not use a redirect URI.
+3. Add the delegated Xbox Live `XboxLive.signin` permission if it is available.
+   Xbox API access or Minecraft Services may require approval for the app.
+4. Copy the **Application (client) ID**. Do not use the Directory (tenant) ID.
 
-1. Register an app that supports personal Microsoft accounts.
-2. Add the `http://localhost` redirect URI under the **Mobile and desktop
-   applications** platform. The launcher listens on an available localhost port
-   and uses PKCE; no client secret is used.
-3. Configure the delegated Xbox Live `XboxLive.signin` permission required for
-   the Minecraft authentication exchange. Microsoft may require Xbox API access
-   approval for the app before this permission or the Minecraft token exchange
-   is available.
-4. Copy the app's **Application (client) ID**.
+## Configure the launcher
 
-When configuring CMake, provide that ID with
-`-DMCLP_MICROSOFT_CLIENT_ID="YOUR-APPLICATION-CLIENT-ID"`. The ID is a public
-identifier, not a secret. If it is omitted, the launcher builds normally but
-the sign-in button reports that this setting is required.
+Set `microsoftClientId` in the launcher's `settings.json` to that application
+ID. For example:
 
-For example:
-
-```powershell
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
-  -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake `
-  -DMCLP_MICROSOFT_CLIENT_ID="00000000-0000-0000-0000-000000000000"
+```json
+{
+  "uiScale": 1.0,
+  "microsoftClientId": "YOUR-APPLICATION-CLIENT-ID",
+  "maxMemoryMb": 4096
+}
 ```
 
-Reconfigure and rebuild after changing the client ID.
-
-## Token handling
-
-OAuth state and PKCE values are generated for each sign-in attempt, and the
-authorization code is received on a loopback listener. Access tokens are used
-only for the Xbox and Minecraft exchanges and are not saved to disk. The
-launcher retains only the Minecraft profile name and UUID in memory until the
-user signs out or exits.
-
-This authenticates the account and verifies its Java profile; game installation,
-entitlement management, and launching are still separate planned features.
+Use the client ID, not a client secret; the ID is not secret. The app must also
+be approved to use the Minecraft API. See [accounts.md](accounts.md) for the
+sign-in flow, token storage, and troubleshooting details.

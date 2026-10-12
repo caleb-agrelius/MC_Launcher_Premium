@@ -52,7 +52,7 @@ Dark slate backgrounds with green accents:
 On Windows 10/11 the native title bar is switched to dark mode.
 
 ## Settings (`src/Storage/Settings.{h,cpp}`)
-- `settings.json` in the data folder is gitignored. Today it only holds `{"uiScale": 1.0}`.
+- `settings.json` in the data folder is gitignored. It holds `uiScale`, `microsoftClientId` (see [accounts.md](accounts.md)) and `maxMemoryMb` (Java heap for Minecraft, 1024–32768, default 4096; see [launching.md](launching.md)).
 - `LoadSettings` returns the defaults if the file is missing or invalid, and clamps the scale to its range.
 - `SaveSettings` writes the scale rounded to two decimals.
 

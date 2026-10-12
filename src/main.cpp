@@ -4,11 +4,14 @@
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 
+#include "Game/Launcher.h"
 #include "Model/Modpack.h"
 #include "Network/HttpClient.h"
 #include "Network/MicrosoftAuth.h"
 #include "Network/Modrinth.h"
+#include "Storage/Account.h"
 #include "Storage/Installer.h"
+#include "Storage/Library.h"
 #include "Storage/Settings.h"
 #include "UI/ImageCache.h"
 #include "UI/Theme.h"
@@ -20,6 +23,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdint>
+#include <ctime>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -38,9 +42,11 @@
 #define NOMINMAX
 #include <windows.h>
 #include <dwmapi.h>
+#include <shellapi.h>
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3native.h>
 #pragma comment(lib, "dwmapi.lib")
+#pragma comment(lib, "shell32.lib")
 #endif
 
 namespace fs = std::filesystem;
@@ -48,6 +54,11 @@ using Theme::S;
 
 static const fs::path kIndexRelativePath = fs::path("resources") / "index.json";
 static const char* kSettingsFile = "settings.json";
+static const char* kLibraryFile = "library.json";
+static const char* kDownloadsFile = "downloads.json";
+static const char* kAccountFile = "account.dat";
+static const char* kGameRoot = "minecraft";      // shared Minecraft versions, libraries, assets, Java
+static const char* kInstancesRoot = "instances"; // one game directory per pack
 static constexpr float kUiScaleStep = 0.1f;
 static constexpr double kSearchDelaySeconds = 0.4; // pause after typing before searching
 static constexpr int kSearchLimit = 30;            // results per Modrinth search
@@ -202,16 +213,6 @@ struct UiQueue {
 	}
 };
 
-static bool IsPackInstalled(const Modpack& pack, const std::map<std::string, DownloadState>& downloads)
-{
-	for (const PackFile& file : pack.files) {
-		const auto state = downloads.find(file.url);
-		if (state != downloads.end() && state->second.installed)
-			return true;
-	}
-	return false;
-}
-
 // Asks Windows 10/11 to draw the window's title bar in dark mode to match the app.
 static void UseDarkTitleBar(GLFWwindow* window)
 {
@@ -220,6 +221,16 @@ static void UseDarkTitleBar(GLFWwindow* window)
 	DwmSetWindowAttribute(glfwGetWin32Window(window), 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, &dark, sizeof(dark));
 #else
 	(void)window;
+#endif
+}
+
+// Opens a web page in the default browser.
+static void OpenUrl(const std::string& url)
+{
+#ifdef _WIN32
+	ShellExecuteA(nullptr, "open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+#else
+	(void)url;
 #endif
 }
 
@@ -350,9 +361,6 @@ int main(int argc, char** argv)
 		std::vector<Worker> workers;
 		std::atomic<bool> shuttingDown{ false };
 		UiQueue uiQueue;
-		MinecraftAccount minecraftAccount;
-		bool microsoftSignInPending = false;
-		std::string microsoftSignInStatus;
 		fs::create_directories("downloads");
 		fs::create_directories("installs");
 
@@ -369,8 +377,216 @@ int main(int argc, char** argv)
 		std::map<std::string, std::string> filesErrors;
 		// Full-size banner lookups, keyed by pack id.
 		std::set<std::string> bannersLoading;
-		// Packs the user has started installing, so My Library survives new searches.
-		std::map<std::string, Modpack> libraryPacks;
+		// Packs whose files were extracted (UI thread only). Saved to library.json so
+		// My Library survives restarts; packs whose installs/ folder is gone are dropped.
+		Library libraryPacks = LoadPackLibrary(kLibraryFile);
+		for (auto it = libraryPacks.begin(); it != libraryPacks.end();) {
+			std::error_code existsError;
+			if (fs::is_directory(fs::path("installs") / it->first, existsError))
+				++it;
+			else
+				it = libraryPacks.erase(it);
+		}
+		log << "Loaded " << libraryPacks.size() << " library pack(s)\n";
+
+		// Finished downloads from earlier sessions, so Discover offers "Install files" again.
+		// Entries whose file was deleted are skipped. Workers aren't running yet, so no lock.
+		for (SavedDownload& saved : LoadSavedDownloads(kDownloadsFile)) {
+			std::error_code existsError;
+			if (!fs::is_regular_file(saved.outPath, existsError))
+				continue;
+			DownloadState state;
+			state.fileName = std::move(saved.fileName);
+			state.outPath = std::move(saved.outPath);
+			state.installed = libraryPacks.count(saved.pack.id) > 0;
+			state.pack = std::move(saved.pack);
+			downloads[saved.url] = std::move(state);
+		}
+		log << "Loaded " << downloads.size() << " saved download(s)\n";
+
+		// Writes every finished download to downloads.json. UI thread only.
+		auto saveDownloads = [&]() {
+			std::vector<SavedDownload> saved;
+			{
+				std::lock_guard<std::mutex> lock(downloadsMutex);
+				for (const auto& [url, state] : downloads) {
+					if (!state.outPath.empty())
+						saved.push_back({ url, state.fileName, state.outPath, state.pack });
+				}
+			}
+			if (!SaveDownloads(kDownloadsFile, saved))
+				log << "Could not save " << kDownloadsFile << "\n";
+		};
+
+		// Extracts a downloaded file into installs/<pack id>/ and, on success, adds
+		// the pack to My Library. Used by Discover and the Downloads page.
+		auto startInstall = [&](const std::string& url, const Modpack& pack, const std::string& zipPath) {
+			{
+				std::lock_guard<std::mutex> lock(downloadsMutex);
+				DownloadState& current = downloads[url];
+				current.installing = true;
+				current.installProgress = 0.0;
+				current.installError.clear();
+			}
+			const std::string targetDir = (fs::path("installs") / pack.id).string();
+			StartWorker(workers, [zipPath, targetDir, &downloads, &downloadsMutex, &shuttingDown, &uiQueue,
+				&libraryPacks, &log, url, pack]() {
+				std::string error;
+				auto progress = [&](int total, int now) {
+					std::lock_guard<std::mutex> lock(downloadsMutex);
+					DownloadState& current = downloads[url];
+					if (total > 0)
+						current.installProgress = static_cast<double>(now) / static_cast<double>(total);
+				};
+				const bool ok = InstallZip(zipPath, targetDir, progress, &error, &shuttingDown);
+				{
+					std::lock_guard<std::mutex> lock(downloadsMutex);
+					DownloadState& current = downloads[url];
+					current.installing = false;
+					if (ok)
+						current.installed = true;
+					else
+						current.installError = error;
+				}
+				if (ok) {
+					uiQueue.Post([&libraryPacks, &log, pack]() {
+						libraryPacks[pack.id] = pack;
+						if (!SavePackLibrary(kLibraryFile, libraryPacks))
+							log << "Could not save " << kLibraryFile << "\n";
+					});
+				}
+			});
+		};
+
+		// ---- Account (UI thread only) ----
+		Account account = LoadAccount(kAccountFile);
+		enum class SignIn { Idle, Starting, WaitingForPlayer };
+		SignIn signIn = SignIn::Idle;
+		DeviceCode signInCode;
+		std::string signInError;
+		auto signInCancel = std::make_shared<std::atomic<bool>>(false);
+		char offlineName[17] = "";
+		bool openOfflinePopup = false;
+
+		auto setAccount = [&](const Account& newAccount) {
+			account = newAccount;
+			std::error_code removeError;
+			if (account.type == Account::Type::None)
+				fs::remove(kAccountFile, removeError);
+			else if (!SaveAccount(kAccountFile, account))
+				log << "Could not save " << kAccountFile << "\n";
+		};
+
+		auto startMicrosoftSignIn = [&]() {
+			signIn = SignIn::Starting;
+			signInError.clear();
+			signInCancel = std::make_shared<std::atomic<bool>>(false);
+			const std::string clientId = settings.microsoftClientId;
+			StartWorker(workers, [&http, &uiQueue, &signIn, &signInCode, &signInError, &setAccount, &log,
+				clientId, cancel = signInCancel]() {
+				DeviceCode code;
+				std::string error;
+				if (!StartMicrosoftDeviceCode(http, clientId, code, &error, cancel.get())) {
+					uiQueue.Post([&signIn, &signInError, &log, error]() {
+						signIn = SignIn::Idle;
+						signInError = error;
+						log << "Microsoft sign-in failed: " << error << "\n";
+					});
+					return;
+				}
+				uiQueue.Post([&signIn, &signInCode, code]() {
+					signInCode = code;
+					signIn = SignIn::WaitingForPlayer;
+				});
+				Account signedIn;
+				const bool ok = FinishMicrosoftDeviceCode(http, clientId, code, signedIn, &error, cancel.get());
+				uiQueue.Post([&signIn, &signInError, &setAccount, &log, ok, signedIn, error, cancel]() {
+					signIn = SignIn::Idle;
+					if (ok) {
+						setAccount(signedIn);
+						log << "Signed in as " << signedIn.name << "\n";
+					} else if (!cancel->load()) {
+						signInError = error;
+						log << "Microsoft sign-in failed: " << error << "\n";
+					}
+				});
+			});
+		};
+
+		// ---- Playing (state shared with play workers) ----
+		struct PlayState {
+			bool busy = false;    // preparing or running
+			bool playing = false; // Minecraft has started
+			std::string step;
+			double progress = -1.0;
+			std::string error;
+			std::shared_ptr<std::atomic<bool>> cancel = std::make_shared<std::atomic<bool>>(false);
+		};
+		std::map<std::string, PlayState> plays;
+		std::mutex playsMutex;
+
+		auto startPlay = [&](const Modpack& pack) {
+			if (account.type == Account::Type::None) {
+				std::lock_guard<std::mutex> lock(playsMutex);
+				plays[pack.id].error = "Sign in with Microsoft or choose an offline name in the sidebar first.";
+				return;
+			}
+			auto cancel = std::make_shared<std::atomic<bool>>(false);
+			{
+				std::lock_guard<std::mutex> lock(playsMutex);
+				PlayState& state = plays[pack.id];
+				state = PlayState{};
+				state.busy = true;
+				state.step = "Starting";
+				state.cancel = cancel;
+			}
+			PlayRequest request;
+			request.gameRoot = fs::absolute(kGameRoot);
+			request.extractedDir = fs::absolute(fs::path("installs") / pack.id);
+			request.instanceDir = fs::absolute(fs::path(kInstancesRoot) / pack.id);
+			request.account = account;
+			request.maxMemoryMb = settings.maxMemoryMb;
+			const std::string clientId = settings.microsoftClientId;
+			const std::string packId = pack.id;
+			log << "Play " << packId << " as " << account.name << "\n";
+			log.flush();
+			StartWorker(workers, [&http, &uiQueue, &plays, &playsMutex, &setAccount, &log, request, clientId, packId, cancel]() mutable {
+				auto progress = [&](const std::string& step, double fraction) {
+					std::lock_guard<std::mutex> lock(playsMutex);
+					PlayState& state = plays[packId];
+					state.step = step;
+					state.progress = fraction;
+					state.playing = step == "Playing";
+				};
+				std::string error;
+				bool ok = true;
+				// Microsoft tokens last about a day; refresh one that expires within 5 minutes.
+				if (request.account.type == Account::Type::Microsoft &&
+					request.account.accessExpires < static_cast<std::int64_t>(std::time(nullptr)) + 300) {
+					progress("Refreshing Microsoft sign-in", -1.0);
+					ok = RefreshMicrosoftAccount(http, clientId, request.account, &error, cancel.get());
+					if (ok) {
+						const Account refreshed = request.account;
+						uiQueue.Post([&setAccount, refreshed]() { setAccount(refreshed); });
+					}
+				}
+				if (ok)
+					ok = PlayModpack(http, request, progress, &error, cancel.get());
+				{
+					std::lock_guard<std::mutex> lock(playsMutex);
+					PlayState& state = plays[packId];
+					state.busy = false;
+					state.playing = false;
+					state.error = (ok || cancel->load()) ? std::string() : error;
+				}
+				uiQueue.Post([&log, packId, ok, error]() {
+					if (ok)
+						log << "Minecraft closed (" << packId << ")\n";
+					else
+						log << "Play " << packId << " failed: " << error << "\n";
+				});
+			});
+		};
 
 		auto startSearch = [&]() {
 			const int generation = ++searchGeneration;
@@ -535,6 +751,51 @@ int main(int argc, char** argv)
 			if (Widgets::NavItem("Downloads", page == Page::Downloads))
 				page = Page::Downloads;
 
+			// Account: who Minecraft is launched as.
+			ImGui::Dummy(ImVec2(0.0f, S(10.0f)));
+			Widgets::SectionLabel("ACCOUNT");
+			if (account.type != Account::Type::None) {
+				ImGui::PushFont(fonts.bold, 0.0f);
+				ImGui::TextUnformatted(account.name.c_str());
+				ImGui::PopFont();
+				ImGui::TextDisabled(account.type == Account::Type::Microsoft ? "Microsoft account" : "Offline (singleplayer)");
+				if (ImGui::Button("Sign out", ImVec2(-1.0f, 0.0f)))
+					setAccount(Account{});
+			} else if (signIn == SignIn::Starting) {
+				Widgets::Spinner(Theme::kAccent);
+				ImGui::SameLine();
+				ImGui::TextDisabled("Contacting Microsoft...");
+			} else if (signIn == SignIn::WaitingForPlayer) {
+				ImGui::TextWrapped("Go to %s and enter this code:", signInCode.verificationUri.c_str());
+				ImGui::PushFont(fonts.bold, Theme::kFontHeading);
+				ImGui::TextUnformatted(signInCode.userCode.c_str());
+				ImGui::PopFont();
+				if (ImGui::Button("Copy code & open page", ImVec2(-1.0f, 0.0f))) {
+					ImGui::SetClipboardText(signInCode.userCode.c_str());
+					OpenUrl(signInCode.verificationUri);
+				}
+				if (ImGui::Button("Cancel", ImVec2(-1.0f, 0.0f))) {
+					signInCancel->store(true);
+					signIn = SignIn::Idle;
+				}
+			} else {
+				const bool hasClientId = !settings.microsoftClientId.empty();
+				ImGui::BeginDisabled(!hasClientId);
+				if (ImGui::Button("Sign in with Microsoft", ImVec2(-1.0f, 0.0f)))
+					startMicrosoftSignIn();
+				ImGui::EndDisabled();
+				if (!hasClientId)
+					ImGui::SetItemTooltip("Set \"microsoftClientId\" in settings.json to an Azure app ID approved for Minecraft.");
+				if (ImGui::Button("Play offline...", ImVec2(-1.0f, 0.0f)))
+					openOfflinePopup = true;
+				ImGui::SetItemTooltip("Singleplayer and offline-mode servers only. For players who own Minecraft.");
+				if (!signInError.empty()) {
+					ImGui::PushStyleColor(ImGuiCol_Text, Theme::kError);
+					ImGui::TextWrapped("%s", signInError.c_str());
+					ImGui::PopStyleColor();
+				}
+			}
+
 			// Footer: UI scale control.
 			const float footerHeight = ImGui::GetFrameHeight() + ImGui::GetTextLineHeightWithSpacing() * 2.0f +
 				ImGui::GetStyle().ItemSpacing.y * 3.0f;
@@ -555,50 +816,41 @@ int main(int argc, char** argv)
 			if (ImGui::Button("+", ImVec2(plusWidth, 0.0f)))
 				requestedUiScale = NormalizeUiScale(settings.uiScale + kUiScaleStep);
 			ImGui::SetItemTooltip("Larger (Ctrl +)");
-			ImGui::TextDisabled("Launching: coming soon");
 			ImGui::EndChild();
+
+			// Offline name prompt.
+			if (openOfflinePopup) {
+				ImGui::OpenPopup("Play offline");
+				openOfflinePopup = false;
+			}
+			ImGui::SetNextWindowSize(ImVec2(S(420.0f), 0.0f));
+			if (ImGui::BeginPopupModal("Play offline", nullptr, ImGuiWindowFlags_NoResize)) {
+				ImGui::TextWrapped("Offline mode skips Microsoft sign-in. You can play singleplayer and join "
+					"servers that don't check accounts. Use it only if you own Minecraft: Java Edition.");
+				ImGui::Spacing();
+				ImGui::SetNextItemWidth(-1.0f);
+				if (ImGui::IsWindowAppearing())
+					ImGui::SetKeyboardFocusHere();
+				const bool entered = ImGui::InputTextWithHint("##offline_name", "Username", offlineName, sizeof(offlineName),
+					ImGuiInputTextFlags_EnterReturnsTrue);
+				const bool valid = IsValidPlayerName(offlineName);
+				if (!valid && offlineName[0] != '\0')
+					ImGui::TextColored(Theme::kError, "3-16 letters, numbers or underscores.");
+				ImGui::BeginDisabled(!valid);
+				if (ImGui::Button("Use this name") || (entered && valid)) {
+					setAccount(MakeOfflineAccount(offlineName));
+					ImGui::CloseCurrentPopup();
+				}
+				ImGui::EndDisabled();
+				ImGui::SameLine();
+				if (ImGui::Button("Cancel##offline"))
+					ImGui::CloseCurrentPopup();
+				ImGui::EndPopup();
+			}
 
 			// ---- Main content ----
 			ImGui::SameLine();
 			ImGui::BeginChild("main_content", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None);
-			Widgets::SectionLabel("ACCOUNT");
-			if (minecraftAccount.username.empty()) {
-				if (microsoftSignInPending) {
-					ImGui::BeginDisabled();
-					ImGui::Button("Waiting for Microsoft sign-in...");
-					ImGui::EndDisabled();
-				} else if (ImGui::Button("Sign in with Microsoft")) {
-					microsoftSignInPending = true;
-					microsoftSignInStatus = "Opening Microsoft sign-in in your browser...";
-					StartWorker(workers, [&http, &uiQueue, &shuttingDown, &minecraftAccount,
-						&microsoftSignInPending, &microsoftSignInStatus, &log]() {
-						MinecraftAccount signedInAccount;
-						std::string error;
-						const bool ok = SignInWithMicrosoft(http, signedInAccount, shuttingDown, &error);
-						uiQueue.Post([&minecraftAccount, &microsoftSignInPending,
-							&microsoftSignInStatus, &log, ok, signedInAccount, error]() {
-							microsoftSignInPending = false;
-							if (ok) {
-								minecraftAccount = signedInAccount;
-								microsoftSignInStatus.clear();
-								log << "Signed in to Minecraft as " << minecraftAccount.username << "\n";
-							} else {
-								microsoftSignInStatus = "Sign-in failed: " + error;
-								log << microsoftSignInStatus << "\n";
-							}
-						});
-					});
-				}
-			} else {
-				ImGui::Text("Signed in as %s", minecraftAccount.username.c_str());
-				ImGui::SameLine();
-				if (ImGui::Button("Sign out")) {
-					minecraftAccount = {};
-					microsoftSignInStatus.clear();
-				}
-			}
-			if (!microsoftSignInStatus.empty())
-				ImGui::TextWrapped("%s", microsoftSignInStatus.c_str());
 			ImGui::Separator();
 			Widgets::Text(fonts.bold, Theme::kFontSmall, Theme::kAccent, "MINECRAFT  /  MODPACKS");
 			if (page == Page::Discover) {
@@ -732,7 +984,8 @@ int main(int argc, char** argv)
 								// Per-pack folder so same-named files from different packs don't collide.
 								const fs::path packDownloadDir = fs::path("downloads") / pack.id;
 								const std::string outputPath = (packDownloadDir / file.name).string();
-								StartWorker(workers, [&http, &downloads, &downloadsMutex, &shuttingDown, url, packDownloadDir, outputPath]() {
+								StartWorker(workers, [&http, &downloads, &downloadsMutex, &shuttingDown, &uiQueue, &saveDownloads,
+									url, packDownloadDir, outputPath]() {
 									std::string error;
 									std::error_code dirError;
 									fs::create_directories(packDownloadDir, dirError);
@@ -743,13 +996,17 @@ int main(int argc, char** argv)
 										current.now = now;
 									};
 									const bool ok = http.DownloadToFile(url, outputPath, progress, &error, &shuttingDown);
-									std::lock_guard<std::mutex> lock(downloadsMutex);
-									DownloadState& current = downloads[url];
-									current.active = false;
+									{
+										std::lock_guard<std::mutex> lock(downloadsMutex);
+										DownloadState& current = downloads[url];
+										current.active = false;
+										if (ok)
+											current.outPath = outputPath;
+										else
+											current.error = error;
+									}
 									if (ok)
-										current.outPath = outputPath;
-									else
-										current.error = error;
+										uiQueue.Post([&saveDownloads]() { saveDownloads(); });
 								});
 							}
 							if (hasState && !state.error.empty())
@@ -773,36 +1030,8 @@ int main(int argc, char** argv)
 							ImGui::TextColored(Theme::kAccent, "Extracted");
 						} else if (!state.outPath.empty()) {
 							AlignRightForButton("Install files");
-							if (ImGui::Button("Install files")) {
-								libraryPacks[pack.id] = pack;
-								{
-									std::lock_guard<std::mutex> lock(downloadsMutex);
-									DownloadState& current = downloads[file.url];
-									current.installing = true;
-									current.installProgress = 0.0;
-									current.installError.clear();
-								}
-								const std::string zipPath = state.outPath;
-								const std::string targetDir = (fs::path("installs") / pack.id).string();
-								const std::string url = file.url;
-								StartWorker(workers, [zipPath, targetDir, &downloads, &downloadsMutex, &shuttingDown, url]() {
-									std::string error;
-									auto progress = [&](int total, int now) {
-										std::lock_guard<std::mutex> lock(downloadsMutex);
-										DownloadState& current = downloads[url];
-										if (total > 0)
-											current.installProgress = static_cast<double>(now) / static_cast<double>(total);
-									};
-									const bool ok = InstallZip(zipPath, targetDir, progress, &error, &shuttingDown);
-									std::lock_guard<std::mutex> lock(downloadsMutex);
-									DownloadState& current = downloads[url];
-									current.installing = false;
-									if (ok)
-										current.installed = true;
-									else
-										current.installError = error;
-								});
-							}
+							if (ImGui::Button("Install files"))
+								startInstall(file.url, pack, state.outPath);
 						}
 
 						if (state.active && state.total > 0.0)
@@ -818,36 +1047,83 @@ int main(int argc, char** argv)
 					ImGui::Dummy(ImVec2(0.0f, S(6.0f)));
 					ImGui::PushFont(fonts.bold, Theme::kFontHeading);
 					ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, S(8.0f));
-					ImGui::BeginDisabled(true);
-					ImGui::Button("PLAY  \xE2\x80\x94  COMING SOON", ImVec2(-1.0f, S(52.0f)));
+					const auto libraryPack = libraryPacks.find(pack.id);
+					bool playBusy = false;
+					{
+						std::lock_guard<std::mutex> lock(playsMutex);
+						const auto it = plays.find(pack.id);
+						playBusy = it != plays.end() && it->second.busy;
+					}
+					ImGui::BeginDisabled(libraryPack == libraryPacks.end() || playBusy);
+					if (ImGui::Button(playBusy ? "PLAYING" : "PLAY", ImVec2(-1.0f, S(52.0f)))) {
+						startPlay(libraryPack->second);
+						page = Page::Library;
+					}
 					ImGui::EndDisabled();
 					ImGui::PopStyleVar();
 					ImGui::PopFont();
-					ImGui::TextDisabled("Minecraft installation and launching are not wired up yet.");
+					if (libraryPack == libraryPacks.end())
+						ImGui::TextDisabled("Download and install the pack's files to play it.");
+					else
+						ImGui::TextDisabled("Progress and errors appear in My Library.");
 				} else {
 					ImGui::TextDisabled("No modpacks match your search.");
 				}
 				ImGui::EndChild();
 			} else if (page == Page::Library) {
-				std::lock_guard<std::mutex> lock(downloadsMutex);
-				bool anyInstalled = false;
 				const float iconSize = S(64.0f);
 				for (const auto& [packId, pack] : libraryPacks) {
-					if (!IsPackInstalled(pack, downloads))
-						continue;
-					anyInstalled = true;
+					PlayState play;
+					{
+						std::lock_guard<std::mutex> lock(playsMutex);
+						const auto it = plays.find(packId);
+						if (it != plays.end())
+							play = it->second;
+					}
 					BeginCard(pack.id.c_str());
 					PackIconItem(pack, images, iconSize);
 					ImGui::SameLine(0.0f, S(14.0f));
 					ImGui::BeginGroup();
 					Widgets::Text(fonts.bold, Theme::kFontHeading, Theme::kText, pack.name.c_str());
-					ImGui::TextDisabled("%s  \xC2\xB7  %llu extracted file(s)",
-						pack.version.c_str(), static_cast<unsigned long long>(pack.files.size()));
-					ImGui::TextDisabled("Files are prepared; this prototype does not launch Minecraft yet.");
+					std::string meta = pack.version;
+					if (!pack.gameVersion.empty())
+						meta += "  \xC2\xB7  Minecraft " + pack.gameVersion;
+					if (!pack.loaders.empty())
+						meta += "  \xC2\xB7  " + pack.loaders;
+					ImGui::TextDisabled("%s", meta.c_str());
+					if (play.playing) {
+						ImGui::TextColored(Theme::kAccent, "Minecraft is running");
+					} else if (play.busy) {
+						Widgets::Spinner(Theme::kAccent);
+						ImGui::SameLine();
+						ImGui::TextDisabled("%s", play.step.c_str());
+					} else if (!play.error.empty()) {
+						ImGui::PushStyleColor(ImGuiCol_Text, Theme::kError);
+						ImGui::TextWrapped("%s", play.error.c_str());
+						ImGui::PopStyleColor();
+					} else {
+						ImGui::TextDisabled("Ready to play");
+					}
 					ImGui::EndGroup();
+
+					ImGui::PushFont(fonts.bold, 0.0f);
+					if (play.busy && !play.playing) {
+						AlignRightForButton("Cancel");
+						if (ImGui::Button("Cancel"))
+							play.cancel->store(true);
+					} else if (!play.busy) {
+						AlignRightForButton("  PLAY  ");
+						ImGui::PushStyleColor(ImGuiCol_Button, Theme::kAccent);
+						if (ImGui::Button("  PLAY  "))
+							startPlay(pack);
+						ImGui::PopStyleColor();
+					}
+					ImGui::PopFont();
+					if (play.busy && !play.playing && play.progress >= 0.0)
+						Widgets::ThinProgressBar(static_cast<float>(play.progress));
 					EndCard();
 				}
-				if (!anyInstalled)
+				if (libraryPacks.empty())
 					ImGui::TextDisabled("No extracted modpacks yet. Browse packs and install their files to see them here.");
 			} else {
 				std::vector<std::pair<std::string, DownloadState>> snapshot;
@@ -884,9 +1160,14 @@ int main(int argc, char** argv)
 					} else if (state.installed) {
 						ImGui::TextColored(Theme::kAccent, "Files extracted");
 					} else {
-						ImGui::TextDisabled("Downloaded - open Discover to extract this pack.");
+						ImGui::TextDisabled("Downloaded - ready to extract.");
 					}
 					ImGui::EndGroup();
+					if (!state.active && !state.outPath.empty() && !state.installing && !state.installed) {
+						AlignRightForButton("Install files");
+						if (ImGui::Button("Install files"))
+							startInstall(item.first, state.pack, state.outPath);
+					}
 					if (state.active && state.total > 0.0)
 						Widgets::ThinProgressBar(static_cast<float>(state.now / state.total));
 					else if (state.installing)
@@ -911,10 +1192,18 @@ int main(int argc, char** argv)
 
 		// Ask in-flight downloads/extractions to stop, then wait for them.
 		shuttingDown.store(true);
+		signInCancel->store(true);
+		{
+			// Stops preparing packs. A running Minecraft keeps running.
+			std::lock_guard<std::mutex> lock(playsMutex);
+			for (auto& [packId, play] : plays)
+				play.cancel->store(true);
+		}
 		for (Worker& worker : workers) {
 			if (worker.thread.joinable())
 				worker.thread.join();
 		}
+		uiQueue.Drain(); // saves downloads/extractions that finished during shutdown
 
 		images.Shutdown(); // frees textures while the GL context still exists
 		ImGui_ImplOpenGL3_Shutdown();

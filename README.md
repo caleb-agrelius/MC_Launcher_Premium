@@ -7,16 +7,17 @@ Development Team:
 
 # MC_Launcher_Premium
 
-A Minecraft Java Edition modpack browser and downloader built with C++ and Dear ImGui.
+A Minecraft Java Edition modpack launcher built with C++ and Dear ImGui.
 
 ## Features
 
 - Search modpacks live on [Modrinth](https://modrinth.com/modpacks), no API key needed. The app falls back to `resources/index.json` when offline.
 - Download a pack's `.mrpack` with progress.
 - Extract it into `installs/<pack>/`, with protection against malicious archive paths.
-- Sign in with a Microsoft account and verify its Minecraft: Java Edition profile.
+- Play it: the launcher downloads the pack's mods, Minecraft, a Mojang Java runtime and the mod loader (Fabric, Quilt, Forge or NeoForge), then starts the game. See [docs/features/launching.md](docs/features/launching.md).
+- Sign in with a Microsoft account, or play offline with a username. See [docs/features/accounts.md](docs/features/accounts.md).
 
-Minecraft installation and launching aren't implemented yet. See [docs/features/planned.md](docs/features/planned.md). For Microsoft sign-in setup, see [docs/features/account-sign-in.md](docs/features/account-sign-in.md).
+Microsoft sign-in needs an Entra app client ID set as `"microsoftClientId"` in `settings.json` and approval for the Minecraft API. See the [sign-in setup guide](docs/features/account-sign-in.md) and [planned features](docs/features/planned.md).
 
 ## Prerequisites (Windows)
 
@@ -42,7 +43,7 @@ From the repo root:
 
 ```powershell
 # Configure (once, or after adding source files / changing CMakeLists.txt)
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DMCLP_MICROSOFT_CLIENT_ID="YOUR-APPLICATION-CLIENT-ID"
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
 
 # Build
 cmake --build build --config Debug      # -> build\Debug\MC_Launcher_Premium.exe
@@ -51,7 +52,7 @@ cmake --build build --config Release    # -> build\Release\MC_Launcher_Premium.e
 
 - The first configure downloads the ImGui GLFW/OpenGL backend files from GitHub.
 - The build copies the required DLLs (glfw3, libcurl, zlib, miniz) next to the exe.
-- Replace `YOUR-APPLICATION-CLIENT-ID` with the client ID from your Microsoft app registration; see the sign-in setup guide above.
+- To enable Microsoft sign-in, set `"microsoftClientId"` in `settings.json` to the Application (client) ID from your Entra app registration. The app also needs approval for the Minecraft API; see [docs/features/accounts.md](docs/features/accounts.md).
 
 > The `MC_Launcher_Premium.slnx` / `.vcxproj` in the repo root don't build as-is because they expect ImGui backend files that aren't in the repo. Use the CMake build, or the solution CMake generates (see below).
 
@@ -70,6 +71,11 @@ You can also double-click the exe or start it from any folder. The app finds the
 | `installs\<pack>\`  | Extracted pack files                                           |
 | `imgui.ini`         | Window layout                                                  |
 | `settings.json`     | UI scale                                                       |
+| `library.json`      | Packs listed in My Library                                     |
+| `downloads.json`    | Finished downloads, restored on startup                        |
+| `account.dat`       | Signed-in account (encrypted with Windows DPAPI)               |
+| `minecraft\`        | Shared Minecraft versions, libraries, assets, Java runtimes    |
+| `instances\<pack>\` | Each pack's game folder (mods, config, saves, logs)            |
 
 All of these are gitignored.
 
@@ -86,9 +92,11 @@ All of these are gitignored.
    | Search results | `SearchModrinthModpacks` in `src/Network/Modrinth.cpp` |
    | Downloads      | `HttpClient::DownloadToFile`                           |
    | Extraction     | `InstallZip` in `src/Storage/Installer.cpp`            |
+   | Play           | `PlayModpack` in `src/Game/Launcher.cpp`               |
+   | Sign-in        | `src/Network/MicrosoftAuth.cpp`                        |
    | UI             | the frame loop in `src/main.cpp`                       |
 
-Background work (searches, downloads, extraction) runs on worker threads. Use **Debug → Windows → Threads** to switch between them.
+Background work (searches, downloads, extraction, sign-in, play) runs on worker threads. Use **Debug → Windows → Threads** to switch between them.
 
 ### VS Code
 
@@ -140,10 +148,18 @@ Version lookup for fabulously-optimized: 14.1.1 (Fabulously.Optimized-v14.1.1.mr
 ```
 src/main.cpp              Window, UI, threading
 src/Model/Modpack.*       Modpack data + local index loader
-src/Network/HttpClient.*  libcurl wrapper (downloads, GET, cancel)
+src/Network/HttpClient.*  libcurl wrapper (downloads, GET/POST, cancel)
+src/Network/MicrosoftAuth.* Microsoft -> Xbox -> Minecraft sign-in
 src/Network/Modrinth.*    Modrinth API client (search, versions)
 src/Storage/Installer.*   Zip extraction
 src/Storage/Settings.*    settings.json (UI scale)
+src/Storage/Library.*     library.json (My Library), downloads.json (finished downloads)
+src/Storage/Account.*     account.dat (signed-in or offline account)
+src/Game/GameFiles.*      Minecraft versions, libraries, assets, Java runtimes
+src/Game/Loaders.*        Fabric, Quilt, Forge, NeoForge
+src/Game/PackInstance.*   .mrpack index -> instances/<pack>/
+src/Game/Launcher.*       Play: prepare everything, build the command line, run Java
+src/Util/                 SHA-1, process launching
 src/UI/Theme.*            Colors, fonts, DPI/UI scaling
 src/UI/Widgets.*          Pack rows, hero banner, chips, spinner
 src/UI/ImageCache.*       Async icon/banner loading (PNG, JPEG, WebP)

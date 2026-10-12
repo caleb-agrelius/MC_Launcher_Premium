@@ -37,7 +37,7 @@ Browse modpacks and start downloads and installs. UI code is the `Page::Discover
 | Extraction failed | **Install files** again, plus a red "Extraction failed: ..." message |
 
 - **Download** and **Retry** start a background download. See [downloads.md](downloads.md).
-- **Install files** records the pack in My Library (see [library.md](library.md)) and extracts the downloaded file into `installs/<pack id>/`. See [installation.md](installation.md).
-- A large, disabled **PLAY — COMING SOON** button sits at the bottom. See [planned.md](planned.md).
+- **Install files** extracts the downloaded file into `installs/<pack id>/` (see [installation.md](installation.md)). When extraction succeeds, the pack is added to My Library (see [library.md](library.md)).
+- A large **PLAY** button sits at the bottom. It's enabled when the pack is in My Library and isn't already being prepared or played; clicking it starts playing and switches to My Library. Otherwise it's disabled, with a hint to install the pack's files. See [launching.md](launching.md).
 
 If nothing is selected, the pane shows "No modpacks match your search."
