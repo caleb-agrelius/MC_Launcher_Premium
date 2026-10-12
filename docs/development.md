@@ -11,7 +11,7 @@ ctest --test-dir build -C Debug --output-on-failure
 powershell -NoProfile -ExecutionPolicy Bypass -File tests/WindowSmoke.ps1
 ```
 
-The CTest checks cover window settings, server file filtering and setup, preserved configuration, server mods, host IP validation, server deletion, card heights, and console commands using local fixtures. The Windows smoke test launches the app with isolated data and checks window resize, close, reopen, maximization and minimization. Fixtures are kept under gitignored `tests/out/` folders.
+The CTest checks cover window settings, server file filtering and setup, preserved configuration, server mods, host IP validation, server deletion, the player data a pack update carries over, card heights, and console commands using local fixtures. The Windows smoke test launches the app with isolated data and checks window resize, close, reopen, maximization and minimization. Fixtures are kept under gitignored `tests/out/` folders.
 
 `live_checks` is built with the tests but isn't a CTest test, because it calls the real pack APIs. Run it from the repository root after a change to a source client:
 
