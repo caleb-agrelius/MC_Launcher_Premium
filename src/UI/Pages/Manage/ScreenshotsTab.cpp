@@ -110,11 +110,13 @@ void ScreenshotsTab::DrawViewer(const ManagePageContext& context)
 	ImGui::SetNextWindowSize(ImVec2(display.x * 0.86f, display.y * 0.86f));
 	ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
 	bool open = true;
-	if (!ImGui::BeginPopupModal("Screenshot", &open, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+	if (!ImGui::BeginPopupModal("Screenshot", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
 			ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoNav)) {
 		m_viewing = -1;
 		return;
 	}
+	if (Widgets::ModalCloseButton())
+		open = false;
 	const Screenshot& shot = m_screenshots[static_cast<std::size_t>(m_viewing)];
 	const int count = static_cast<int>(m_screenshots.size());
 	ImGui::AlignTextToFramePadding();

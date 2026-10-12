@@ -82,6 +82,8 @@ struct Modpack {
 	// optionalMods) mirror the active version.
 	std::vector<InstalledVersion> installedVersions;
 	std::string activeVersion;
+	// My Library only: total time Minecraft has run for this pack, across all its versions.
+	std::int64_t playSeconds = 0;
 
 	// Online search results don't include versions; they're fetched when the pack is selected.
 	bool filesLoaded = true;

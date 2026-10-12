@@ -92,7 +92,8 @@ Color themes, fonts, DPI and UI scaling, shared drawing helpers, and toast notif
 
 | Widget | What it draws |
 |---|---|
-| `BeginCard` / `EndCard` | A full-width bordered card with a measured, remembered height; offscreen cards keep their height, and the mouse wheel scrolls the surrounding page |
+| `CloseX` / `ModalCloseButton` | A small "x" with a rounded hover highlight; `ModalCloseButton` replaces a modal title bar's circular close button (used by the details and screenshot modals) |
+| `BeginCard` / `EndCard` | A full-width bordered card with a measured, remembered height; the mouse wheel scrolls the surrounding page. ImGui skips a child window below the visible area, so a card with no remembered height that starts there is drawn once with an alpha of 0.001 and an unclipped clip rect, which measures it without showing anything |
 | `Text(font, size, color, text)` | Text in a given font, size, and color |
 | `SectionLabel` | Small bold dimmed heading, e.g. "PACK FILES (1)" |
 | `Spinner` | A rotating arc the height of a text line |
@@ -124,7 +125,7 @@ Every button, dropdown, list row, switch and menu entry comes from these widgets
 
 **Resizable panes:** Discover's pack list, the Servers list and the Manage page's log list have a `PaneSplitter` on their right edge. Discover and Servers keep their widths in `settings.json` (`paneWidths`, see [settings.md](settings.md)), and the Manage log list keeps its width while the launcher runs. Each width is kept between a minimum and what leaves the pane beside it usable.
 
-**Scrollbars:** the grab floats inside its track (`ScrollbarPadding`, 3 px scaled), and `BeginScrollArea` ends content 6 px (scaled) before a visible vertical scrollbar, so rows, cards and highlights never touch it.
+**Scrollbars:** the grab floats inside its track (`ScrollbarPadding`, 7 px in a 20 px track, scaled, so the grab sits clear of the page border), and `BeginScrollArea` ends content 6 px (scaled) before a visible vertical scrollbar, so rows, cards and highlights never touch it.
 
 Library and Downloads share card padding, 56px icons and heading-size pack names. Long text wraps, and action buttons move below it when there is insufficient room on the same row. Settings uses the same card measurement with its own padding.
 
@@ -145,8 +146,9 @@ All of this is off when **Reduce motion** is on.
   - Discover's details pane, when another pack is selected
   - My Library and Downloads cards
   - Settings cards, when the page opens or the tab changes (`SettingsPageContext::shownAt`)
-- **Smooth scrolling** (`Widgets::SmoothScroll()`, called before `EndChild()` of a child created with `ImGuiWindowFlags_NoScrollWithMouse`): each wheel notch moves a target 120 px (scaled) and the view eases toward it (about 70 ms time constant). The target is kept in the window's `ImGuiStorage`. Scrollbar drags, keyboard navigation and `SetScrollHereY` reset the target. Ctrl+wheel is ignored. With reduce motion on, the wheel jumps straight to the target.
+- **Smooth scrolling** (`Widgets::SmoothScroll()`, called before `EndChild()` of a child created with `ImGuiWindowFlags_NoScrollWithMouse`): each wheel notch moves a target 120 px (scaled) and the view eases toward it (about 70 ms time constant). The target is kept in the window's `ImGuiStorage`. Scrollbar drags, keyboard navigation and `SetScrollHereY` reset the target. Ctrl+wheel is ignored. With reduce motion on, the wheel jumps straight to the target. ImGui rounds the scroll to whole pixels, so the easing rounds too and always moves at least one pixel; otherwise the last pixels stall and look like a scrollbar drag, leaving the view just short of the top.
   - **Which window scrolls** (`WheelTarget`, worked out once per frame): starting from the window under the mouse, the first window that has something to scroll and takes the wheel, walking up through parent child windows. Cards (no wheel of their own) hand it to the page around them, so the wheel works the same over text, cards, sliders and empty space. The walk stops at a popup or top-level window, so the wheel over an open combo list (such as a version picker) scrolls only that list, never the page behind it.
+  - **Top fade:** once a scroll area is scrolled, `EndScrollArea` draws a 28 px (scaled) gradient of the panel color, up to 75% opaque, across its top edge (`DrawTopFade`), inset by the panel's border and rounding so its outline is never painted over, so cards and rows leaving the top fade out instead of being cut off. It eases in over the first 24 px of scroll and is absent at the top. It's a click-through child begun last, because cards are child windows drawn after their parent. It's a fade, not a true blur (that would need a shader pass).
   - `Widgets::BeginScrollArea(id, size, childFlags, windowFlags)` / `EndScrollArea()` make a child window that scrolls this way. Every scrolling panel uses it or `SmoothScroll` directly: the main content, Discover's pack list and details pane, the Servers list, details, mod list and console, Settings, and the launch-settings and optional-mods dialogs.
 - **Tabs** (`Widgets::TabStrip(id, labels, count, &current)`): a row of rounded pill buttons, the selected one filled with `accentDeep` in the bold font. Used by Settings and Discover's details pane.
 

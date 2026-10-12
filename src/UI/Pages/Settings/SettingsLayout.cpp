@@ -51,7 +51,7 @@ void SettingsLayout::BeginCard(const char* id, bool fullWidth)
 	float width = 0.0f;
 	if (m_flow.active) {
 		const float cursorY = ImGui::GetCursorScreenPos().y;
-		if (m_flow.afterCardY < 0.0f || cursorY > m_flow.afterCardY + 0.5f) {
+		if (!m_flow.hasCard || cursorY > m_flow.afterCardY + 0.5f) {
 			// First card, or content was drawn after the last one: a new section starts here.
 			for (float& y : m_flow.columnY)
 				y = cursorY;
@@ -97,6 +97,7 @@ void SettingsLayout::EndCard()
 	ImGui::SetCursorScreenPos(ImVec2(m_flow.x, FlowBottom()));
 	ImGui::Dummy(ImVec2(0.0f, 0.0f));
 	m_flow.afterCardY = ImGui::GetCursorScreenPos().y;
+	m_flow.hasCard = true;
 }
 
 void SettingsLayout::CardTitle(const char* title, const char* subtitle)
@@ -150,25 +151,45 @@ void SettingsLayout::EndRows()
 	ImGui::PopStyleVar();
 }
 
-// A tinted notice box, e.g. for placeholder sections.
-void SettingsLayout::Notice(const char* text, const ImVec4& tint)
+bool SettingsLayout::Notice(const char* id, const char* text, const ImVec4& tint)
 {
+	ImGui::PushID(id);
+	bool dismissed = false;
 	const ImVec2 pos = ImGui::GetCursorScreenPos();
 	const float width = ImGui::GetContentRegionAvail().x;
 	ImDrawList* drawList = ImGui::GetWindowDrawList();
 	drawList->ChannelsSplit(2);
 	drawList->ChannelsSetCurrent(1);
 	ImGui::SetCursorScreenPos(ImVec2(pos.x + S(16.0f), pos.y + S(10.0f)));
-	ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + width - S(32.0f));
+	ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + width - S(32.0f) - S(28.0f));
 	ImGui::TextUnformatted(text);
 	ImGui::PopTextWrapPos();
 	const float height = ImGui::GetItemRectMax().y - pos.y + S(10.0f);
+	if (Widgets::CloseX("##hide_notice", ImVec2(pos.x + width - S(30.0f), pos.y + S(8.0f)), S(22.0f)))
+		ImGui::OpenPopup("Hide this tip?");
 	drawList->ChannelsSetCurrent(0);
 	drawList->AddRectFilled(pos, ImVec2(pos.x + width, pos.y + height), ImGui::GetColorU32(Theme::WithAlpha(tint, 0.14f)), S(8.0f));
 	drawList->AddRectFilled(pos, ImVec2(pos.x + S(4.0f), pos.y + height), ImGui::GetColorU32(tint), S(2.0f));
 	drawList->ChannelsMerge();
 	ImGui::SetCursorScreenPos(ImVec2(pos.x, pos.y + height));
 	ImGui::Dummy(ImVec2(width, S(8.0f)));
+
+	const ImVec2 display = ImGui::GetIO().DisplaySize;
+	ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+	if (ImGui::BeginPopupModal("Hide this tip?", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize)) {
+		ImGui::TextUnformatted("It won't come back on later launches.");
+		ImGui::Spacing();
+		if (ImGui::Button("Don't show again")) {
+			dismissed = true;
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Cancel"))
+			ImGui::CloseCurrentPopup();
+		ImGui::EndPopup();
+	}
+	ImGui::PopID();
+	return dismissed;
 }
 
 void SettingsLayout::FolderRow(const char* label, const char* hint, const std::string& path)

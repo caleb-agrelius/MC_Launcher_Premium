@@ -32,18 +32,20 @@ _deps/
 *.tlog/
 *.recipe
 
-# Application-generated data (also matches copies next to the exe)
-downloads/
-installs/
-servers/
-app.log
-imgui.ini
-settings.json
-library.json
-downloads.json
-account.dat
-minecraft/
-instances/
+# Application-generated data in the repo root, where the app runs from. Anchored with a
+# leading slash: unanchored names like downloads/ and servers/ also matched source folders
+# (src/Services/Downloads, src/UI/Pages/Servers, ...). Copies next to the exe are under /build*/.
+/downloads/
+/installs/
+/servers/
+/app.log
+/imgui.ini
+/settings.json
+/library.json
+/downloads.json
+/account.dat
+/minecraft/
+/instances/
 
 # Modpack archives
 *.mrpack

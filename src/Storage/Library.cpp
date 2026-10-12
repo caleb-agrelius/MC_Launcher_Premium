@@ -78,6 +78,7 @@ static Modpack PackFromJson(const json& item)
 			pack.installedVersions.push_back(std::move(version));
 	}
 	pack.activeVersion = item.value("activeVersion", "");
+	pack.playSeconds = std::max<std::int64_t>(0, item.value("playSeconds", std::int64_t{ 0 }));
 	return pack;
 }
 
@@ -119,6 +120,8 @@ static json PackToJson(const Modpack& pack)
 		{ "optionalMods", pack.optionalMods },
 		{ "files", FilesToJson(pack.files) },
 	};
+	if (pack.playSeconds > 0)
+		out["playSeconds"] = pack.playSeconds;
 	if (!versions.empty()) {
 		out["installedVersions"] = versions;
 		out["activeVersion"] = pack.activeVersion;
@@ -294,8 +297,10 @@ void AddInstalledVersion(Library& library, const Modpack& pack, const InstalledV
 {
 	Modpack& entry = library[pack.id];
 	std::vector<InstalledVersion> versions = std::move(entry.installedVersions);
+	const std::int64_t playSeconds = entry.playSeconds;
 	entry = pack; // the newest details (name, icon, description, ...)
 	entry.installedVersions = std::move(versions);
+	entry.playSeconds = playSeconds;
 	bool replaced = false;
 	for (InstalledVersion& v : entry.installedVersions) {
 		if (v.key == version.key) {

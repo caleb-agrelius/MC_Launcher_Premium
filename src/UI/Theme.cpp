@@ -285,8 +285,8 @@ void Apply(std::size_t themeIndex, float dpiScale, float userScale)
 	style.FrameRounding = 6.0f;
 	style.PopupRounding = 6.0f;
 	style.ScrollbarRounding = 8.0f;
-	style.ScrollbarSize = 12.0f;
-	style.ScrollbarPadding = 3.0f; // the grab floats inside its track instead of filling it
+	style.ScrollbarSize = 20.0f;
+	style.ScrollbarPadding = 7.0f; // the grab floats inside its track instead of filling it
 	style.GrabRounding = 6.0f;
 	style.GrabMinSize = 14.0f;
 	style.WindowPadding = ImVec2(18.0f, 16.0f);

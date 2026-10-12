@@ -13,7 +13,8 @@ public:
 	PackPlayButton(PackLibrary& library, PlayService& plays, INavigator& navigator)
 		: m_library(library), m_plays(plays), m_navigator(navigator) {}
 
-	void Draw(const Modpack& pack);
+	// compact: a shorter, accent-filled button, for the details modal's side column.
+	void Draw(const Modpack& pack, bool compact = false);
 
 private:
 	PackLibrary& m_library;

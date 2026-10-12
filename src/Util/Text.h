@@ -29,5 +29,8 @@ bool ContainsIgnoreCase(const std::string& haystack, const std::string& lowerNee
 // A byte count as "512 B", "1.4 KB", "23.0 MB" or "1.2 GB".
 std::string FormatFileSize(std::uint64_t bytes);
 
+// A play time as "Not played yet", "12 min", "3 h 05 min" or "120 h".
+std::string FormatPlaytime(std::int64_t seconds);
+
 // A file time as local "YYYY-MM-DD HH:MM".
 std::string FormatFileTime(std::filesystem::file_time_type time);

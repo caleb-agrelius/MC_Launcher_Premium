@@ -18,11 +18,17 @@ public:
 		: m_details(details), m_downloads(downloads), m_library(library), m_versions(versions), m_installer(installer) {}
 
 	// pack is the selected result (picking another version changes it) and view the source it came from.
-	void Draw(SourceView& view, Modpack& pack);
+	// compact (the grid view's modal): no section labels, and a pack with one file gets a single
+	// card holding the version picker and that file.
+	void Draw(SourceView& view, Modpack& pack, bool compact = false);
 
 private:
-	void DrawPlanInstallCard(SourceView& view, Modpack& pack);
-	void DrawFileCards(SourceView& view, Modpack& pack);
+	void DrawPlanInstallCard(SourceView& view, Modpack& pack, bool compact);
+	void DrawFileCards(SourceView& view, Modpack& pack, bool compact);
+	// "Version [picker]  Minecraft x . loader" for a source that installs file by file.
+	void DrawVersionRow(Modpack& pack, float comboWidth);
+	// One file: name, size and its Install / progress / Installed state. Draws inside a card.
+	void DrawFileRow(Modpack& pack, const PackFile& file);
 
 	PackDetailsService& m_details;
 	DownloadService& m_downloads;

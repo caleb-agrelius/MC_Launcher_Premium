@@ -22,9 +22,14 @@ public:
 		: m_details(details), m_settings(settings), m_images(images), m_install(install), m_play(play), m_tabs(tabs) {}
 
 	// selected may be null (nothing found yet). view is the source it came from.
-	void Draw(SourceView* view, Modpack* selected, bool searching, const PageFrame& frame);
+	// compact (the grid view's modal): the banner shares a row with the version picker, install and
+	// PLAY, and the short description is left to the Description tab, so the tabs show on open.
+	void Draw(SourceView* view, Modpack* selected, bool searching, const PageFrame& frame, bool compact = false);
 
 private:
+	static void DrawStatsRow(const Modpack& pack, bool trimScheme);
+	void DrawCompactTop(SourceView& view, Modpack& pack);
+
 	PackDetailsService& m_details;
 	SettingsStore& m_settings;
 	ImageCache& m_images;

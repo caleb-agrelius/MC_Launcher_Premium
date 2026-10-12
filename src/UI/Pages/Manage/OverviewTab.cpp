@@ -47,6 +47,10 @@ void OverviewTab::Draw(const ManagePageContext& context, ManageFrame& frame)
 	stat(count(m_screenshots.Count(), "screenshot", "screenshots"), Theme::C().textDim);
 	ImGui::NewLine();
 	ImGui::TextDisabled(m_lastPlayed.empty() ? "Not played yet" : "Last played %s", m_lastPlayed.c_str());
+	if (pack.playSeconds > 0) {
+		ImGui::SameLine();
+		ImGui::TextDisabled("  ·  Total playtime %s", FormatPlaytime(pack.playSeconds).c_str());
+	}
 	if (!pack.description.empty()) {
 		ImGui::Spacing();
 		Widgets::WrappedText(Theme::C().text, pack.description.c_str());

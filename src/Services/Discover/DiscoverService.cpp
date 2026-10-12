@@ -19,13 +19,15 @@ DiscoverService::DiscoverService(const Runtime& runtime, SettingsStore& settings
 		if (m_views.count(source))
 			m_state.sources.insert(source);
 	}
+	if (m_state.sources.empty())
+		m_state.sources.insert(OnlineSources().begin(), OnlineSources().end()); // nothing saved = every source
 }
 
 DiscoverPlan DiscoverService::Plan()
 {
 	DiscoverPlan plan;
 	for (PackSource source : OnlineSources()) {
-		if (!m_state.sources.empty() && m_state.sources.count(source) == 0)
+		if (m_state.sources.count(source) == 0)
 			continue;
 		std::string reason;
 		if (!IsSourceAvailable(source, &reason)) {
@@ -60,6 +62,25 @@ void DiscoverService::LoadCategories()
 			m_state.categoriesError = ok ? std::string() : error;
 		});
 	});
+}
+
+bool DiscoverService::AllSourcesSelected() const
+{
+	return m_state.sources.size() == OnlineSources().size();
+}
+
+void DiscoverService::ToggleSource(PackSource source)
+{
+	if (!m_state.sources.erase(source))
+		m_state.sources.insert(source);
+}
+
+void DiscoverService::ToggleAllSources()
+{
+	const bool deselect = AllSourcesSelected();
+	m_state.sources.clear();
+	if (!deselect)
+		m_state.sources.insert(OnlineSources().begin(), OnlineSources().end());
 }
 
 void DiscoverService::SaveSourceFilter()

@@ -19,8 +19,12 @@ bool GameOptionsTab::Draw(Settings& settings, const SettingsPageContext&, Settin
 	bool changed = false;
 	GameOptionsSettings& options = settings.gameOptions;
 
-	ui.Notice("Turn an option on to apply it to every pack when you press Play. Options left off keep "
-		"whatever the pack or your in-game settings use.", Theme::C().info);
+	if (!Settings::NoticeDismissed(settings, "game_options_tip") &&
+		ui.Notice("game_options_tip", "Turn an option on to apply it to every pack when you press Play. Options left off keep "
+			"whatever the pack or your in-game settings use.", Theme::C().info)) {
+		settings.dismissedNotices.push_back("game_options_tip");
+		changed = true;
+	}
 
 	ui.RowsCard("game_options_mode", "How they're applied", [&] {
 		ui.Row("Apply", "Every launch keeps all packs in sync but undoes in-game changes to these options.");

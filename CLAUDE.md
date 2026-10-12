@@ -41,3 +41,12 @@ When a change adds, removes, or changes user-visible behavior or a feature's int
 ## Code style
 
 Follow the C++ Core Guidelines.
+
+
+## Reusable logic and views
+
+Build each piece of logic or UI once and share it. Before writing a widget, helper or rule, look for one that already does the job (`src/UI/Widgets`, `UI/Common`, `Util`, the services) and extend it. When two views need the same thing, extract it and call it from both rather than copying: for example the source-tag pill in `Widgets.cpp` serves the list row and the grid card, `DiscoverResultList::Describe()` feeds both result views, and `DiscoverService::ToggleSource` is the one place the source-filter rules live.
+
+- Put rules and state changes in a service or model, not in a draw function, so every view of the data behaves the same and the rule can be tested without ImGui.
+- A view that comes in variants (list and grid, normal and compact) takes the variant as a parameter or splits its sections into small methods. It does not get a second copy of the whole function.
+- Keep per-frame work cheap: skip drawing and image requests for items that are not visible (`ImGui::IsItemVisible`), do not rebuild lists every frame, and do not do I/O on the UI thread.

@@ -27,8 +27,9 @@ Saved in the data folder (gitignored). A missing or invalid file gives the defau
 | `theme` | `"grass"` | A theme id from [ui-theme.md](ui-theme.md). Unknown ids fall back to Grass Block |
 | `reduceMotion` | false | No page transitions, bubbling lists, image fade-ins, toast animations or smooth scrolling |
 | `showGalleryBanners` | true | When false, pack banners don't load gallery images |
+| `dismissedNotices` | [] | Ids of Settings tips closed with "Don't show again" |
 | `searchLimit` | 30 | Results per search, 10–100 (CurseForge caps it at 50) |
-| `discoverSources` | `[]` | Discover source filters (source keys); empty selects all sources. Unknown keys are ignored |
+| `discoverSources` | `[]` | Discover source filters (source keys); the selected sources; empty (or none saved) selects all sources. Unknown keys are ignored |
 | `window` | omitted | Last normal launcher size and position (`width`, `height`, `x`, `y`, in screen pixels) and `maximized`; saved at shutdown |
 | `microsoftClientId` | `""` | Azure app ID for Microsoft sign-in; empty disables it |
 | `curseForgeApiKey` | `""` | CurseForge API key, stored in plain text; empty uses `MCLP_CURSEFORGE_API_KEY` |
@@ -46,7 +47,11 @@ Saved in the data folder (gitignored). A missing or invalid file gives the defau
 | `customThemes` | `[]` | Custom themes, see [ui-theme.md](ui-theme.md) |
 | `paneWidths` | `{}` | Widths of resizable list panes in unscaled pixels: `discover` (Discover's pack list, default 340) and `servers` (the Servers list, default 320), each 160-1600. Written when a drag ends; see [ui-theme.md](ui-theme.md) |
 
-How the `launch` values are applied is described in [launching.md](launching.md). `LaunchSettingsFor(settings, packId)` picks a pack's own options from `packLaunch` when it has them, always with the global `afterLaunch`. The Minecraft page's notice mentions per-pack settings when any pack has them.
+How the `launch` values are applied is described in [launching.md](launching.md). `LaunchSettingsFor(settings, packId)` picks a pack's own options from `packLaunch` when it has them, always with the global `afterLaunch`. The Minecraft page's tip mentions per-pack settings when any pack has them.
+
+**Tips:** the Minecraft and Game options tabs open with a tinted tip. Its "x" asks "Hide this tip?"; **Don't show again** adds its id (`minecraft_tip`, `game_options_tip`) to `dismissedNotices` in `settings.json`, and it never shows again. **Cancel** keeps it.
+
+**Card columns:** on wide windows cards flow into columns (`SettingsLayout`), each card going to the shortest column using the heights `Widgets::BeginCard` remembers. A card below the visible area is measured invisibly on its first frame (see ui-theme.md), so every height is known by the second frame and scrolling never re-flows the cards. Where the last card ended is tracked with an explicit flag, because screen coordinates go negative once the page is scrolled.
 
 ## Game options (`src/Game/GameOptions.{h,cpp}`)
 - `GameOptionDefs()` lists the vanilla options the page offers, with their options.txt key, group, label, hint, type (`Toggle`, `Slider`, `Choice`, `Text`), vanilla default, and for sliders the range and unit conversion. Keys and value formats follow recent Minecraft (1.19+); versions that don't know a key ignore it.

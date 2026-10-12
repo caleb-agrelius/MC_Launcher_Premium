@@ -83,6 +83,10 @@ void LibraryPackCard::Draw(Modpack& pack)
 		ImGui::AlignTextToFramePadding();
 	}
 	ImGui::TextDisabled("%s", details.c_str());
+	if (pack.playSeconds > 0) {
+		ImGui::SameLine();
+		ImGui::TextDisabled("·  %s played", FormatPlaytime(pack.playSeconds).c_str());
+	}
 	if (const InstalledVersion* active = ActiveInstalledVersion(pack); active && !active->contentChanges.empty()) {
 		ImGui::SameLine();
 		Widgets::ModifiedChip(DescribeContentChanges(active->contentChanges));

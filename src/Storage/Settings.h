@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <map>
 #include <string>
 #include <vector>
@@ -58,6 +59,12 @@ struct Settings {
 	std::string theme = "grass"; // Theme::ThemeInfo::id
 	bool reduceMotion = false;   // no image fade-ins or toast slide-ins
 	bool showGalleryBanners = true;
+	// Ids of the Settings page tips the player closed with "Don't show again".
+	std::vector<std::string> dismissedNotices;
+	static bool NoticeDismissed(const Settings& settings, const std::string& id)
+	{
+		return std::find(settings.dismissedNotices.begin(), settings.dismissedNotices.end(), id) != settings.dismissedNotices.end();
+	}
 	int searchLimit = 30;        // results per search (CurseForge caps it at 50)
 	// Public Azure app client ID used for Microsoft sign-in. The app must still
 	// be approved for the Minecraft API. Empty disables Microsoft sign-in.
