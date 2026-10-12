@@ -8,8 +8,10 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
+#include <iphlpapi.h>
 #include <shellapi.h>
 #pragma comment(lib, "ws2_32.lib")
+#pragma comment(lib, "iphlpapi.lib")
 #else
 #include <cstdlib>
 #include <unistd.h>
@@ -93,6 +95,48 @@ std::string LocalNetworkAddress()
 #else
 	return {};
 #endif
+}
+
+std::vector<NetworkAddress> LocalNetworkAddresses()
+{
+	std::vector<NetworkAddress> out;
+#ifdef _WIN32
+	ULONG size = 16 * 1024;
+	std::vector<unsigned char> buffer;
+	ULONG result = ERROR_BUFFER_OVERFLOW;
+	for (int attempt = 0; attempt < 3 && result == ERROR_BUFFER_OVERFLOW; ++attempt) {
+		buffer.resize(size);
+		result = GetAdaptersAddresses(AF_INET, GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER,
+			nullptr, reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buffer.data()), &size);
+	}
+	if (result != NO_ERROR)
+		return out;
+	for (auto* adapter = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buffer.data()); adapter; adapter = adapter->Next) {
+		if (adapter->OperStatus != IfOperStatusUp || adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK)
+			continue;
+		std::string name;
+		if (adapter->FriendlyName) {
+			const int length = WideCharToMultiByte(CP_UTF8, 0, adapter->FriendlyName, -1, nullptr, 0, nullptr, nullptr);
+			if (length > 1) {
+				name.resize(static_cast<std::size_t>(length - 1));
+				WideCharToMultiByte(CP_UTF8, 0, adapter->FriendlyName, -1, name.data(), length, nullptr, nullptr);
+			}
+		}
+		for (auto* unicast = adapter->FirstUnicastAddress; unicast; unicast = unicast->Next) {
+			const auto* ipv4 = reinterpret_cast<const sockaddr_in*>(unicast->Address.lpSockaddr);
+			if (!ipv4 || ipv4->sin_family != AF_INET)
+				continue;
+			char text[INET_ADDRSTRLEN] = {};
+			if (!inet_ntop(AF_INET, &ipv4->sin_addr, text, sizeof(text)))
+				continue;
+			// Self-assigned (169.254.x.x) addresses mean the adapter has no working network.
+			if (std::string(text).rfind("169.254.", 0) == 0)
+				continue;
+			out.push_back({ text, name });
+		}
+	}
+#endif
+	return out;
 }
 
 }

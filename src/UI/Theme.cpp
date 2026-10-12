@@ -323,6 +323,43 @@ void Apply(std::size_t themeIndex, float dpiScale, float userScale)
 	colors[ImGuiCol_ScrollbarGrabHovered] = Mix(p.border, p.accent, 0.3f);
 	colors[ImGuiCol_ScrollbarGrabActive] = p.accentDeep;
 	colors[ImGuiCol_NavCursor] = p.accent;
+	// Everything else ImGui draws, so nothing keeps ImGui's default blue: dialog title bars
+	// and the dimmed page behind them, tabs, links, separators, tables and drag targets.
+	colors[ImGuiCol_BorderShadow] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+	colors[ImGuiCol_TitleBg] = p.panelBg;
+	colors[ImGuiCol_TitleBgActive] = Mix(p.panelBg, p.accentDeep, 0.35f);
+	colors[ImGuiCol_TitleBgCollapsed] = WithAlpha(p.panelBg, 0.75f);
+	colors[ImGuiCol_MenuBarBg] = p.panelBg;
+	colors[ImGuiCol_ModalWindowDimBg] = WithAlpha(p.windowBg, 0.65f);
+	colors[ImGuiCol_NavWindowingHighlight] = WithAlpha(p.accent, 0.7f);
+	colors[ImGuiCol_NavWindowingDimBg] = WithAlpha(p.windowBg, 0.5f);
+	colors[ImGuiCol_CheckboxSelectedBg] = colors[ImGuiCol_FrameBg];
+	colors[ImGuiCol_SeparatorHovered] = Mix(p.border, p.accent, 0.5f);
+	colors[ImGuiCol_SeparatorActive] = p.accent;
+	colors[ImGuiCol_ResizeGrip] = WithAlpha(p.accentDeep, 0.25f);
+	colors[ImGuiCol_ResizeGripHovered] = WithAlpha(p.accent, 0.6f);
+	colors[ImGuiCol_ResizeGripActive] = p.accent;
+	colors[ImGuiCol_InputTextCursor] = p.text;
+	colors[ImGuiCol_Tab] = Mix(p.panelBg, p.cardBg, 0.6f);
+	colors[ImGuiCol_TabHovered] = Mix(p.panelBg, p.accentDeep, 0.6f);
+	colors[ImGuiCol_TabSelected] = p.accentDeep;
+	colors[ImGuiCol_TabSelectedOverline] = p.accent;
+	colors[ImGuiCol_TabDimmed] = colors[ImGuiCol_Tab];
+	colors[ImGuiCol_TabDimmedSelected] = Mix(p.panelBg, p.accentDeep, 0.6f);
+	colors[ImGuiCol_TabDimmedSelectedOverline] = WithAlpha(p.accent, 0.5f);
+	colors[ImGuiCol_PlotLines] = p.textDim;
+	colors[ImGuiCol_PlotLinesHovered] = p.accent;
+	colors[ImGuiCol_PlotHistogramHovered] = Mix(p.accent, p.text, 0.25f);
+	colors[ImGuiCol_TableHeaderBg] = p.cardBg;
+	colors[ImGuiCol_TableBorderStrong] = p.border;
+	colors[ImGuiCol_TableBorderLight] = WithAlpha(p.border, 0.6f);
+	colors[ImGuiCol_TableRowBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+	colors[ImGuiCol_TableRowBgAlt] = WithAlpha(p.text, 0.03f);
+	colors[ImGuiCol_TextLink] = p.accent;
+	colors[ImGuiCol_TreeLines] = p.border;
+	colors[ImGuiCol_DragDropTarget] = p.accent;
+	colors[ImGuiCol_DragDropTargetBg] = WithAlpha(p.accent, 0.15f);
+	colors[ImGuiCol_UnsavedMarker] = p.accent;
 
 	style.ScaleAllSizes(g_scale);
 	style.FontSizeBase = kFontBody;

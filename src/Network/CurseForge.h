@@ -57,6 +57,22 @@ bool BuildCurseForgePlan(HttpClient& http,
 						 std::string* err = nullptr,
 						 const std::atomic<bool>* cancel = nullptr);
 
+// The projects listed in the pack zip's manifest (downloaded into workDir, like
+// BuildCurseForgePlan, so a later install reuses it), with names and summaries.
+bool FetchCurseForgePackMods(HttpClient& http,
+							 const Modpack& pack,
+							 const std::string& workDir,
+							 std::vector<PackMod>& out,
+							 std::string* err = nullptr,
+							 const std::atomic<bool>* cancel = nullptr);
+
+// The project's full description (HTML), from /mods/{id}/description.
+bool FetchCurseForgeDescription(HttpClient& http,
+								const Modpack& pack,
+								std::string& out,
+								std::string* err = nullptr,
+								const std::atomic<bool>* cancel = nullptr);
+
 // A pack's manifest.json, the parts the installer uses.
 struct CurseForgeManifest {
 	std::string name;

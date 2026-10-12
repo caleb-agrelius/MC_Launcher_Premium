@@ -373,6 +373,8 @@ bool BuildAtLauncherPlan(HttpClient& http,
 				if (err) *err = "Unsafe path in ATLauncher manifest: " + file.relPath;
 				return false;
 			}
+			if (!file.extract && !mod.value("server", true))
+				plan.clientOnlyFiles.push_back(file.relPath);
 			if (download == "server")
 				file.url = std::string(kServer) + url;
 			else if (download == "direct")
@@ -393,5 +395,41 @@ bool BuildAtLauncherPlan(HttpClient& http,
 		plan.notes.push_back(std::to_string(optional) + " optional mod(s) weren't chosen and were skipped.");
 	if (unsupported > 0)
 		plan.notes.push_back(std::to_string(unsupported) + " mod(s) of unsupported types (mcpc, decomp, millenaire) were skipped.");
+	return true;
+}
+
+bool FetchAtLauncherPackMods(HttpClient& http,
+							 const Modpack& pack,
+							 std::vector<PackMod>& out,
+							 std::string* err,
+							 const std::atomic<bool>* cancel)
+{
+	out.clear();
+	json configs;
+	if (!GetJson(http, ConfigsUrl(pack, pack.sourceVersionId, "Configs.json"), configs, err, cancel))
+		return false;
+	try {
+		for (const auto& item : configs.value("mods", json::array())) {
+			// The loader itself and hidden library files aren't mods the player would recognize.
+			const std::string type = ToLower(StringOrEmpty(item, "type"));
+			if (type == "forge" || type == "mcpc" || item.value("library", false) || item.value("hidden", false))
+				continue;
+			PackMod mod;
+			mod.name = StringOrEmpty(item, "name");
+			mod.version = StringOrEmpty(item, "version");
+			mod.summary = StringOrEmpty(item, "description");
+			mod.url = StringOrEmpty(item, "website");
+			const bool client = item.value("client", true);
+			const bool server = item.value("server", true);
+			mod.clientOnly = client && !server;
+			mod.serverOnly = server && !client;
+			mod.optional = item.value("optional", false);
+			out.push_back(std::move(mod));
+		}
+	}
+	catch (const std::exception& ex) {
+		if (err) *err = std::string("Unexpected Configs.json: ") + ex.what();
+		return false;
+	}
 	return true;
 }

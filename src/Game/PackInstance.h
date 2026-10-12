@@ -27,6 +27,8 @@ struct InstalledPack {
 	LoaderKind loader = LoaderKind::Vanilla;
 	std::string loaderVersion; // normalized for InstallLoader (e.g. "47.2.0", not "forge-47.2.0")
 	std::string loaderSource;  // where the loader came from, for messages: "pack.json" or "bin/modpack.jar"
+	std::string version;       // the pack's own version (pack.json "version", else "sourceVersionId")
+	std::vector<std::string> clientOnlyFiles; // paths under minecraft/ the source marks client-only
 };
 
 // True when installDir holds a pack.json (a whole-pack install rather than an .mrpack).

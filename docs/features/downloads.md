@@ -54,5 +54,5 @@ While any download or extraction is running, the sidebar's **Downloads** entry s
 
 ## Saved downloads (`downloads.json`)
 - When a download succeeds, the worker posts `saveDownloads()` to the `UiQueue`. That call copies every entry with a non-empty `outPath` under the lock and writes them to `downloads.json` with `SaveDownloads` (`src/Storage/Library.{h,cpp}`). Each record holds the URL, `fileName`, `outPath`, and a copy of the pack.
-- At startup, after My Library loads, `LoadSavedDownloads` restores those entries into `downloads`. Entries whose file is no longer on disk are skipped. A restored entry is marked `installed` when its pack is in My Library (see [library.md](library.md)). Otherwise, the Downloads page shows **Install files** for it, and so does Discover while the pack's listed file has the same URL.
+- At startup, after My Library loads, `LoadSavedDownloads` restores those entries into `downloads`. Entries whose file is no longer on disk are skipped. A restored entry is marked `installed` when its pack is in My Library (see [library.md](library.md)). Otherwise, the Downloads page shows **Install files** for it, and Discover shows **Install** (which extracts the saved file) while the pack's listed file has the same URL.
 - Progress, failed downloads, and extraction errors aren't saved, so after a restart only finished downloads reappear.

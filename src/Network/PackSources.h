@@ -109,6 +109,41 @@ bool FetchOptionalMods(HttpClient& http,
 					   std::string* err = nullptr,
 					   const std::atomic<bool>* cancel = nullptr);
 
+// The pack's full description as plain text (see MarkupToPlainText). Technic and
+// ATLauncher search results already hold it, so they make no request. Falls back to
+// pack.description when the source has nothing longer.
+bool FetchPackDescription(HttpClient& http,
+						  const Modpack& pack,
+						  std::string& out,
+						  std::string* err = nullptr,
+						  const std::atomic<bool>* cancel = nullptr);
+
+// One mod (or resource pack, shader pack...) a pack version includes, for Discover's Mods tab.
+struct PackMod {
+	std::string name;       // display name, e.g. "Sodium"
+	std::string summary;    // one-line description, when the source has one
+	std::string version;    // version or file name, when known
+	std::string url;        // the mod's page, when known
+	bool clientOnly = false; // the source says servers don't need it
+	bool serverOnly = false;
+	bool optional = false;
+};
+
+struct PackModList {
+	std::vector<PackMod> mods; // sorted by name, ignoring case
+	std::string note;          // e.g. why the list is empty or incomplete
+};
+
+// The mods in the pack's version (pack.sourceVersionId, so the pack's version must be
+// loaded first). CurseForge downloads the pack zip into workDir to read its manifest; the
+// install reuses it. Technic single-zip packs succeed with an empty list and a note.
+bool FetchPackMods(HttpClient& http,
+				   const Modpack& pack,
+				   const std::string& workDir,
+				   PackModList& out,
+				   std::string* err = nullptr,
+				   const std::atomic<bool>* cancel = nullptr);
+
 // Builds the install plan for the pack's chosen version (pack.sourceVersionId). May
 // download the pack's own archive (e.g. a CurseForge zip) into workDir first.
 // status reports what it is doing, for the UI.

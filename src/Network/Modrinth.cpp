@@ -3,6 +3,9 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+#include <map>
+
 using json = nlohmann::json;
 
 static const char* kApiBase = "https://api.modrinth.com/v2";
@@ -196,6 +199,131 @@ bool FetchLatestModrinthVersion(HttpClient& http,
 	}
 	catch (const std::exception& ex) {
 		if (err) *err = std::string("Unexpected version response: ") + ex.what();
+		return false;
+	}
+	return true;
+}
+
+bool FetchModrinthPackMods(HttpClient& http,
+						   const std::string& versionId,
+						   std::vector<PackMod>& out,
+						   std::string* err,
+						   const std::atomic<bool>* cancel)
+{
+	out.clear();
+	std::string body;
+	if (!http.Get(std::string(kApiBase) + "/version/" + HttpClient::UrlEncode(versionId), body, err, cancel))
+		return false;
+	std::vector<std::string> ids;
+	try {
+		const json version = json::parse(body);
+		for (const auto& dependency : version.value("dependencies", json::array())) {
+			const std::string id = StringOrEmpty(dependency, "project_id");
+			if (!id.empty() && std::find(ids.begin(), ids.end(), id) == ids.end())
+				ids.push_back(id);
+		}
+	}
+	catch (const std::exception& ex) {
+		if (err) *err = std::string("Unexpected version response: ") + ex.what();
+		return false;
+	}
+	// /projects takes a JSON array of ids; 100 at a time keeps the URL short.
+	for (std::size_t start = 0; start < ids.size(); start += 100) {
+		json batch = json::array();
+		for (std::size_t i = start; i < ids.size() && i < start + 100; ++i)
+			batch.push_back(ids[i]);
+		if (!http.Get(std::string(kApiBase) + "/projects?ids=" + HttpClient::UrlEncode(batch.dump()), body, err, cancel))
+			return false;
+		try {
+			for (const auto& project : json::parse(body)) {
+				PackMod mod;
+				mod.name = StringOrEmpty(project, "title");
+				mod.summary = StringOrEmpty(project, "description");
+				const std::string slug = StringOrEmpty(project, "slug");
+				const std::string type = StringOrEmpty(project, "project_type");
+				if (!slug.empty())
+					mod.url = "https://modrinth.com/" + (type.empty() ? std::string("mod") : type) + "/" + slug;
+				mod.clientOnly = StringOrEmpty(project, "server_side") == "unsupported";
+				mod.serverOnly = StringOrEmpty(project, "client_side") == "unsupported";
+				out.push_back(std::move(mod));
+			}
+		}
+		catch (const std::exception& ex) {
+			if (err) *err = std::string("Unexpected projects response: ") + ex.what();
+			return false;
+		}
+	}
+	return true;
+}
+
+bool FindModrinthClientOnly(HttpClient& http,
+							const std::vector<std::string>& sha1s,
+							std::set<std::string>& clientOnly,
+							std::string* err,
+							const std::atomic<bool>* cancel)
+{
+	if (sha1s.empty())
+		return true;
+	// 1. Hash -> the project that published the file.
+	std::string body;
+	const json request = { { "hashes", sha1s }, { "algorithm", "sha1" } };
+	if (!http.Post(std::string(kApiBase) + "/version_files", request.dump(), body, err, cancel))
+		return false;
+	std::map<std::string, std::vector<std::string>> hashesByProject;
+	try {
+		const json versions = json::parse(body); // items() only refers to it, so it must outlive the loop
+		for (const auto& [hash, version] : versions.items()) {
+			const std::string project = StringOrEmpty(version, "project_id");
+			if (!project.empty())
+				hashesByProject[project].push_back(hash);
+		}
+	}
+	catch (const std::exception& ex) {
+		if (err) *err = std::string("Unexpected version_files response: ") + ex.what();
+		return false;
+	}
+	// 2. Each project's server side, 100 projects per request.
+	std::vector<std::string> projects;
+	for (const auto& [project, hashes] : hashesByProject)
+		projects.push_back(project);
+	for (std::size_t start = 0; start < projects.size(); start += 100) {
+		json batch = json::array();
+		for (std::size_t i = start; i < projects.size() && i < start + 100; ++i)
+			batch.push_back(projects[i]);
+		if (!http.Get(std::string(kApiBase) + "/projects?ids=" + HttpClient::UrlEncode(batch.dump()), body, err, cancel))
+			return false;
+		try {
+			for (const auto& project : json::parse(body)) {
+				if (StringOrEmpty(project, "server_side") != "unsupported")
+					continue;
+				const auto it = hashesByProject.find(StringOrEmpty(project, "id"));
+				if (it != hashesByProject.end())
+					clientOnly.insert(it->second.begin(), it->second.end());
+			}
+		}
+		catch (const std::exception& ex) {
+			if (err) *err = std::string("Unexpected projects response: ") + ex.what();
+			return false;
+		}
+	}
+	return true;
+}
+
+bool FetchModrinthDescription(HttpClient& http,
+							  const std::string& projectIdOrSlug,
+							  std::string& out,
+							  std::string* err,
+							  const std::atomic<bool>* cancel)
+{
+	out.clear();
+	std::string body;
+	if (!http.Get(std::string(kApiBase) + "/project/" + HttpClient::UrlEncode(projectIdOrSlug), body, err, cancel))
+		return false;
+	try {
+		out = StringOrEmpty(json::parse(body), "body");
+	}
+	catch (const std::exception& ex) {
+		if (err) *err = std::string("Unexpected project response: ") + ex.what();
 		return false;
 	}
 	return true;

@@ -5,7 +5,7 @@ Turning a downloaded file into extracted pack files.
 Whole-pack installs from CurseForge and the other plan-based sources use a different layout, `installs/<pack id>/minecraft/` plus `pack.json`; see [pack-sources.md](pack-sources.md).
 
 ## Trigger
-The **Install files** button appears once a file has downloaded, both on Discover (see [discover.md](discover.md)) and on the Downloads page (see [downloads.md](downloads.md)). Both call `startInstall(url, pack, zipPath)` in `src/main.cpp`, which starts a worker thread that sets `installing` and then updates `installProgress`, `installed`, and `installError` in the shared download state (see [downloads.md](downloads.md)).
+Discover's **Install** button downloads a pack file and extracts it right away (see [discover.md](discover.md)). A file that was downloaded but not extracted gets **Install** on Discover and **Install files** on the Downloads page (see [downloads.md](downloads.md)). All of them call `startInstall(url, pack, zipPath)` in `src/main.cpp`, which starts a worker thread that sets `installing` and then updates `installProgress`, `installed`, and `installError` in the shared download state (see [downloads.md](downloads.md)).
 
 ## Extraction (`src/Storage/Installer.{h,cpp}`)
 - `InstallZip(zipPath, targetDir, progress, err, cancel)` uses miniz. It is `ExtractZip` with no prefix.
@@ -24,4 +24,4 @@ The **Install files** button appears once a file has downloaded, both on Discove
 - Existing files in the target folder are overwritten. Nothing is cleaned up beforehand.
 - **Path safety (zip-slip):** `IsSafeEntryPath()` (exposed as `IsSafeRelativePath()` for paths from pack manifests) rejects entries with a drive or root (`C:/x`, `/x`) and entries that climb out of the target after normalization (`../x`, `a/../../x`). The first unsafe entry fails the whole install with `"Unsafe path in zip: <name>"`. Entries that stay inside the target (`a/b/../c`) extract normally.
 - Extracted files are written through `OpenFile`/`LongPath` (`src/Util/Paths`), so entry paths past Windows' 260-character limit extract normally. The zip itself is still opened by miniz with a plain path.
-- Successfully extracted packs are recorded in `library.json` and stay in My Library (see [library.md](library.md)). After a restart, a saved download whose pack is in the library shows as "Extracted", and other saved downloads offer **Install files** (see [downloads.md](downloads.md)).
+- Successfully extracted packs are recorded in `library.json` and stay in My Library (see [library.md](library.md)). After a restart, a saved download whose pack is in the library shows as "Installed" on Discover, and other saved downloads offer **Install** on Discover and **Install files** on the Downloads page (see [downloads.md](downloads.md)).

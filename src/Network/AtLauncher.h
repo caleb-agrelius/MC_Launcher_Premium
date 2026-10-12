@@ -42,6 +42,14 @@ bool FetchAtLauncherOptionalMods(HttpClient& http,
 								 std::string* err = nullptr,
 								 const std::atomic<bool>* cancel = nullptr);
 
+// Every mod in the version's Configs.json (optional ones flagged), without the loader
+// and hidden libraries.
+bool FetchAtLauncherPackMods(HttpClient& http,
+							 const Modpack& pack,
+							 std::vector<PackMod>& out,
+							 std::string* err = nullptr,
+							 const std::atomic<bool>* cancel = nullptr);
+
 // Reads Configs.json, downloads Configs.zip into workDir, and plans every required client
 // mod plus the optional ones named in pack.optionalMods. Other optional mods are skipped
 // (and noted).

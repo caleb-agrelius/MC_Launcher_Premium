@@ -1,9 +1,11 @@
 #pragma once
 
 #include "Model/Modpack.h"
+#include "Network/PackSources.h"
 
 #include <atomic>
 #include <cstdint>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -50,6 +52,28 @@ bool FetchLatestModrinthVersion(HttpClient& http,
 								std::string* err = nullptr,
 								const std::atomic<bool>* cancel = nullptr);
 
+// The Modrinth projects a pack version bundles (its "embedded" dependencies), with names,
+// summaries and sides. Files hosted elsewhere aren't dependencies, so they aren't listed.
+bool FetchModrinthPackMods(HttpClient& http,
+						   const std::string& versionId,
+						   std::vector<PackMod>& out,
+						   std::string* err = nullptr,
+						   const std::atomic<bool>* cancel = nullptr);
+
+// Looks mod files up on Modrinth by SHA-1 and adds the hashes of those whose project
+// doesn't run on servers (server_side "unsupported") to clientOnly. Unknown files are left out.
+bool FindModrinthClientOnly(HttpClient& http,
+							const std::vector<std::string>& sha1s,
+							std::set<std::string>& clientOnly,
+							std::string* err = nullptr,
+							const std::atomic<bool>* cancel = nullptr);
+
+// The project's full description (its "body", in Markdown).
+bool FetchModrinthDescription(HttpClient& http,
+							  const std::string& projectIdOrSlug,
+							  std::string& out,
+							  std::string* err = nullptr,
+							  const std::atomic<bool>* cancel = nullptr);
 // Every version of a project that has an .mrpack, newest first.
 bool ListModrinthVersions(HttpClient& http,
 						  const std::string& projectIdOrSlug,

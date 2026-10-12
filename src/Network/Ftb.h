@@ -34,6 +34,20 @@ bool FetchFtbVersion(HttpClient& http,
 					 std::string* err = nullptr,
 					 const std::atomic<bool>* cancel = nullptr);
 
+// The mods in the version's file list (type "mod"), named after their files.
+bool FetchFtbPackMods(HttpClient& http,
+					  const Modpack& pack,
+					  std::vector<PackMod>& out,
+					  std::string* err = nullptr,
+					  const std::atomic<bool>* cancel = nullptr);
+
+// The pack's full description (Markdown).
+bool FetchFtbDescription(HttpClient& http,
+						 const Modpack& pack,
+						 std::string& out,
+						 std::string* err = nullptr,
+						 const std::atomic<bool>* cancel = nullptr);
+
 // Reads the version's file list. Files hosted on CurseForge are resolved through the
 // CurseForge API when a key is configured, else listed as blocked.
 bool BuildFtbPlan(HttpClient& http,

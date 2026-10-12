@@ -6,7 +6,10 @@
 #include "Technic.h"
 #include "HttpClient.h"
 #include "Modrinth.h"
+#include "Util/Text.h"
 
+#include <algorithm>
+#include <cctype>
 #include <iterator>
 
 namespace {
@@ -257,6 +260,82 @@ bool FetchOptionalMods(HttpClient& http,
 	out.clear();
 	if (pack.source == PackSource::ATLauncher)
 		return FetchAtLauncherOptionalMods(http, pack, out, err, cancel);
+	return true;
+}
+
+bool FetchPackDescription(HttpClient& http,
+						  const Modpack& pack,
+						  std::string& out,
+						  std::string* err,
+						  const std::atomic<bool>* cancel)
+{
+	out.clear();
+	std::string markup;
+	bool ok = true;
+	switch (pack.source) {
+	case PackSource::Modrinth:
+		ok = FetchModrinthDescription(http, pack.sourceId.empty() ? pack.id : pack.sourceId, markup, err, cancel);
+		break;
+	case PackSource::CurseForge:
+		ok = FetchCurseForgeDescription(http, pack, markup, err, cancel);
+		break;
+	case PackSource::FTB:
+		ok = FetchFtbDescription(http, pack, markup, err, cancel);
+		break;
+	default:
+		break;
+	}
+	if (!ok)
+		return false;
+	out = MarkupToPlainText(markup.empty() ? pack.description : markup);
+	return true;
+}
+
+bool FetchPackMods(HttpClient& http,
+				   const Modpack& pack,
+				   const std::string& workDir,
+				   PackModList& out,
+				   std::string* err,
+				   const std::atomic<bool>* cancel)
+{
+	out = {};
+	if (pack.sourceVersionId.empty()) {
+		if (err) *err = "The pack's version hasn't loaded yet";
+		return false;
+	}
+	bool ok = false;
+	switch (pack.source) {
+	case PackSource::Modrinth:
+		ok = FetchModrinthPackMods(http, pack.sourceVersionId, out.mods, err, cancel);
+		if (ok)
+			out.note = "Only mods hosted on Modrinth are listed.";
+		break;
+	case PackSource::CurseForge:
+		ok = FetchCurseForgePackMods(http, pack, workDir, out.mods, err, cancel);
+		break;
+	case PackSource::FTB:
+		ok = FetchFtbPackMods(http, pack, out.mods, err, cancel);
+		break;
+	case PackSource::Technic:
+		ok = FetchTechnicPackMods(http, pack, out.mods, err, cancel);
+		if (ok && !pack.sourceIsSolder)
+			out.note = "This pack is a single archive, so its mods aren't known until it's installed.";
+		break;
+	case PackSource::ATLauncher:
+		ok = FetchAtLauncherPackMods(http, pack, out.mods, err, cancel);
+		break;
+	default:
+		if (err) *err = std::string(PackSourceName(pack.source)) + " packs don't list their mods";
+		return false;
+	}
+	if (!ok)
+		return false;
+	auto lower = [](std::string text) {
+		std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+		return text;
+	};
+	std::stable_sort(out.mods.begin(), out.mods.end(),
+		[&](const PackMod& a, const PackMod& b) { return lower(a.name) < lower(b.name); });
 	return true;
 }
 

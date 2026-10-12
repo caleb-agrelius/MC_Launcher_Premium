@@ -58,6 +58,7 @@ add_executable(MC_Launcher_Premium
   src/Util/Paths.cpp
   src/Util/Process.cpp
   src/Util/Sha1.cpp
+  src/Util/Text.cpp
   ${imgui_backend_source_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
   ${imgui_backend_source_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
 )
@@ -98,6 +99,7 @@ include(CTest)
 if (BUILD_TESTING)
   add_executable(launcher_checks
     tests/LauncherChecks.cpp
+    src/Platform.cpp
     src/Game/GameFiles.cpp
     src/Game/GameOptions.cpp
     src/Game/Loaders.cpp
@@ -113,6 +115,7 @@ if (BUILD_TESTING)
     src/Util/Paths.cpp
     src/Util/Process.cpp
     src/Util/Sha1.cpp
+    src/Util/Text.cpp
   )
   get_target_property(launcher_includes MC_Launcher_Premium INCLUDE_DIRECTORIES)
   get_target_property(launcher_libraries MC_Launcher_Premium LINK_LIBRARIES)
@@ -123,4 +126,32 @@ if (BUILD_TESTING)
   endif()
   add_test(NAME launcher_checks COMMAND launcher_checks)
   set_tests_properties(launcher_checks PROPERTIES TIMEOUT 30)
+
+  # Checks against the real pack APIs. Not a CTest test: they need the internet.
+  add_executable(live_checks
+    tests/LiveChecks.cpp
+    src/Game/GameFiles.cpp
+    src/Game/Loaders.cpp
+    src/Game/PackInstance.cpp
+    src/Model/Modpack.cpp
+    src/Network/AtLauncher.cpp
+    src/Network/CurseForge.cpp
+    src/Network/Ftb.cpp
+    src/Network/HttpClient.cpp
+    src/Network/Modrinth.cpp
+    src/Network/PackSources.cpp
+    src/Network/Technic.cpp
+    src/Storage/InstallPlan.cpp
+    src/Storage/Installer.cpp
+    src/Util/Hash.cpp
+    src/Util/Paths.cpp
+    src/Util/Process.cpp
+    src/Util/Sha1.cpp
+    src/Util/Text.cpp
+  )
+  target_include_directories(live_checks PRIVATE ${launcher_includes})
+  target_link_libraries(live_checks PRIVATE ${launcher_libraries})
+  if (WIN32)
+    target_compile_definitions(live_checks PRIVATE _CRT_SECURE_NO_WARNINGS GLFW_INCLUDE_NONE)
+  endif()
 endif()
