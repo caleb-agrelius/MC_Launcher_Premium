@@ -2,20 +2,44 @@
 
 #include "imgui.h"
 
-// Launcher look: dark slate panels with green accents, Segoe UI text,
-// and sizes that follow the monitor's DPI scale times the user's UI scale.
+#include <cstddef>
+#include <string>
+
+// Launcher look: color themes, Segoe UI text, and sizes that follow the monitor's
+// DPI scale times the user's UI scale.
 namespace Theme {
 
-// Palette
-inline const ImVec4 kAccent = ImVec4(0.40f, 0.83f, 0.50f, 1.0f);
-inline const ImVec4 kAccentDeep = ImVec4(0.16f, 0.34f, 0.22f, 1.0f);
-inline const ImVec4 kError = ImVec4(1.0f, 0.42f, 0.38f, 1.0f);
-inline const ImVec4 kText = ImVec4(0.92f, 0.95f, 0.93f, 1.0f);
-inline const ImVec4 kTextDim = ImVec4(0.55f, 0.62f, 0.60f, 1.0f);
-inline const ImVec4 kWindowBg = ImVec4(0.055f, 0.070f, 0.085f, 1.0f);
-inline const ImVec4 kPanelBg = ImVec4(0.075f, 0.090f, 0.105f, 1.0f);
-inline const ImVec4 kCardBg = ImVec4(0.095f, 0.115f, 0.130f, 1.0f);
-inline const ImVec4 kBorder = ImVec4(0.15f, 0.19f, 0.21f, 1.0f);
+// A theme's colors. ImGui's style colors (hover/active shades etc.) are derived from these.
+struct Palette {
+	ImVec4 windowBg;   // outermost background
+	ImVec4 panelBg;    // sidebar, pack list, details pane
+	ImVec4 cardBg;     // cards inside panels
+	ImVec4 frameBg;    // text boxes, sliders
+	ImVec4 border;
+	ImVec4 text;
+	ImVec4 textDim;    // secondary text
+	ImVec4 accent;     // highlights: selection bars, progress, chips, accent text
+	ImVec4 accentDeep; // filled accent: buttons, selected rows
+	ImVec4 error;
+	ImVec4 info;       // secondary tag color (e.g. loader chips)
+	bool light = false;
+};
+
+struct ThemeInfo {
+	const char* id;   // saved in settings.json
+	const char* name;
+	const char* description;
+	Palette palette;
+};
+
+// The built-in themes. The first is the default.
+const ThemeInfo* Themes();
+std::size_t ThemeCount();
+// Index of the theme with this id, or 0 (the default) if there's none.
+std::size_t FindTheme(const std::string& id);
+
+// The active theme's colors.
+const Palette& C();
 
 // Unscaled font sizes, for ImGui::PushFont(font, size). ImGui applies the global scale.
 constexpr float kFontBody = 16.0f;
@@ -34,12 +58,16 @@ struct Fonts {
 void LoadFonts();
 const Fonts& GetFonts();
 
-// Rebuilds the style for the given monitor DPI scale and user UI scale.
-// Call between frames (before ImGui::NewFrame) whenever either changes.
-void Apply(float dpiScale, float userScale);
+// Rebuilds the style for the given theme, monitor DPI scale and user UI scale.
+// Call between frames (before ImGui::NewFrame) whenever any of them changes.
+void Apply(std::size_t themeIndex, float dpiScale, float userScale);
 
 // Total scale (DPI x user) and a helper to scale design-time pixel sizes.
 float Scale();
 inline float S(float px) { return px * Scale(); }
+
+// Linear blend between two colors (t = 0 gives a, 1 gives b).
+ImVec4 Mix(const ImVec4& a, const ImVec4& b, float t);
+ImVec4 WithAlpha(const ImVec4& color, float alpha);
 
 }

@@ -9,7 +9,8 @@ A C++ Dear ImGui desktop app (GLFW + OpenGL3) for browsing, downloading, and ext
 | Doc | Read when working on |
 |---|---|
 | [app-shell.md](docs/features/app-shell.md) | Startup/shutdown, window, render loop, sidebar navigation, logging |
-| [ui-theme.md](docs/features/ui-theme.md) | Colors, fonts, DPI and UI scaling, `settings.json`, shared widgets (`src/UI/Theme`, `src/UI/Widgets`) |
+| [ui-theme.md](docs/features/ui-theme.md) | Color themes, fonts, DPI and UI scaling, shared widgets, toasts (`src/UI/Theme`, `src/UI/Widgets`, `src/UI/Toasts`) |
+| [settings.md](docs/features/settings.md) | Settings page, `settings.json` fields, Minecraft launch defaults (`src/UI/SettingsPage`, `src/Storage/Settings`) |
 | [images.md](docs/features/images.md) | Pack icons and banners: `ImageCache` (download, decode, GL textures) |
 | [modpack-index.md](docs/features/modpack-index.md) | `resources/index.json` (offline fallback), `LoadIndex`, `Modpack`/`PackFile` structs |
 | [modrinth-search.md](docs/features/modrinth-search.md) | Modrinth API client, `HttpClient::Get`, search/version lookup threading (`UiQueue`) |

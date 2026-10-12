@@ -67,7 +67,7 @@ You can also double-click the exe or start it from any folder. The app finds the
 | `downloads\<pack>\` | Downloaded `.mrpack` files                                     |
 | `installs\<pack>\`  | Extracted pack files                                           |
 | `imgui.ini`         | Window layout                                                  |
-| `settings.json`     | UI scale                                                       |
+| `settings.json`     | Theme, UI scale, and other settings                            |
 
 All of these are gitignored.
 
@@ -141,9 +141,12 @@ src/Model/Modpack.*       Modpack data + local index loader
 src/Network/HttpClient.*  libcurl wrapper (downloads, GET, cancel)
 src/Network/Modrinth.*    Modrinth API client (search, versions)
 src/Storage/Installer.*   Zip extraction
-src/Storage/Settings.*    settings.json (UI scale)
-src/UI/Theme.*            Colors, fonts, DPI/UI scaling
-src/UI/Widgets.*          Pack rows, hero banner, chips, spinner
+src/Storage/Settings.*    settings.json (theme, UI scale, launch defaults)
+src/UI/Theme.*            Color themes, fonts, DPI/UI scaling
+src/UI/SettingsPage.*     Settings page
+src/UI/Toasts.*           Toast notifications
+src/Platform.*            Open folders, system memory
+src/UI/Widgets.*          Pack rows, hero banner, chips, toggles, theme cards
 src/UI/ImageCache.*       Async icon/banner loading (PNG, JPEG, WebP)
 resources/index.json      Offline fallback pack list
 docs/features/            What each feature does (start with CLAUDE.md)

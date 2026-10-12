@@ -7,7 +7,8 @@ Browse modpacks and start downloads and installs. UI code is the `Page::Discover
 - Results come live from Modrinth (see [modrinth-search.md](modrinth-search.md)). Typing schedules a search that runs once the text has been unchanged for 0.4 s (`kSearchDelaySeconds`). The first frame runs an empty search, which lists the most downloaded packs.
 - A status line under the box shows a spinner with "Searching Modrinth...", the total match count, or a red "Modrinth unavailable (...) - showing local packs" message.
 - **Offline fallback:** if the search fails, the list shows packs from `resources/index.json` whose name or description contains the query (case-insensitive). See [modpack-index.md](modpack-index.md).
-- Each search shows up to 30 results (`kSearchLimit`). There is no paging yet.
+- Each search shows up to `settings.searchLimit` results (30 by default, 10–100, set in Settings > Downloads). There is no paging yet.
+- **Ctrl F** opens Discover and puts the cursor in the search box.
 
 ## Pack list (left, 340px, scaled)
 - The heading is "MOST DOWNLOADED" for an empty query and "RESULTS" otherwise.
@@ -20,6 +21,7 @@ Browse modpacks and start downloads and installs. UI code is the `Page::Discover
 ## Pack details (right)
 - **Hero banner** (`Widgets::HeroBanner`), sized to about a third of the pane width (200–340px, scaled):
   - Background, bottom to top: the pack's Modrinth color with a faint Minecraft-style block pattern; the small gallery thumbnail from the search result; the full-size gallery image once it has loaded. Each image fades in, and is scaled to fill and cropped.
+  - With **Gallery banners** turned off in Settings > Appearance, only the color and pattern are shown and no gallery images are downloaded.
   - When a Modrinth pack is selected for the first time, a background lookup (`FetchModrinthBanner`) finds the full-size image. If it fails, the thumbnail stays and the lookup isn't retried.
   - A gradient into the panel color keeps the text readable. On top are the pack icon, the name in large bold text, "by <author>", and chips for the Minecraft version, the loaders, and the pack version.
 - Below the banner, Modrinth packs show a downloads chip and `modrinth.com/modpack/<slug>`. Then comes the wrapped description.

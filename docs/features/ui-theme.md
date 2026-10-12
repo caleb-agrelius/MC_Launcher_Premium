@@ -1,19 +1,19 @@
 # UI Theme and Scaling
 
-Colors, fonts, DPI and UI scaling, the settings file, and shared drawing helpers.
+Color themes, fonts, DPI and UI scaling, shared drawing helpers, and toast notifications. The settings file is described in [settings.md](settings.md).
 
 ## Scaling (`src/UI/Theme.{h,cpp}`)
 - The total scale is the **monitor DPI scale** times the **user UI scale**.
   - The DPI scale comes from `glfwGetWindowContentScale`, e.g. 1.5 at 150% Windows display scaling (common on 4K monitors).
   - The UI scale is a user setting from 75% to 200% in 5% steps, saved in `settings.json`.
-- `Theme::Apply(dpiScale, userScale)` rebuilds the whole ImGui style:
+- `Theme::Apply(themeIndex, dpiScale, userScale)` rebuilds the whole ImGui style:
   - Sets `style.FontScaleDpi` and `style.FontScaleMain`. Text is rendered at the scaled size, not stretched, because ImGui 1.92 rasterizes fonts at the size they are drawn.
   - Scales padding, spacing, rounding and so on with `ScaleAllSizes`.
-- The frame loop calls `Apply` again when the window moves to a monitor with a different DPI, or when the UI scale changes.
+- The frame loop calls `Apply` again when the window moves to a monitor with a different DPI, or when the UI scale or theme changes.
 - `Theme::S(px)` scales a design-time pixel size. Every hardcoded layout size goes through it, e.g. `S(230.0f)` for the sidebar width.
 - Changing the UI scale:
-  - The sidebar footer's `-` and `+` buttons.
-  - Clicking the percentage resets it to 100%.
+  - The sidebar footer's `-` and `+` buttons. Clicking the percentage resets it to 100%.
+  - The UI scale slider on Settings > Appearance.
   - **Ctrl +** / **Ctrl -** / **Ctrl 0** (number row or keypad).
   - Changes apply on the next frame and are saved immediately.
 
@@ -37,19 +37,38 @@ Colors, fonts, DPI and UI scaling, the settings file, and shared drawing helpers
   | `kFontTitle` | 30 |
   | `kFontHero` | 34 |
 
-## Palette
-Dark slate backgrounds with green accents:
+## Themes
+- `Theme::Themes()` lists 10 built-in themes (`ThemeInfo`: `id`, `name`, `description`, `Palette`). The id is what `settings.json` stores. An unknown id falls back to the first theme.
 
-| Constant | Use |
-|---|---|
-| `kAccent` (0.40, 0.83, 0.50) | Accent text, selection bars, progress bars, chips |
-| `kAccentDeep` | Buttons; also the fallback pack color |
-| `kError` (1.0, 0.42, 0.38) | Error text |
-| `kText` / `kTextDim` | Normal / secondary text |
-| `kWindowBg` / `kPanelBg` / `kCardBg` | Window / panels / cards, from darkest to lightest |
-| `kBorder` | Borders and separators |
+  | id | Name | Look |
+  |---|---|---|
+  | `grass` | Grass Block | The original slate and green (default) |
+  | `deep_dark` | Deep Dark | Near-black with sculk cyan |
+  | `nether` | Nether | Netherrack red and lava orange |
+  | `the_end` | The End | Void purple with end stone yellow |
+  | `prismarine` | Prismarine | Ocean teal |
+  | `cherry` | Cherry Grove | Blossom pink |
+  | `sandstone` | Sandstone | Desert gold |
+  | `redstone` | Redstone | Stone grey with red |
+  | `diamond` | Diamond | Midnight blue with icy cyan |
+  | `birch` | Birch | Light theme |
 
-On Windows 10/11 the native title bar is switched to dark mode.
+- `Theme::C()` returns the active `Palette`. Code reads colors from it (e.g. `Theme::C().accent`), never hardcoded values, so everything follows the theme.
+
+  | Field | Use |
+  |---|---|
+  | `windowBg` / `panelBg` / `cardBg` | Window / panels / cards |
+  | `frameBg` | Text boxes, sliders, unselected tab pills |
+  | `border` | Borders and separators |
+  | `text` / `textDim` | Normal / secondary text |
+  | `accent` | Selection bars, progress, accent text, badges, toggles |
+  | `accentDeep` | Buttons and selected rows; also the fallback pack color |
+  | `error` | Error text and error toasts |
+  | `info` | Loader chips, info notices and toasts |
+  | `light` | True for light themes: ImGui's light base style, darker chip text, dark outlines, light title bar |
+
+- `Apply` derives the remaining ImGui colors (hover and active shades, slider grabs, scrollbars) from these by mixing (`Theme::Mix`).
+- To add a theme, add an entry to `kThemes` in `Theme.cpp`. It appears on Settings > Appearance automatically.
 
 ## Settings (`src/Storage/Settings.{h,cpp}`)
 - `settings.json` in the data folder is gitignored. Today it only holds `{"uiScale": 1.0}`.
@@ -65,9 +84,17 @@ On Windows 10/11 the native title bar is switched to dark mode.
 | `Spinner` | A rotating arc the height of a text line |
 | `Chip` | A rounded pill tag tinted with a color |
 | `ThinProgressBar` | An 8px accent progress bar with no text |
-| `NavItem` | A sidebar entry with a green bar when selected |
+| `Toggle` | An on/off switch in the theme's colors |
+| `NavItem` | A sidebar entry with an accent bar when selected, and an optional count badge |
+| `EmptyState` | A centered block illustration, title, hint, and optional button for empty pages |
+| `ThemeCard` | A theme swatch: a miniature launcher drawn in the theme's colors, its name, and a check mark when selected |
 | `PackRow` | A pack list row (see [discover.md](discover.md)) |
 | `HeroBanner` | The banner at the top of the pack details pane (see [discover.md](discover.md)) |
 | `DrawPackIcon` | The pack icon, or a placeholder tile in the pack's color with its first letter, shown until the icon loads or if it fails |
 
-Images fade in over 0.25 s (`FadeAlpha`).
+Images fade in over 0.25 s (`FadeAlpha`), unless **Reduce motion** is on (`Widgets::SetReduceMotion`).
+
+## Toasts (`src/UI/Toasts.{h,cpp}`)
+- `Toasts::Push(kind, title, body)` queues a notification. Kinds are `Info`, `Success`, and `Error`, and set the color of the stripe on the left. Call it on the UI thread; background threads post through `UiQueue`.
+- `Toasts::Draw(reduceMotion)` draws them in the bottom-right corner, newest at the bottom, each in its own non-interactive window. A toast stays 4.5 s, fading and sliding in and out unless reduce motion is on. At most 4 are kept.
+- Current toasts: download complete or failed, and files extracted or extraction failed.

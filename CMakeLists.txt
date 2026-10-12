@@ -26,13 +26,16 @@ FetchContent_MakeAvailable(imgui_backend_source)
 
 add_executable(MC_Launcher_Premium
   src/main.cpp
+  src/Platform.cpp
   src/Model/Modpack.cpp
   src/Network/HttpClient.cpp
   src/Network/Modrinth.cpp
   src/Storage/Installer.cpp
   src/Storage/Settings.cpp
   src/UI/ImageCache.cpp
+  src/UI/SettingsPage.cpp
   src/UI/Theme.cpp
+  src/UI/Toasts.cpp
   src/UI/Widgets.cpp
   ${imgui_backend_source_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
   ${imgui_backend_source_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp

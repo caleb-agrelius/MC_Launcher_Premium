@@ -33,4 +33,6 @@ Shows one card per entry in `downloads`, with the pack icon, the pack name, and 
 - "Files extracted"
 - "Downloaded - open Discover to extract this pack."
 
-If nothing has been started, the page shows a message saying so. Download state is in memory only and resets when the app restarts.
+If nothing has been started, the page shows an empty state with a **Browse modpacks** button that opens Discover.
+
+While any download or extraction is running, the sidebar's **Downloads** entry shows a count badge. When one finishes, a toast says whether it succeeded (see [ui-theme.md](ui-theme.md)). No toast is shown for transfers cancelled at shutdown. Download state is in memory only and resets when the app restarts.
