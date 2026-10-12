@@ -14,6 +14,7 @@
 #include "Storage/Installer.h"
 #include "Storage/Library.h"
 #include "Storage/Settings.h"
+#include "UI/FoxModel.h"
 #include "UI/ImageCache.h"
 #include "UI/SettingsPage.h"
 #include "UI/Theme.h"
@@ -376,6 +377,15 @@ int main(int argc, char** argv)
 		bool focusSearch = false; // Ctrl+F
 		HttpClient http;
 		ImageCache images(http);
+		FoxModel fox;
+		fox.SetReduceMotion(settings.reduceMotion);
+		std::string foxError;
+		if (!dataRoot.empty() &&
+			fox.Load((dataRoot / "src" / "assets" / "minecraft_fox.glb").string(), &foxError))
+			log << "Loaded interactive fox model\n";
+		else
+			log << "Fox model unavailable: "
+				<< (foxError.empty() ? "data folder could not be located" : foxError) << "\n";
 		std::map<std::string, DownloadState> downloads;
 		std::mutex downloadsMutex;
 		std::vector<Worker> workers;
@@ -737,6 +747,7 @@ int main(int argc, char** argv)
 				settingsContext.dpiScale = dpiScale;
 			}
 			Widgets::SetReduceMotion(settings.reduceMotion);
+			fox.SetReduceMotion(settings.reduceMotion);
 			// Save after edits, but not on every keystroke or slider step.
 			if (settingsDirty && !ImGui::IsAnyItemActive()) {
 				settingsDirty = false;
@@ -776,23 +787,9 @@ int main(int argc, char** argv)
 			// ---- Sidebar ----
 			ImGui::BeginChild("sidebar", ImVec2(S(230.0f), 0.0f), ImGuiChildFlags_Borders);
 			{
-				// Logo: a little grass block, then the name.
-				ImDrawList* drawList = ImGui::GetWindowDrawList();
-				const ImVec2 logo = ImGui::GetCursorScreenPos();
-				const float block = S(34.0f);
-				const float px = block / 8.0f;
-				for (int y = 0; y < 8; ++y) {
-					for (int x = 0; x < 8; ++x) {
-						const bool grass = y < 3 || (y == 3 && (x * 7 + 3) % 3 == 0);
-						const float shade = 0.85f + 0.15f * static_cast<float>((x * 5 + y * 3) % 4) / 3.0f;
-						const ImVec4 color = grass ? ImVec4(0.30f * shade, 0.68f * shade, 0.36f * shade, 1.0f)
-							: ImVec4(0.47f * shade, 0.33f * shade, 0.22f * shade, 1.0f);
-						drawList->AddRectFilled(ImVec2(logo.x + x * px, logo.y + y * px),
-							ImVec2(logo.x + (x + 1) * px, logo.y + (y + 1) * px), ImGui::GetColorU32(color));
-					}
-				}
-				ImGui::Dummy(ImVec2(block, block));
-				ImGui::SameLine(0.0f, S(12.0f));
+				// Transparent interactive GLB fox mascot, then the launcher name.
+				fox.Draw(S(56.0f));
+				ImGui::SameLine(0.0f, S(8.0f));
 				ImGui::BeginGroup();
 				Widgets::Text(fonts.bold, Theme::kFontHeading, Theme::C().text, "MC Launcher");
 				ImGui::SetCursorPosY(ImGui::GetCursorPosY() - S(6.0f));
@@ -1303,6 +1300,7 @@ int main(int argc, char** argv)
 		if (settingsDirty)
 			SaveSettings(kSettingsFile, settings);
 		images.Shutdown(); // frees textures while the GL context still exists
+		fox.Shutdown();
 		ImGui_ImplOpenGL3_Shutdown();
 		ImGui_ImplGlfw_Shutdown();
 		ImGui::DestroyContext();

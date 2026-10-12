@@ -16,6 +16,9 @@ A Minecraft Java Edition modpack launcher built with C++ and Dear ImGui.
 - Extract it into `installs/<pack>/`, with protection against malicious archive paths.
 - Play it: the launcher downloads the pack's mods, Minecraft, a Mojang Java runtime and the mod loader (Fabric, Quilt, Forge or NeoForge), then starts the game. See [docs/features/launching.md](docs/features/launching.md).
 - Sign in with a Microsoft account, or play offline with a username. See [docs/features/accounts.md](docs/features/accounts.md).
+- An interactive 3D Minecraft fox mascot in the sidebar (automatic cursor tracking and click-to-hop).
+
+The fox model is by [Aarols32](https://sketchfab.com/3d-models/minecraft-fox-1bb01070f46b430695f96c0d7fb58aec), licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 
 Microsoft sign-in uses a default Entra app client ID, editable in Settings > Account, and requires approval for the Minecraft API. See the [sign-in setup guide](docs/features/account-sign-in.md) and [planned features](docs/features/planned.md).
 

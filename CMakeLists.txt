@@ -39,6 +39,7 @@ add_executable(MC_Launcher_Premium
   src/Storage/Installer.cpp
   src/Storage/Library.cpp
   src/Storage/Settings.cpp
+  src/UI/FoxModel.cpp
   src/UI/ImageCache.cpp
   src/UI/SettingsPage.cpp
   src/UI/Theme.cpp
