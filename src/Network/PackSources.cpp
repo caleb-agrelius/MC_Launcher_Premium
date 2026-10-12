@@ -158,6 +158,9 @@ bool FetchPackVersion(HttpClient& http,
 		if (!FetchLatestModrinthVersion(http, pack.sourceId.empty() ? pack.id : pack.sourceId, version, err, cancel))
 			return false;
 		out.versionNumber = version.versionNumber;
+		out.sourceVersionId = version.id;
+		out.versionType = version.versionType;
+		out.published = version.published;
 		out.gameVersion = version.gameVersion;
 		out.loaders = version.loaders;
 		out.files = std::move(version.files);
@@ -175,6 +178,46 @@ bool FetchPackVersion(HttpClient& http,
 		break;
 	}
 	if (err) *err = std::string(PackSourceName(pack.source)) + " versions aren't supported";
+	return false;
+}
+
+bool ListPackVersions(HttpClient& http,
+					  const Modpack& pack,
+					  std::vector<PackVersionInfo>& out,
+					  std::string* err,
+					  const std::atomic<bool>* cancel)
+{
+	out.clear();
+	switch (pack.source) {
+	case PackSource::Modrinth: {
+		std::vector<ModrinthVersion> versions;
+		if (!ListModrinthVersions(http, pack.sourceId.empty() ? pack.id : pack.sourceId, versions, err, cancel))
+			return false;
+		for (ModrinthVersion& version : versions) {
+			PackVersionInfo info;
+			info.versionNumber = version.versionNumber;
+			info.sourceVersionId = version.id;
+			info.versionType = version.versionType;
+			info.published = version.published;
+			info.gameVersion = version.gameVersion;
+			info.loaders = version.loaders;
+			info.files = std::move(version.files);
+			out.push_back(std::move(info));
+		}
+		return true;
+	}
+	case PackSource::CurseForge:
+		return ListCurseForgeVersions(http, pack, out, err, cancel);
+	case PackSource::FTB:
+		return ListFtbVersions(http, pack, out, err, cancel);
+	case PackSource::Technic:
+		return ListTechnicVersions(http, pack, out, err, cancel);
+	case PackSource::ATLauncher:
+		return ListAtLauncherVersions(http, pack, out, err, cancel);
+	default:
+		break;
+	}
+	if (err) *err = std::string(PackSourceName(pack.source)) + " packs have only one version";
 	return false;
 }
 

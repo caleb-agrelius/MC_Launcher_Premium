@@ -30,7 +30,7 @@ A JSON array of modpacks:
 
 | Field | Type | Used for |
 |---|---|---|
-| `id` | string | Folder name under `downloads/<id>/` and `installs/<id>/` |
+| `id` | string | Folder name under `downloads/<id>/`, and the start of each installed version's folders (`installs/<id>@<version>/`) |
 | `name` | string | Display name; searched on Discover (case-insensitive) |
 | `description` | string | Detail pane text; searched on Discover (case-insensitive) |
 | `version` | string | Shown in list and detail pane |

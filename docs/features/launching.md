@@ -9,15 +9,16 @@ Turning an installed modpack into a running Minecraft. Entry point: `PlayModpack
 
 ## Steps (`PlayModpack`)
 `PlayModpack` has two front ends that share the remaining steps (`InstallAndLaunch`):
-- **`.mrpack` packs** (Modrinth and the local index): steps 1 and 2 below, with `instances/<pack id>/` as the game folder.
-- **Whole-pack installs** (CurseForge, FTB, Technic, ATLauncher), recognized by `installs/<pack id>/pack.json` (`IsWholePackInstall`). The install plan already filled the game folder, `installs/<pack id>/minecraft/`, so steps 1 and 2 are replaced by `ReadInstalledPack()`:
+Play uses the pack's active installed version: its install folder (`PlayRequest::extractedDir`) and game folder (`instanceDir`), see [library.md](library.md#installed-versions).
+- **`.mrpack` packs** (Modrinth and the local index): steps 1 and 2 below.
+- **Whole-pack installs** (CurseForge, FTB, Technic, ATLauncher), recognized by a `pack.json` in the install folder (`IsWholePackInstall`). The install plan already filled the game folder, `<install folder>/minecraft/`, so steps 1 and 2 are replaced by `ReadInstalledPack()`:
   - It reads the Minecraft version, `loader` and `loaderVersion` from `pack.json`. `ParseLoaderName` maps `forge`, `neoforge`, `fabric` and `quilt` (any case). An unknown loader fails with a message naming it.
   - `NormalizeLoaderVersion` strips the forms sources wrap versions in: a `forge-`/`neoforge-`/`fabric-`/`quilt-` prefix, a leading `<mc>-` and a trailing `-<mc>`. `forge-47.2.0`, `1.20.1-47.2.0` and `47.2.0-1.20.1` all become `47.2.0`.
   - **No loader declared** (Technic single-zip packs): the loader is detected from `minecraft/bin/version.json`, else the `version.json` inside `minecraft/bin/modpack.jar`, by finding the loader's own library (`net.minecraftforge:forge`, `net.minecraftforge:minecraftforge`, `net.neoforged:neoforge` or `forge`, `net.fabricmc:fabric-loader`, `org.quiltmc:quilt-loader`), like Prism's `TechnicPackProcessor`. If none is found, the pack launches as vanilla.
   - A missing game folder fails with "Install it again".
 
-1. **Read the pack:** `ReadMrpackIndex()` (`src/Game/PackInstance.cpp`) reads `installs/<pack id>/modrinth.index.json`. It takes the Minecraft version and loader from `dependencies` (`fabric-loader`, `quilt-loader`, `neoforge`, `forge`) and the client files: entries with `env.client == "unsupported"` are skipped, and paths that are absolute or climb out of the instance are rejected.
-2. **Prepare the instance:** `PrepareInstance()` downloads the listed files into `instances/<pack id>/` (the game directory). The first time each pack version is prepared, it copies `overrides/` then `client-overrides/` over it. The marker `instances/<pack id>/.mclp-prepared` records the version and every file it listed, so later launches keep the player's own option and config changes. When a new pack version is prepared, files the old version listed but the new one doesn't (mods the pack dropped) are deleted first. Files the player added were never listed, so they stay.
+1. **Read the pack:** `ReadMrpackIndex()` (`src/Game/PackInstance.cpp`) reads `modrinth.index.json` from the install folder. It takes the Minecraft version and loader from `dependencies` (`fabric-loader`, `quilt-loader`, `neoforge`, `forge`) and the client files: entries with `env.client == "unsupported"` are skipped, and paths that are absolute or climb out of the instance are rejected.
+2. **Prepare the instance:** `PrepareInstance()` downloads the listed files into the game folder. The first time each pack version is prepared, it copies `overrides/` then `client-overrides/` over it. The marker `.mclp-prepared` in the game folder records the version and every file it listed, so later launches keep the player's own option and config changes. When a new pack version is prepared, files the old version listed but the new one doesn't (mods the pack dropped) are deleted first. Files the player added were never listed, so they stay.
    Then, if any game options are turned on in Settings > Game options, `ApplyGameOptions()` writes them into the instance's `options.txt` ("Applying game options"; see [settings.md](settings.md)).
 3. **Vanilla Minecraft:** `InstallVanillaJson()` gets `versions/<mc>/<mc>.json` from Mojang's version manifest, and `ResolveVersion()` reads it.
 4. **Java:** if Settings > Minecraft names a Java (`launch.javaPath`), it is used instead: a `java.exe` is swapped for the `javaw.exe` next to it, and a folder means its `bin/javaw.exe`. A path that doesn't exist fails with an error naming it. Otherwise, `InstallJavaRuntime()` installs the Mojang Java runtime named by the version's `javaVersion.component` (default `jre-legacy`) into `minecraft/runtime/<component>/`. `.manifest-sha1` records the installed manifest, so later launches skip it. If Mojang can't be reached, an already-installed runtime is used.
@@ -35,7 +36,7 @@ Turning an installed modpack into a running Minecraft. Entry point: `PlayModpack
 - Libraries with `downloads.artifact` use its URL and SHA-1. Libraries without it (Fabric/Quilt style) use `url` (default `libraries.minecraft.net`) plus the maven path. Libraries with an empty URL must already exist, because Forge's installer generates them.
 
 ## Downloads
-`DownloadAll()` skips files that exist with the expected size and downloads the rest on 8 threads. Each file goes to a uniquely named `<file>.<tag>-<n>.part`, is checked against its SHA-1, then renamed into place. Two packs or two launcher windows fetching the same shared file therefore don't collide, and a file another downloader finished first counts as done. Each file gets 3 attempts, and the first failure stops the step. Progress is reported as "<step> (done/total)".
+`DownloadAll()` skips files that exist with the expected size and downloads the rest on 8 threads. Each file goes to a uniquely named `<file>.<tag>-<n>.part`, is checked against its SHA-1, then renamed into place. Two packs or two launcher windows fetching the same shared file therefore don't collide, and a file another downloader finished first counts as done. Replacing an existing file (e.g. a server's `server.jar` when its Minecraft version changes) is retried for about 2 seconds, removing the old file halfway, because Windows can keep a just-closed file locked briefly. Each file gets 3 download attempts, and the first failure stops the step. Progress is reported as "<step> (done/total)".
 
 ## Command line
 - Placeholders (`${auth_player_name}`, `${classpath}`, `${natives_directory}`, `${library_directory}`, `${classpath_separator}`, ...) are substituted. Unknown ones become empty. `user_type` is `msa`.
@@ -44,11 +45,11 @@ Turning an installed modpack into a running Minecraft. Entry point: `PlayModpack
 - Game arguments: the version's, then `--fullscreen` when fullscreen is on, or `--width`/`--height` when a custom window size is set. The version JSON's own resolution arguments are behind a feature rule that never matches, so nothing is duplicated.
 - **When the game starts** (`launch.afterLaunch`), on the "Playing" step: keep the launcher open (and show a "Minecraft started" toast), minimize it (restored when the game exits), or close it. Closing works like closing the window by hand: the game keeps running.
 - A play that fails (not cancelled) also shows an error toast.
-- For Java 9 and newer, JVM arguments go in `instances/<pack id>/.mclp-jvm-args.txt` and are passed as `@file`, to stay under Windows' command-line limit. The main class and game arguments, including the access token, stay on the command line.
+- For Java 9 and newer, JVM arguments go in `.mclp-jvm-args.txt` in the game folder and are passed as `@file`, to stay under Windows' command-line limit. The main class and game arguments, including the access token, stay on the command line.
 
 ## Folders (gitignored, in the data folder)
 - `minecraft/`: shared `versions/`, `libraries/`, `assets/`, `runtime/`, `installers/`, `logs/`, `launcher_profiles.json`
-- `instances/<pack id>/`: the game directory (mods, config, saves, logs)
+- `instances/<pack id>/` or `instances/<pack id>@<version>/`: `.mrpack` game folders (mods, config, saves, logs), one per installed version
 
 ## Limitations
 - Windows x64 only (process launching and the Java runtime platform).

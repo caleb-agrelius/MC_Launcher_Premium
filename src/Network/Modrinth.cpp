@@ -92,6 +92,74 @@ bool SearchModrinthModpacks(HttpClient& http,
 	return true;
 }
 
+// Fills out from one entry of /project/{id}/version. False if it has no .mrpack file.
+static bool ParseModrinthVersion(const json& version, ModrinthVersion& out)
+{
+	out = {};
+	out.id = version.value("id", "");
+	out.versionNumber = version.value("version_number", "");
+	out.versionType = version.value("version_type", "");
+	out.published = version.value("date_published", "").substr(0, 10);
+	if (version.contains("game_versions") && version["game_versions"].is_array() && !version["game_versions"].empty())
+		out.gameVersion = version["game_versions"].back().get<std::string>();
+	out.loaders = JoinStrings(version.value("loaders", json::array()), ", ");
+
+	// Use the primary file; fall back to the first .mrpack.
+	const json files = version.value("files", json::array());
+	const json* file = nullptr;
+	for (const auto& candidate : files) {
+		if (candidate.value("primary", false)) {
+			file = &candidate;
+			break;
+		}
+	}
+	if (!file) {
+		for (const auto& candidate : files) {
+			const std::string name = candidate.value("filename", "");
+			if (name.size() > 7 && name.compare(name.size() - 7, 7, ".mrpack") == 0) {
+				file = &candidate;
+				break;
+			}
+		}
+	}
+	if (!file)
+		return false;
+	PackFile packFile;
+	packFile.name = file->value("filename", "");
+	packFile.url = file->value("url", "");
+	packFile.size = file->value("size", 0ULL);
+	out.files.push_back(std::move(packFile));
+	return true;
+}
+
+bool ListModrinthVersions(HttpClient& http,
+						  const std::string& projectIdOrSlug,
+						  std::vector<ModrinthVersion>& out,
+						  std::string* err,
+						  const std::atomic<bool>* cancel)
+{
+	out.clear();
+	std::string body;
+	if (!http.Get(std::string(kApiBase) + "/project/" + HttpClient::UrlEncode(projectIdOrSlug) + "/version", body, err, cancel))
+		return false;
+	try {
+		for (const auto& version : json::parse(body)) {
+			ModrinthVersion parsed;
+			if (ParseModrinthVersion(version, parsed))
+				out.push_back(std::move(parsed));
+		}
+	}
+	catch (const std::exception& ex) {
+		if (err) *err = std::string("Unexpected version response: ") + ex.what();
+		return false;
+	}
+	if (out.empty()) {
+		if (err) *err = "This pack has no versions with an .mrpack file";
+		return false;
+	}
+	return true;
+}
+
 bool FetchLatestModrinthVersion(HttpClient& http,
 								const std::string& projectIdOrSlug,
 								ModrinthVersion& out,
@@ -121,41 +189,10 @@ bool FetchLatestModrinthVersion(HttpClient& http,
 				break;
 			}
 		}
-
-		out.versionNumber = chosen->value("version_number", "");
-		if (chosen->contains("game_versions") && (*chosen)["game_versions"].is_array() &&
-			!(*chosen)["game_versions"].empty())
-			out.gameVersion = (*chosen)["game_versions"].back().get<std::string>();
-		out.loaders = JoinStrings(chosen->value("loaders", json::array()), ", ");
-
-		// Use the primary file; fall back to the first .mrpack.
-		const json files = chosen->value("files", json::array());
-		const json* file = nullptr;
-		for (const auto& candidate : files) {
-			if (candidate.value("primary", false)) {
-				file = &candidate;
-				break;
-			}
-		}
-		if (!file) {
-			for (const auto& candidate : files) {
-				const std::string name = candidate.value("filename", "");
-				if (name.size() > 7 && name.compare(name.size() - 7, 7, ".mrpack") == 0) {
-					file = &candidate;
-					break;
-				}
-			}
-		}
-		if (!file) {
+		if (!ParseModrinthVersion(*chosen, out)) {
 			if (err) *err = "Latest version has no .mrpack file";
 			return false;
 		}
-
-		PackFile packFile;
-		packFile.name = file->value("filename", "");
-		packFile.url = file->value("url", "");
-		packFile.size = file->value("size", 0ULL);
-		out.files.push_back(std::move(packFile));
 	}
 	catch (const std::exception& ex) {
 		if (err) *err = std::string("Unexpected version response: ") + ex.what();

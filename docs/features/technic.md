@@ -25,6 +25,10 @@ Technic answers `401 Unauthorized` unless every request carries a `build` value.
 - **Not offered:** a loader filter, because Technic doesn't say which loader a pack uses.
 - The default sort, **Trending**, keeps the API's order.
 
+## Version list (`ListTechnicVersions`)
+- **Single-zip packs:** one version, the one `FetchTechnicVersion` finds.
+- **Solder packs:** every build from `{solder}/modpack/{slug}`, reversed so the newest comes first (Solder lists them oldest first), with the `recommended` and `latest` builds marked. The newest 10 builds also get their Minecraft version from `{solder}/modpack/{slug}/{build}`; older ones show none until installed.
+
 ## Version (`FetchTechnicVersion`)
 - **Details:** `GET modpack/{slug}?build=...` fills in:
   - the author (`user`), downloads (`installs`) and description

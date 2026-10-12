@@ -154,6 +154,57 @@ bool SearchTechnicModpacks(HttpClient& http,
 	return true;
 }
 
+bool ListTechnicVersions(HttpClient& http,
+		const Modpack& pack,
+		std::vector<PackVersionInfo>& out,
+		std::string* err,
+		const std::atomic<bool>* cancel)
+{
+	out.clear();
+	PackVersionInfo current;
+	if (!FetchTechnicVersion(http, pack, current, err, cancel))
+		return false;
+	if (!current.sourceIsSolder) {
+		current.versionType = "latest";
+		out.push_back(std::move(current));
+		return true;
+	}
+	json solderPack;
+	if (!GetJson(http, current.sourceUrl + "/modpack/" + HttpClient::UrlEncode(pack.sourceId), solderPack, err, cancel))
+		return false;
+	const std::string recommended = StringOrEmpty(solderPack, "recommended");
+	const std::string latest = StringOrEmpty(solderPack, "latest");
+	std::vector<std::string> builds;
+	for (const auto& build : solderPack.value("builds", json::array())) {
+		if (build.is_string())
+			builds.push_back(build.get<std::string>());
+	}
+	// Solder lists builds oldest first.
+	std::reverse(builds.begin(), builds.end());
+	constexpr std::size_t kDetailedBuilds = 10;
+	for (std::size_t i = 0; i < builds.size(); ++i) {
+		PackVersionInfo info;
+		info.versionNumber = builds[i];
+		info.sourceVersionId = builds[i];
+		info.sourceUrl = current.sourceUrl;
+		info.sourceIsSolder = true;
+		info.versionType = builds[i] == recommended ? "recommended" : builds[i] == latest ? "latest" : "";
+		if (i < kDetailedBuilds) {
+			json detail;
+			std::string ignored;
+			if (GetJson(http, current.sourceUrl + "/modpack/" + HttpClient::UrlEncode(pack.sourceId) + "/" +
+					HttpClient::UrlEncode(builds[i]), detail, &ignored, cancel))
+				info.gameVersion = StringOrEmpty(detail, "minecraft");
+		}
+		out.push_back(std::move(info));
+	}
+	if (out.empty()) {
+		if (err) *err = "The pack's Solder server lists no builds";
+		return false;
+	}
+	return true;
+}
+
 bool FetchTechnicVersion(HttpClient& http,
 						 const Modpack& pack,
 						 PackVersionInfo& out,

@@ -29,6 +29,8 @@ Live modpack search and version lookup against the public Modrinth API (`https:/
   - Picks the newest `version_type == "release"`, or the newest version if there's no release.
   - Fills `versionNumber`, `gameVersion` (last of `game_versions`), `loaders` (comma-joined), and `files`.
   - `files` holds a single `PackFile`: the version's primary file, or else its first `.mrpack`.
+  - Also fills `id` (the version id, used as `sourceVersionId`), `versionType` and `published` (the date part of `date_published`). Parsing is shared with the list below (`ParseModrinthVersion`).
+- `ListModrinthVersions(http, slugOrId, out, err, cancel)` returns every version from the same endpoint that has an `.mrpack`, newest first, for the version picker.
 - `FetchModrinthBanner(http, slugOrId, outUrl, err, cancel)`
   - Calls `GET /project/{slug}` and picks the gallery image marked `featured`, else the first one.
   - Sets `outUrl` to its `raw_url` (the original upload), else its `url`. `outUrl` is empty if the project has no gallery.
@@ -53,4 +55,3 @@ This applies to every source.
 ## Not yet supported
 - Paging beyond the first 30 results.
 - Category filters.
-- Choosing a version other than the latest.

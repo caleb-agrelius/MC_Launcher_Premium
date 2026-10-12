@@ -20,6 +20,13 @@ bool SearchFtbModpacks(HttpClient& http,
 					   std::string* err = nullptr,
 					   const std::atomic<bool>* cancel = nullptr);
 
+// Every version of a pack (pack.sourceId), newest first.
+bool ListFtbVersions(HttpClient& http,
+		const Modpack& pack,
+		std::vector<PackVersionInfo>& out,
+		std::string* err = nullptr,
+		const std::atomic<bool>* cancel = nullptr);
+
 // The newest release of a pack (pack.sourceId), else its newest non-archived version.
 bool FetchFtbVersion(HttpClient& http,
 					 const Modpack& pack,
