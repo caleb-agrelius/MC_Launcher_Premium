@@ -35,7 +35,7 @@ static void Report(const std::string& what, bool ok, const std::string& detail)
 
 // Searches a source, loads the first pack whose version loads (a Solder pack for Technic),
 // and fetches its mod list.
-static void CheckSource(HttpClient& http, PackSource source, const std::string& query, const fs::path& workRoot)
+static void CheckSource(IHttpClient& http, PackSource source, const std::string& query, const fs::path& workRoot)
 {
 	const std::string name = PackSourceName(source);
 	SourceSearchResult result;
@@ -76,7 +76,7 @@ static void CheckSource(HttpClient& http, PackSource source, const std::string& 
 }
 
 // The newest file hash of a Modrinth project.
-static std::string LatestFileSha1(HttpClient& http, const std::string& project)
+static std::string LatestFileSha1(IHttpClient& http, const std::string& project)
 {
 	std::string body;
 	if (!http.Get("https://api.modrinth.com/v2/project/" + project + "/version", body))
@@ -89,7 +89,7 @@ static std::string LatestFileSha1(HttpClient& http, const std::string& project)
 }
 
 // Sodium doesn't run on servers; Lithium does.
-static void CheckClientOnlyLookup(HttpClient& http)
+static void CheckClientOnlyLookup(IHttpClient& http)
 {
 	const std::string sodium = LatestFileSha1(http, "sodium");
 	const std::string lithium = LatestFileSha1(http, "lithium");
@@ -101,7 +101,7 @@ static void CheckClientOnlyLookup(HttpClient& http)
 }
 
 // New packs: Minecraft and loader versions, then Modrinth content with its dependencies.
-static void CheckPackCreation(HttpClient& http, const fs::path& workRoot)
+static void CheckPackCreation(IHttpClient& http, const fs::path& workRoot)
 {
 	std::string error;
 	std::vector<std::string> releases;
@@ -185,7 +185,7 @@ static void CheckCategories(HttpClient& http)
 }
 
 // Discover paging: page 2 (offset = page size) continues page 1 with no repeats.
-static void CheckPaging(HttpClient& http, PackSource source, const std::string& query)
+static void CheckPaging(IHttpClient& http, PackSource source, const std::string& query)
 {
 	const std::string name = std::string(PackSourceName(source)) + " paging";
 	constexpr int kPage = 10;
@@ -216,7 +216,7 @@ static void CheckPaging(HttpClient& http, PackSource source, const std::string& 
 // An old Forge server built from the Forge universal jar a pack ships, then started until it
 // reports "Done". jarPath is where the pack keeps it: Technic's bin/modpack.jar, or an
 // ATLauncher jar mod in jarmods/. forge is the Forge maven version, e.g. "1.7.10-10.13.4.1614-1.7.10".
-static void CheckLegacyForgeServer(HttpClient& http, const fs::path& workRoot, const std::string& minecraft,
+static void CheckLegacyForgeServer(IHttpClient& http, const fs::path& workRoot, const std::string& minecraft,
 	const std::string& forgeVersion, const std::string& source, const fs::path& jarPath)
 {
 	const std::string what = "Old Forge server (" + minecraft + ", " + source + ")";

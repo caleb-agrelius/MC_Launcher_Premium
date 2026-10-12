@@ -9,7 +9,7 @@
 
 #include <nlohmann/json.hpp>
 
-class HttpClient;
+class IHttpClient;
 
 // Minecraft game files shared by every instance, stored under one root folder
 // (minecraft/ in the data folder) in the official launcher's layout:
@@ -31,7 +31,7 @@ struct DownloadJob {
 
 // Downloads every job that's missing, using several threads. Each file is
 // written to <path>.part, checked against its SHA-1, then renamed into place.
-bool DownloadAll(HttpClient& http,
+bool DownloadAll(IHttpClient& http,
 				 const std::vector<DownloadJob>& jobs,
 				 const std::string& step,
 				 const ProgressFn& progress,
@@ -66,7 +66,7 @@ struct ResolvedVersion {
 
 // Makes sure versions/<id>/<id>.json exists for a vanilla Minecraft version,
 // downloading it from Mojang's version manifest if needed.
-bool InstallVanillaJson(HttpClient& http,
+bool InstallVanillaJson(IHttpClient& http,
 						const std::filesystem::path& root,
 						const std::string& minecraftVersion,
 						std::string* err,
@@ -81,7 +81,7 @@ bool ResolveVersion(const std::filesystem::path& root,
 
 // Downloads the client jar, libraries, assets and logging config, and extracts
 // old-style natives into versions/<id>/natives.
-bool InstallGameFiles(HttpClient& http,
+bool InstallGameFiles(IHttpClient& http,
 					  const std::filesystem::path& root,
 					  const ResolvedVersion& version,
 					  const ProgressFn& progress,
@@ -91,7 +91,7 @@ bool InstallGameFiles(HttpClient& http,
 // Installs one of Mojang's Java runtimes (e.g. "java-runtime-delta") under
 // runtime/<component>/ and returns the path to its java executable.
 // windowed = true returns javaw.exe (no console) on Windows.
-bool InstallJavaRuntime(HttpClient& http,
+bool InstallJavaRuntime(IHttpClient& http,
 						const std::filesystem::path& root,
 						const std::string& component,
 						bool windowed,

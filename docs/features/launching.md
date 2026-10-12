@@ -1,6 +1,6 @@
 # Launching (Play)
 
-Turning an installed modpack into a running Minecraft. Entry point: `PlayModpack()` in `src/Game/Launcher.{h,cpp}`, started by `startPlay()` in `src/main.cpp`.
+Turning an installed modpack into a running Minecraft. Entry point: `PlayModpack()` in `src/Game/Launcher.{h,cpp}`, started by `PlayService::Start()` in `src/Services/Play/PlayService.cpp`.
 
 ## Where to click
 - **My Library:** each pack card has a **PLAY** button, for packs from every source. While the pack is being prepared, the card shows the current step, a spinner, a progress bar when the size is known, and a **Cancel** button. Pressing Cancel immediately shows a disabled **Cancelling...** button and the step "Cancelling..." until the worker stops (downloads stop between chunks; a running loader installer is terminated). While the game runs it shows "Minecraft is running" and a **Stop game** button, which asks for confirmation and then force-closes Minecraft (unsaved progress since the last autosave is lost). Errors appear in red on the card.

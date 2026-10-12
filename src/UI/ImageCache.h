@@ -13,7 +13,7 @@
 #include <thread>
 #include <vector>
 
-class HttpClient;
+class IHttpClient;
 
 // A decoded image uploaded as an OpenGL texture.
 struct LoadedImage {
@@ -29,7 +29,7 @@ struct LoadedImage {
 // All methods except the worker threads' internals must be called on the UI (GL) thread.
 class ImageCache {
 public:
-	explicit ImageCache(HttpClient& http, int threadCount = 4);
+	explicit ImageCache(IHttpClient& http, int threadCount = 4);
 	~ImageCache();
 
 	ImageCache(const ImageCache&) = delete;
@@ -67,7 +67,7 @@ private:
 
 	void WorkerLoop();
 
-	HttpClient& m_http;
+	IHttpClient& m_http;
 	std::map<std::string, Entry> m_entries; // UI thread only
 
 	std::mutex m_mutex; // guards m_queue, m_decoded

@@ -140,7 +140,7 @@ The sidebar mascot uses `MobModel` and `Mobs`: a bundled fox model or box-built 
 ## Motion
 All of this is off when **Reduce motion** is on.
 - **Entrance** (`Widgets::BeginEntrance(start, index)` / `EndEntrance()`): the item fades in and rises 14 px (scaled) into place over 0.32 s, ease-out cubic. It multiplies the current style alpha and lifts the cursor, then takes the lift back out so items below don't move. `index` delays each list item by 45 ms (at most 10 steps), so lists "bubble" in one after another. Used for:
-  - the main content when the page or Discover source changes (`pageShownAt` in `main.cpp`)
+  - the main content when the page or Discover source changes (`AppShell::m_shownAt` in `src/UI/Shell/AppShell.cpp`)
   - Discover's result rows, when the page opens or new results arrive (`SourceView::resultsAt`)
   - Discover's details pane, when another pack is selected
   - My Library and Downloads cards

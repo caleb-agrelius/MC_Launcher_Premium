@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-class HttpClient;
+class IHttpClient;
 
 // One file a pack install needs. Paths are relative to the instance's minecraft/ folder.
 struct PlannedFile {
@@ -62,7 +62,7 @@ struct InstallProgress {
 // Files already on disk with a matching hash (or size, when there's no hash) are kept,
 // so retrying a failed install only downloads what's missing. Blocked files are listed
 // in blocked and in pack.json and don't fail the install. Any other failure stops it.
-bool RunInstallPlan(HttpClient& http,
+bool RunInstallPlan(IHttpClient& http,
 					const InstallPlan& plan,
 					const std::string& installDir,
 					std::function<void(const InstallProgress&)> progress,

@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <string>
 
 // Turns a pack description written in Markdown (Modrinth, FTB) or HTML (CurseForge,
@@ -22,5 +23,11 @@ std::string FormatCount(std::uint64_t count);
 // The text in lowercase (ASCII letters only, so UTF-8 stays intact).
 std::string ToLower(std::string text);
 
+// True when haystack contains lowerNeedle, ignoring case. lowerNeedle must already be lower case.
+bool ContainsIgnoreCase(const std::string& haystack, const std::string& lowerNeedle);
+
 // A byte count as "512 B", "1.4 KB", "23.0 MB" or "1.2 GB".
 std::string FormatFileSize(std::uint64_t bytes);
+
+// A file time as local "YYYY-MM-DD HH:MM".
+std::string FormatFileTime(std::filesystem::file_time_type time);

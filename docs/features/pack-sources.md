@@ -79,7 +79,7 @@ Sources whose capabilities set `installsPacks` (every source except Modrinth) in
   3. Downloads the rest on `maxConcurrent` threads into `installDir/minecraft/<relPath>`. Paths past Windows' 260-character limit work (see "Long paths" below).
      - Each file is first written as `<name>.part`, then checked against its SHA-1, MD5 or size, then renamed.
      - A file already on disk that passes the check is kept, so a retry only fetches what's missing.
-     - Files in `plan.skipFiles` (pack files the player removed) and files with a `<name>.disabled` copy (turned off by the player) are skipped. After a successful install, main.cpp re-applies the version's content changes (`ApplyContentChanges`; see [manage.md](manage.md#your-changes)).
+     - Files in `plan.skipFiles` (pack files the player removed) and files with a `<name>.disabled` copy (turned off by the player) are skipped. After a successful install, `DownloadService` re-applies the version's content changes (`ApplyContentChanges`; see [manage.md](manage.md#your-changes)).
      - Extract files are downloaded to `installDir/.cache/`, checked, unpacked into `relPath`, and deleted.
   4. Deletes files the previous install of this pack listed in its `pack.json` `files` and this plan doesn't (e.g. mods dropped when switching versions). Only files installed by name are tracked, not the contents of extracted zips.
   5. Extracts the override zips. They go last, so a pack's own config files win.

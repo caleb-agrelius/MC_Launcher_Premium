@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-class HttpClient;
+class IHttpClient;
 
 // Client for the public Modrinth API (https://api.modrinth.com/v2). No key needed.
 
@@ -46,13 +46,13 @@ struct ModrinthCategory {
 
 // The modpack categories from /tag/category (header "categories", not features or
 // performance tags), sorted by label.
-bool FetchModrinthCategories(HttpClient& http,
+bool FetchModrinthCategories(IHttpClient& http,
 							 std::vector<ModrinthCategory>& out,
 							 std::string* err = nullptr,
 							 const std::atomic<bool>* cancel = nullptr);
 
 // Searches Modrinth modpacks. An empty query lists the most downloaded packs.
-bool SearchModrinthModpacks(HttpClient& http,
+bool SearchModrinthModpacks(IHttpClient& http,
 							const std::string& query,
 							const ModrinthSearchOptions& options,
 							int limit,
@@ -61,7 +61,7 @@ bool SearchModrinthModpacks(HttpClient& http,
 							const std::atomic<bool>* cancel = nullptr);
 
 // Fetches the newest release (or newest version if there's no release) of a project.
-bool FetchLatestModrinthVersion(HttpClient& http,
+bool FetchLatestModrinthVersion(IHttpClient& http,
 								const std::string& projectIdOrSlug,
 								ModrinthVersion& out,
 								std::string* err = nullptr,
@@ -69,7 +69,7 @@ bool FetchLatestModrinthVersion(HttpClient& http,
 
 // The Modrinth projects a pack version bundles (its "embedded" dependencies), with names,
 // summaries and sides. Files hosted elsewhere aren't dependencies, so they aren't listed.
-bool FetchModrinthPackMods(HttpClient& http,
+bool FetchModrinthPackMods(IHttpClient& http,
 						   const std::string& versionId,
 						   std::vector<PackMod>& out,
 						   std::string* err = nullptr,
@@ -77,7 +77,7 @@ bool FetchModrinthPackMods(HttpClient& http,
 
 // Looks mod files up on Modrinth by SHA-1 and adds the hashes of those whose project
 // doesn't run on servers (server_side "unsupported") to clientOnly. Unknown files are left out.
-bool FindModrinthClientOnly(HttpClient& http,
+bool FindModrinthClientOnly(IHttpClient& http,
 							const std::vector<std::string>& sha1s,
 							std::set<std::string>& clientOnly,
 							std::string* err = nullptr,
@@ -86,7 +86,7 @@ bool FindModrinthClientOnly(HttpClient& http,
 // The project's full description (its "body", in Markdown).
 // A version's changelog (Markdown). With an empty versionId, the version whose version
 // number is versionNumber (packs installed before versions had ids).
-bool FetchModrinthChangelog(HttpClient& http,
+bool FetchModrinthChangelog(IHttpClient& http,
 							const std::string& projectIdOrSlug,
 							const std::string& versionId,
 							const std::string& versionNumber,
@@ -94,13 +94,13 @@ bool FetchModrinthChangelog(HttpClient& http,
 							std::string* err = nullptr,
 							const std::atomic<bool>* cancel = nullptr);
 
-bool FetchModrinthDescription(HttpClient& http,
+bool FetchModrinthDescription(IHttpClient& http,
 							  const std::string& projectIdOrSlug,
 							  std::string& out,
 							  std::string* err = nullptr,
 							  const std::atomic<bool>* cancel = nullptr);
 // Every version of a project that has an .mrpack, newest first.
-bool ListModrinthVersions(HttpClient& http,
+bool ListModrinthVersions(IHttpClient& http,
 						  const std::string& projectIdOrSlug,
 						  std::vector<ModrinthVersion>& out,
 						  std::string* err = nullptr,
@@ -108,7 +108,7 @@ bool ListModrinthVersions(HttpClient& http,
 
 // Looks up a full-size gallery image for a project's banner (the featured image,
 // else the first one). Succeeds with an empty outUrl if the project has no gallery.
-bool FetchModrinthBanner(HttpClient& http,
+bool FetchModrinthBanner(IHttpClient& http,
 						 const std::string& projectIdOrSlug,
 						 std::string& outUrl,
 						 std::string* err = nullptr,

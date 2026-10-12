@@ -1,9 +1,9 @@
 # Settings
 
-The Settings page and `settings.json`. UI code is `src/UI/SettingsPage.{h,cpp}`. Storage is `src/Storage/Settings.{h,cpp}`.
+The Settings page and `settings.json`. UI code is in `src/UI/Pages/Settings/`: `SettingsPage` picks the tab, each tab is an `ISettingsTab` (`MinecraftTab`, `GameOptionsTab`, `DownloadsTab`, `AppearanceTab` with `ThemeEditor`, `AccountTab`, `AboutTab`), `SettingsLayout` draws the shared cards and rows, and `LaunchSettingsCards` and `PackLaunchSettings` serve the global and per-pack launch settings. Storage is `src/Storage/Settings.{h,cpp}`.
 
 ## Page
-Open it from **Settings** under LAUNCHER in the sidebar. `DrawSettingsPage(settings, context)` edits `Settings` in place and returns true when something changed. `main()` then marks the settings dirty, saves them once no widget is being edited, and applies theme and scale changes at the start of the next frame.
+Open it from **Settings** under LAUNCHER in the sidebar. `SettingsPage::Draw(settings, context)` edits `Settings` in place and returns true when something changed. `main()` then marks the settings dirty, saves them once no widget is being edited, and applies theme and scale changes at the start of the next frame.
 
 Each tab is a set of cards with a label (and hint) on the left and the control on the right. Pill buttons along the top switch tabs. On wide windows the cards flow into columns, as many as fit at 520px (scaled) each, up to three: each card goes into the shortest column, using the height `Widgets::BeginCard` remembers, so tabs need little or no scrolling. Narrow windows keep one column. The theme picker and theme editor span every column, and anything drawn between cards (such as a tab's note) starts a new section below all columns. Inside a card, the label column takes up to 240px (scaled) or 40% of the card, whichever is smaller. Per-pack launch settings use the same cards in one column.
 
@@ -16,7 +16,7 @@ Each tab is a set of cards with a label (and hint) on the left and the control o
 | **Downloads** | Results per search (10–100; CurseForge shows at most 50); the **CurseForge API key** (masked, with **Show**/**Hide**; empty uses the `MCLP_CURSEFORGE_API_KEY` environment variable, see [curseforge.md](curseforge.md)); **Shared mod files**: the **Share identical files** toggle, **Share files packs already have** (disabled while a game runs), its progress and result, and the store's size and saving (see [shared-files.md](shared-files.md)); the `downloads/`, `installs/`, `instances/` and `minecraft/` paths with **Open** buttons |
 | **About** | Version, Windows display scaling, system memory, the data folder (with **Open**), keyboard shortcuts, and a pack-sources / not-affiliated note |
 
-`SettingsPageContext` passes in the app version (`kAppVersion` in `main.cpp`), the data folder, total RAM (`Platform::SystemMemoryMb`), the DPI scale, the current account's name and type, and whether `MCLP_CURSEFORGE_API_KEY` is set. **Open** buttons use `Platform::OpenFolder`, which creates the folder if needed and opens it in Explorer.
+`SettingsPageContext` passes in the app version (`AppInfo::kVersion` in `src/Core/AppInfo.h`), the data folder, total RAM (`Platform::SystemMemoryMb`), the DPI scale, the current account's name and type, and whether `MCLP_CURSEFORGE_API_KEY` is set. **Open** buttons use `Platform::OpenFolder`, which creates the folder if needed and opens it in Explorer.
 
 ## `settings.json`
 Saved in the data folder (gitignored). A missing or invalid file gives the defaults. Values are clamped on load.

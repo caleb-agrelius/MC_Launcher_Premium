@@ -6,7 +6,7 @@
 #include <filesystem>
 #include <string>
 
-class HttpClient;
+class IHttpClient;
 
 enum class LoaderKind { Vanilla, Fabric, Quilt, Forge, NeoForge };
 
@@ -14,7 +14,7 @@ const char* LoaderName(LoaderKind kind);
 
 // Downloads the official Forge or NeoForge installer jar into root/installers/
 // (kept, so it isn't downloaded again) and sets installer to its path.
-bool DownloadForgeInstaller(HttpClient& http,
+bool DownloadForgeInstaller(IHttpClient& http,
 							const std::filesystem::path& root,
 							LoaderKind kind,
 							const std::string& minecraftVersion,
@@ -50,7 +50,7 @@ DownloadJob LegacyJavaFixerJob(const std::filesystem::path& gameDir);
 // installed. Sets versionId to the version to launch.
 // Fabric and Quilt come from their meta APIs. Forge and NeoForge run their
 // official installer headless with javaExe (a console java, not javaw).
-bool InstallLoader(HttpClient& http,
+bool InstallLoader(IHttpClient& http,
 				   const std::filesystem::path& root,
 				   LoaderKind kind,
 				   const std::string& minecraftVersion,

@@ -6,7 +6,7 @@
 #include "Game/PackInstance.h"
 #include "Game/ServerSetup.h"
 #include "Network/HttpClient.h"
-#include "Platform.h"
+#include "Platform/Platform.h"
 #include "Storage/Library.h"
 #include "Storage/Settings.h"
 #include "UI/Theme.h"

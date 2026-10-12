@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-class HttpClient;
+class IHttpClient;
 
 // Mods, resource packs and shader packs from Modrinth, for adding to an installed or new
 // pack (Manage > Content > Browse).
@@ -43,16 +43,16 @@ struct ContentDownload {
 	std::vector<std::string> requiredProjects; // project ids it needs
 };
 
-bool SearchContent(HttpClient& http, const ContentSearch& search, int limit, std::vector<ContentProject>& out,
+bool SearchContent(IHttpClient& http, const ContentSearch& search, int limit, std::vector<ContentProject>& out,
 				   std::string* err = nullptr, const std::atomic<bool>* cancel = nullptr);
 
 // The newest release (else the newest version) of projectId that fits search.
-bool FindContentDownload(HttpClient& http, const ContentSearch& search, const std::string& projectId,
+bool FindContentDownload(IHttpClient& http, const ContentSearch& search, const std::string& projectId,
 						 ContentDownload& out, std::string* err = nullptr, const std::atomic<bool>* cancel = nullptr);
 
 // The projects the files in folder come from, looked up by SHA-1 (files Modrinth doesn't
 // know are left out).
-bool FindInstalledProjects(HttpClient& http, const std::filesystem::path& folder, std::set<std::string>& projectIds,
+bool FindInstalledProjects(IHttpClient& http, const std::filesystem::path& folder, std::set<std::string>& projectIds,
 						   std::string* err = nullptr, const std::atomic<bool>* cancel = nullptr);
 
 struct AddedContent {
@@ -65,6 +65,6 @@ struct AddedContent {
 // that gameDir/mods doesn't have yet (found with FindInstalledProjects), and theirs. Files
 // already there by name are skipped. added lists what was downloaded; notes say which
 // required mods couldn't be added (no file for this Minecraft version and loader).
-bool InstallContent(HttpClient& http, const ContentSearch& search, const std::string& projectId,
+bool InstallContent(IHttpClient& http, const ContentSearch& search, const std::string& projectId,
 					const std::filesystem::path& gameDir, std::vector<AddedContent>& added, std::vector<std::string>& notes,
 					std::string* err = nullptr, const std::atomic<bool>* cancel = nullptr);

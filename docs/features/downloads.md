@@ -26,13 +26,13 @@ Sources that install from a plan (see [pack-sources.md](pack-sources.md)) use on
 
 The Downloads page shows the stage with its counts and a progress bar, then "Install failed: ...", "Installed", or "Installed - N file(s) need a manual download (see Discover)". These entries aren't saved to `downloads.json`.
 
-## Download state (`src/main.cpp`)
-- `std::map<std::string, DownloadState> downloads` is keyed by file **URL** and guarded by `downloadsMutex`.
+## Download state (`DownloadService`, `src/Services/Downloads/`)
+- `DownloadService` keeps a map of `DownloadState` keyed by file **URL** (whole-pack installs by `pack:<pack id>@<version key>`), guarded by a mutex. `Snapshot()` copies it for the page.
 - `DownloadState` fields:
   - Download: `fileName` and `pack` (a copy of the pack, for its name and icon; both set when the download starts), `active`, `total`, `now`, `outPath` (set on success), `error`
   - Extraction: `installing`, `installProgress` (0–1), `installed`, `installError`
-- Each download runs on a background thread started with `StartWorker()`. Each `Worker` has a `done` flag, and `ReapFinishedWorkers()` joins and removes finished workers at the start of every frame.
-- On exit, `main()` sets `shuttingDown`, which cancels in-flight downloads and extractions, then joins the remaining workers. There is no per-download cancel button.
+- Each download runs as a task on the service's `TaskScope` (see [architecture.md](../architecture.md)). `WorkerPool::Reap()` joins finished worker threads at the start of every frame.
+- On exit, `AppRoot::Shutdown` sets the shutdown flag, which cancels in-flight downloads and extractions, then joins the remaining workers. There is no per-download cancel button.
 - The UI copies state under the lock, then draws from the copy.
 
 ## Downloads page (`Page::Downloads`)
@@ -46,7 +46,7 @@ Shows one card per entry in `downloads`, with the pack icon, the pack name, and 
 - "Files extracted"
 - "Downloaded - ready to extract."
 
-A finished download that isn't extracted or extracting also gets an **Install files** button. This includes one whose extraction failed. It calls the same `startInstall()` as Discover (see [installation.md](installation.md)), so a saved file can be installed even when Discover now lists a newer version of the pack.
+A finished download that isn't extracted or extracting also gets an **Install files** button. This includes one whose extraction failed. It calls the same `DownloadService::StartInstall()` as Discover (see [installation.md](installation.md)), so a saved file can be installed even when Discover now lists a newer version of the pack.
 
 If nothing has been started, the page shows an empty state with a **Browse modpacks** button that opens Discover.
 

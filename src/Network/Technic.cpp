@@ -26,7 +26,7 @@ static std::string ImageUrl(const json& object, const char* key)
 	return (it != object.end() && it->is_object()) ? StringOrEmpty(*it, "url") : std::string();
 }
 
-static bool GetJson(HttpClient& http, const std::string& url, json& out, std::string* err, const std::atomic<bool>* cancel)
+static bool GetJson(IHttpClient& http, const std::string& url, json& out, std::string* err, const std::atomic<bool>* cancel)
 {
 	std::string body;
 	if (!http.Get(url, body, err, cancel))
@@ -71,7 +71,7 @@ static bool VersionMatches(const std::string& version, const std::string& filter
 		(version.size() == filter.size() || version[filter.size()] == '.');
 }
 
-bool SearchTechnicModpacks(HttpClient& http,
+bool SearchTechnicModpacks(IHttpClient& http,
 						   const std::string& query,
 						   const SearchFilters& filters,
 						   int limit,
@@ -82,7 +82,7 @@ bool SearchTechnicModpacks(HttpClient& http,
 	out = {};
 	const std::string url = query.empty()
 		? std::string(kApiBase) + "trending?build=" + kBuild
-		: std::string(kApiBase) + "search?build=" + kBuild + "&q=" + HttpClient::UrlEncode(query);
+		: std::string(kApiBase) + "search?build=" + kBuild + "&q=" + IHttpClient::UrlEncode(query);
 	json response;
 	if (!GetJson(http, url, response, err, cancel))
 		return false;
@@ -125,7 +125,7 @@ bool SearchTechnicModpacks(HttpClient& http,
 					index = next++;
 				}
 				json detail;
-				if (!GetJson(http, std::string(kApiBase) + "modpack/" + HttpClient::UrlEncode(out.packs[index].sourceId) + "?build=" + kBuild,
+				if (!GetJson(http, std::string(kApiBase) + "modpack/" + IHttpClient::UrlEncode(out.packs[index].sourceId) + "?build=" + kBuild,
 						detail, nullptr, cancel))
 					continue; // drop packs whose details can't be read
 				ApplyDetails(out.packs[index], detail);
@@ -154,7 +154,7 @@ bool SearchTechnicModpacks(HttpClient& http,
 	return true;
 }
 
-bool ListTechnicVersions(HttpClient& http,
+bool ListTechnicVersions(IHttpClient& http,
 		const Modpack& pack,
 		std::vector<PackVersionInfo>& out,
 		std::string* err,
@@ -170,7 +170,7 @@ bool ListTechnicVersions(HttpClient& http,
 		return true;
 	}
 	json solderPack;
-	if (!GetJson(http, current.sourceUrl + "/modpack/" + HttpClient::UrlEncode(pack.sourceId), solderPack, err, cancel))
+	if (!GetJson(http, current.sourceUrl + "/modpack/" + IHttpClient::UrlEncode(pack.sourceId), solderPack, err, cancel))
 		return false;
 	const std::string recommended = StringOrEmpty(solderPack, "recommended");
 	const std::string latest = StringOrEmpty(solderPack, "latest");
@@ -192,8 +192,8 @@ bool ListTechnicVersions(HttpClient& http,
 		if (i < kDetailedBuilds) {
 			json detail;
 			std::string ignored;
-			if (GetJson(http, current.sourceUrl + "/modpack/" + HttpClient::UrlEncode(pack.sourceId) + "/" +
-					HttpClient::UrlEncode(builds[i]), detail, &ignored, cancel))
+			if (GetJson(http, current.sourceUrl + "/modpack/" + IHttpClient::UrlEncode(pack.sourceId) + "/" +
+					IHttpClient::UrlEncode(builds[i]), detail, &ignored, cancel))
 				info.gameVersion = StringOrEmpty(detail, "minecraft");
 		}
 		out.push_back(std::move(info));
@@ -205,7 +205,7 @@ bool ListTechnicVersions(HttpClient& http,
 	return true;
 }
 
-bool FetchTechnicVersion(HttpClient& http,
+bool FetchTechnicVersion(IHttpClient& http,
 						 const Modpack& pack,
 						 PackVersionInfo& out,
 						 std::string* err,
@@ -213,7 +213,7 @@ bool FetchTechnicVersion(HttpClient& http,
 {
 	out = {};
 	json detail;
-	if (!GetJson(http, std::string(kApiBase) + "modpack/" + HttpClient::UrlEncode(pack.sourceId) + "?build=" + kBuild,
+	if (!GetJson(http, std::string(kApiBase) + "modpack/" + IHttpClient::UrlEncode(pack.sourceId) + "?build=" + kBuild,
 			detail, err, cancel))
 		return false;
 	out.description = StringOrEmpty(detail, "description");
@@ -242,7 +242,7 @@ bool FetchTechnicVersion(HttpClient& http,
 
 	// Solder packs: the server's recommended build, else its latest.
 	json solderPack;
-	if (!GetJson(http, solder + "/modpack/" + HttpClient::UrlEncode(pack.sourceId), solderPack, err, cancel))
+	if (!GetJson(http, solder + "/modpack/" + IHttpClient::UrlEncode(pack.sourceId), solderPack, err, cancel))
 		return false;
 	std::string build = StringOrEmpty(solderPack, "recommended");
 	if (build.empty())
@@ -258,7 +258,7 @@ bool FetchTechnicVersion(HttpClient& http,
 	return true;
 }
 
-bool BuildTechnicPlan(HttpClient& http,
+bool BuildTechnicPlan(IHttpClient& http,
 					  const Modpack& pack,
 					  InstallPlan& plan,
 					  std::function<void(const std::string&)> status,
@@ -291,7 +291,7 @@ bool BuildTechnicPlan(HttpClient& http,
 	if (status)
 		status("Reading Solder build");
 	json build;
-	if (!GetJson(http, pack.sourceUrl + "/modpack/" + HttpClient::UrlEncode(pack.sourceId) + "/" + HttpClient::UrlEncode(pack.sourceVersionId),
+	if (!GetJson(http, pack.sourceUrl + "/modpack/" + IHttpClient::UrlEncode(pack.sourceId) + "/" + IHttpClient::UrlEncode(pack.sourceVersionId),
 			build, err, cancel))
 		return false;
 	try {
@@ -325,7 +325,7 @@ bool BuildTechnicPlan(HttpClient& http,
 	return true;
 }
 
-bool FetchTechnicPackMods(HttpClient& http,
+bool FetchTechnicPackMods(IHttpClient& http,
 						  const Modpack& pack,
 						  std::vector<PackMod>& out,
 						  std::string* err,
@@ -335,8 +335,8 @@ bool FetchTechnicPackMods(HttpClient& http,
 	if (!pack.sourceIsSolder || pack.sourceUrl.empty())
 		return true; // a single zip: the mods are only known once it's unpacked
 	json build;
-	if (!GetJson(http, pack.sourceUrl + "/modpack/" + HttpClient::UrlEncode(pack.sourceId) + "/" +
-			HttpClient::UrlEncode(pack.sourceVersionId) + "?include=mods", build, err, cancel))
+	if (!GetJson(http, pack.sourceUrl + "/modpack/" + IHttpClient::UrlEncode(pack.sourceId) + "/" +
+			IHttpClient::UrlEncode(pack.sourceVersionId) + "?include=mods", build, err, cancel))
 		return false;
 	try {
 		for (const auto& item : build.value("mods", json::array())) {

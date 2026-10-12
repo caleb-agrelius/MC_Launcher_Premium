@@ -87,7 +87,7 @@ static ImTextureID UploadTexture(const std::uint8_t* rgba, int width, int height
 	return static_cast<ImTextureID>(texture);
 }
 
-ImageCache::ImageCache(HttpClient& http, int threadCount)
+ImageCache::ImageCache(IHttpClient& http, int threadCount)
 	: m_http(http)
 {
 	for (int i = 0; i < threadCount; ++i)

@@ -3,7 +3,7 @@
 #include "Network/HttpClient.h"
 #include "Util/Process.h"
 
-#include <miniz/miniz.h>
+#include "Util/ZipArchive.h"
 #include <nlohmann/json.hpp>
 
 #include <cstdlib>
@@ -30,7 +30,7 @@ static fs::path VersionJsonPath(const fs::path& root, const std::string& id)
 }
 
 // Fabric and Quilt publish a ready-made version JSON that inherits from vanilla.
-static bool InstallMetaProfile(HttpClient& http, const fs::path& root, const std::string& metaUrl,
+static bool InstallMetaProfile(IHttpClient& http, const fs::path& root, const std::string& metaUrl,
 	const std::string& expectedId, std::string& versionId, std::string* err, const std::atomic<bool>* cancel)
 {
 	std::error_code ec;
@@ -64,21 +64,16 @@ static bool InstallMetaProfile(HttpClient& http, const fs::path& root, const std
 // Reads the version id from version.json inside a Forge/NeoForge installer jar.
 static bool ReadInstallerVersionId(const fs::path& installer, std::string& id, std::string* err)
 {
-	mz_zip_archive zip;
-	std::memset(&zip, 0, sizeof(zip));
-	if (!mz_zip_reader_init_file(&zip, installer.string().c_str(), 0)) {
+	ZipReader zip;
+	if (!zip.Open(installer)) {
 		if (err) *err = "Couldn't open " + installer.filename().string();
 		return false;
 	}
-	std::size_t size = 0;
-	void* data = mz_zip_reader_extract_file_to_heap(&zip, "version.json", &size, 0);
-	mz_zip_reader_end(&zip);
-	if (!data) {
+	std::string text;
+	if (!zip.ReadEntry("version.json", text)) {
 		if (err) *err = "This Forge version is too old to install automatically (its installer has no version.json)";
 		return false;
 	}
-	const std::string text(static_cast<const char*>(data), size);
-	mz_free(data);
 	try {
 		id = json::parse(text).value("id", "");
 	}
@@ -107,7 +102,7 @@ static bool ForgeAlreadyInstalled(const fs::path& root, const std::string& id)
 	return true;
 }
 
-bool DownloadForgeInstaller(HttpClient& http, const fs::path& root, LoaderKind kind, const std::string& minecraftVersion,
+bool DownloadForgeInstaller(IHttpClient& http, const fs::path& root, LoaderKind kind, const std::string& minecraftVersion,
 	const std::string& loaderVersion, fs::path& installer, const ProgressFn& progress, std::string* err,
 	const std::atomic<bool>* cancel)
 {
@@ -134,7 +129,7 @@ bool DownloadForgeInstaller(HttpClient& http, const fs::path& root, LoaderKind k
 	return DownloadAll(http, { job }, std::string("Downloading ") + LoaderName(kind) + " installer", progress, err, cancel);
 }
 
-static bool InstallForgeLike(HttpClient& http, const fs::path& root, LoaderKind kind, const std::string& minecraftVersion,
+static bool InstallForgeLike(IHttpClient& http, const fs::path& root, LoaderKind kind, const std::string& minecraftVersion,
 	const std::string& loaderVersion, const fs::path& javaExe, std::string& versionId, const ProgressFn& progress,
 	std::string* err, const std::atomic<bool>* cancel)
 {
@@ -205,29 +200,24 @@ DownloadJob LegacyJavaFixerJob(const fs::path& gameDir)
 bool InstallForgeFromJar(const fs::path& root, const fs::path& forgeJar, const std::string& minecraftVersion,
 	std::string& versionId, std::string* err)
 {
-	mz_zip_archive zip;
-	std::memset(&zip, 0, sizeof(zip));
-	if (!mz_zip_reader_init_file(&zip, forgeJar.string().c_str(), 0)) {
+	ZipReader zip;
+	if (!zip.Open(forgeJar)) {
 		if (err) *err = "Couldn't open " + forgeJar.filename().string();
 		return false;
 	}
-	std::size_t size = 0;
-	void* data = mz_zip_reader_extract_file_to_heap(&zip, "version.json", &size, 0);
-	mz_zip_reader_end(&zip);
-	if (!data) {
+	std::string versionText;
+	if (!zip.ReadEntry("version.json", versionText)) {
 		if (err) *err = forgeJar.filename().string() + " has no version.json, so it isn't a Forge universal jar";
 		return false;
 	}
 	json version;
 	try {
-		version = json::parse(std::string(static_cast<const char*>(data), size));
+		version = json::parse(versionText);
 	}
 	catch (const std::exception& ex) {
-		mz_free(data);
 		if (err) *err = std::string("Couldn't read Forge's version.json: ") + ex.what();
 		return false;
 	}
-	mz_free(data);
 	versionId = version.value("id", "");
 	if (versionId.empty() || versionId.find_first_of("/\\:") != std::string::npos) {
 		if (err) *err = "Forge's version.json has no usable id";
@@ -287,7 +277,7 @@ bool InstallForgeFromJar(const fs::path& root, const fs::path& forgeJar, const s
 	return true;
 }
 
-bool InstallLoader(HttpClient& http, const fs::path& root, LoaderKind kind, const std::string& minecraftVersion,
+bool InstallLoader(IHttpClient& http, const fs::path& root, LoaderKind kind, const std::string& minecraftVersion,
 	const std::string& loaderVersion, const fs::path& javaExe, std::string& versionId, const ProgressFn& progress,
 	std::string* err, const std::atomic<bool>* cancel)
 {

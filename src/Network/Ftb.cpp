@@ -22,7 +22,7 @@ using json = nlohmann::json;
 static const char* kApiBase = "https://api.feed-the-beast.com/v1/modpacks/public";
 static constexpr int kDetailThreads = 4;
 
-static bool GetJson(HttpClient& http, const std::string& path, json& out, std::string* err, const std::atomic<bool>* cancel)
+static bool GetJson(IHttpClient& http, const std::string& path, json& out, std::string* err, const std::atomic<bool>* cancel)
 {
 	std::string body;
 	if (!http.Get(std::string(kApiBase) + path, body, err, cancel))
@@ -84,7 +84,7 @@ static std::mutex g_cacheMutex;
 static std::vector<FtbPack> g_cache;
 static bool g_cacheLoaded = false;
 
-static bool LoadAllPacks(HttpClient& http, std::vector<FtbPack>& out, std::string* err, const std::atomic<bool>* cancel)
+static bool LoadAllPacks(IHttpClient& http, std::vector<FtbPack>& out, std::string* err, const std::atomic<bool>* cancel)
 {
 	{
 		std::lock_guard<std::mutex> lock(g_cacheMutex);
@@ -194,7 +194,7 @@ static bool LoadAllPacks(HttpClient& http, std::vector<FtbPack>& out, std::strin
 	return true;
 }
 
-bool SearchFtbModpacks(HttpClient& http,
+bool SearchFtbModpacks(IHttpClient& http,
 					   const std::string& query,
 					   const SearchFilters& filters,
 					   int limit,
@@ -273,7 +273,7 @@ bool SearchFtbModpacks(HttpClient& http,
 	return true;
 }
 
-bool ListFtbVersions(HttpClient& http,
+bool ListFtbVersions(IHttpClient& http,
 		const Modpack& pack,
 		std::vector<PackVersionInfo>& out,
 		std::string* err,
@@ -281,7 +281,7 @@ bool ListFtbVersions(HttpClient& http,
 {
 	out.clear();
 	json detail;
-	if (!GetJson(http, "/modpack/" + HttpClient::UrlEncode(pack.sourceId), detail, err, cancel))
+	if (!GetJson(http, "/modpack/" + IHttpClient::UrlEncode(pack.sourceId), detail, err, cancel))
 		return false;
 	try {
 		std::vector<std::pair<long long, PackVersionInfo>> versions;
@@ -322,7 +322,7 @@ bool ListFtbVersions(HttpClient& http,
 	return true;
 }
 
-bool FetchFtbVersion(HttpClient& http,
+bool FetchFtbVersion(IHttpClient& http,
 					 const Modpack& pack,
 					 PackVersionInfo& out,
 					 std::string* err,
@@ -330,7 +330,7 @@ bool FetchFtbVersion(HttpClient& http,
 {
 	out = {};
 	json detail;
-	if (!GetJson(http, "/modpack/" + HttpClient::UrlEncode(pack.sourceId), detail, err, cancel))
+	if (!GetJson(http, "/modpack/" + IHttpClient::UrlEncode(pack.sourceId), detail, err, cancel))
 		return false;
 	try {
 		const json versions = detail.value("versions", json::array());
@@ -351,7 +351,7 @@ bool FetchFtbVersion(HttpClient& http,
 	return true;
 }
 
-bool BuildFtbPlan(HttpClient& http,
+bool BuildFtbPlan(IHttpClient& http,
 				  const Modpack& pack,
 				  InstallPlan& plan,
 				  std::function<void(const std::string&)> status,
@@ -362,7 +362,7 @@ bool BuildFtbPlan(HttpClient& http,
 	if (status)
 		status("Reading pack manifest");
 	json manifest;
-	if (!GetJson(http, "/modpack/" + HttpClient::UrlEncode(pack.sourceId) + "/" + HttpClient::UrlEncode(pack.sourceVersionId),
+	if (!GetJson(http, "/modpack/" + IHttpClient::UrlEncode(pack.sourceId) + "/" + IHttpClient::UrlEncode(pack.sourceVersionId),
 			manifest, err, cancel))
 		return false;
 
@@ -438,7 +438,7 @@ bool BuildFtbPlan(HttpClient& http,
 	return true;
 }
 
-bool FetchFtbPackMods(HttpClient& http,
+bool FetchFtbPackMods(IHttpClient& http,
 					  const Modpack& pack,
 					  std::vector<PackMod>& out,
 					  std::string* err,
@@ -446,7 +446,7 @@ bool FetchFtbPackMods(HttpClient& http,
 {
 	out.clear();
 	json version;
-	if (!GetJson(http, "/modpack/" + HttpClient::UrlEncode(pack.sourceId) + "/" + HttpClient::UrlEncode(pack.sourceVersionId),
+	if (!GetJson(http, "/modpack/" + IHttpClient::UrlEncode(pack.sourceId) + "/" + IHttpClient::UrlEncode(pack.sourceVersionId),
 			version, err, cancel))
 		return false;
 	try {
@@ -478,7 +478,7 @@ bool FetchFtbPackMods(HttpClient& http,
 	return true;
 }
 
-bool FetchFtbDescription(HttpClient& http,
+bool FetchFtbDescription(IHttpClient& http,
 						 const Modpack& pack,
 						 std::string& out,
 						 std::string* err,
@@ -486,13 +486,13 @@ bool FetchFtbDescription(HttpClient& http,
 {
 	out.clear();
 	json detail;
-	if (!GetJson(http, "/modpack/" + HttpClient::UrlEncode(pack.sourceId), detail, err, cancel))
+	if (!GetJson(http, "/modpack/" + IHttpClient::UrlEncode(pack.sourceId), detail, err, cancel))
 		return false;
 	out = StringOrEmpty(detail, "description");
 	return true;
 }
 
-bool FetchFtbChangelog(HttpClient& http,
+bool FetchFtbChangelog(IHttpClient& http,
 					   const Modpack& pack,
 					   std::string& out,
 					   std::string* err,
@@ -500,7 +500,7 @@ bool FetchFtbChangelog(HttpClient& http,
 {
 	out.clear();
 	json changelog;
-	if (!GetJson(http, "/modpack/" + HttpClient::UrlEncode(pack.sourceId) + "/" + HttpClient::UrlEncode(pack.sourceVersionId) +
+	if (!GetJson(http, "/modpack/" + IHttpClient::UrlEncode(pack.sourceId) + "/" + IHttpClient::UrlEncode(pack.sourceVersionId) +
 			"/changelog", changelog, err, cancel))
 		return false;
 	out = StringOrEmpty(changelog, "content");

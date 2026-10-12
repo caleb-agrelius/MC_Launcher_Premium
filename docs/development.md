@@ -38,7 +38,7 @@ Useful breakpoints:
 | Extraction | `InstallZip` in `src/Storage/Installer.cpp` |
 | Play | `PlayModpack` in `src/Game/Launcher.cpp` |
 | Sign-in | `src/Network/MicrosoftAuth.cpp` |
-| UI | The frame loop in `src/main.cpp` |
+| UI | `AppShell::Draw` in `src/UI/Shell/AppShell.cpp`, called from `AppRoot::Frame` in `src/App/AppRoot.cpp` |
 
 Searches, downloads, extraction, sign-in, and play run on worker threads. Use **Debug > Windows > Threads** to switch between them.
 

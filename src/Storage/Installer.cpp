@@ -1,7 +1,6 @@
 #include "Installer.h"
 #include "Util/Paths.h"
-#include <miniz/miniz.h>
-#include <cstring>
+#include "Util/ZipArchive.h"
 #include <filesystem>
 #include <string>
 #include <utility>
@@ -39,25 +38,24 @@ bool ExtractZip(const std::string& zipPath,
 				std::string* err,
 				const std::atomic<bool>* cancel)
 {
-	mz_zip_archive zip;
-	memset(&zip, 0, sizeof(zip));
-	if (!mz_zip_reader_init_file(&zip, zipPath.c_str(), 0)) {
+	ZipReader reader;
+	if (!reader.Open(zipPath)) {
 		if (err) *err = "Failed to open zip file";
 		return false;
 	}
+	mz_zip_archive* zip = reader.Raw();
 
-	int num = (int)mz_zip_reader_get_num_files(&zip);
+	const int num = static_cast<int>(mz_zip_reader_get_num_files(zip));
 	int extracted = 0;
 
 	for (int i = 0; i < num; ++i) {
 		if (cancel && cancel->load()) {
 			if (err) *err = "Cancelled";
-			mz_zip_reader_end(&zip);
 			return false;
 		}
 
 		mz_zip_archive_file_stat stat;
-		if (!mz_zip_reader_file_stat(&zip, i, &stat)) {
+		if (!mz_zip_reader_file_stat(zip, i, &stat)) {
 			// skip
 			continue;
 		}
@@ -78,13 +76,12 @@ bool ExtractZip(const std::string& zipPath,
 		}
 		if (!IsSafeEntryPath(fs::path(filename))) {
 			if (err) *err = "Unsafe path in zip: " + filename;
-			mz_zip_reader_end(&zip);
 			return false;
 		}
 		// LongPath: pack folders nest deeply, past Windows' 260-character limit.
 		fs::path outPath = LongPath(fs::path(targetDir) / fs::path(filename).lexically_normal());
 
-		if (mz_zip_reader_is_file_a_directory(&zip, i)) {
+		if (mz_zip_reader_is_file_a_directory(zip, i)) {
 			fs::create_directories(outPath);
 			++extracted;
 			if (progress) progress(num, extracted);
@@ -95,12 +92,11 @@ bool ExtractZip(const std::string& zipPath,
 		if (outPath.has_parent_path()) fs::create_directories(outPath.parent_path());
 
 		FILE* out = OpenFile(outPath, "wb");
-		const bool extractedOk = out && mz_zip_reader_extract_to_cfile(&zip, i, out, 0);
+		const bool extractedOk = out && mz_zip_reader_extract_to_cfile(zip, i, out, 0);
 		if (out)
 			fclose(out);
 		if (!extractedOk) {
 			if (err) *err = "Failed to extract file: " + filename;
-			mz_zip_reader_end(&zip);
 			return false;
 		}
 
@@ -108,7 +104,6 @@ bool ExtractZip(const std::string& zipPath,
 		if (progress) progress(num, extracted);
 	}
 
-	mz_zip_reader_end(&zip);
 	return true;
 }
 
@@ -118,26 +113,18 @@ bool ReadZipEntry(const std::string& zipPath,
 				  std::string* err)
 {
 	out.clear();
-	mz_zip_archive zip;
-	memset(&zip, 0, sizeof(zip));
-	if (!mz_zip_reader_init_file(&zip, zipPath.c_str(), 0)) {
+	ZipReader zip;
+	if (!zip.Open(zipPath)) {
 		if (err) *err = "Failed to open zip file";
 		return false;
 	}
-	const int index = mz_zip_reader_locate_file(&zip, entryName.c_str(), nullptr, 0);
-	if (index < 0) {
+	if (mz_zip_reader_locate_file(zip.Raw(), entryName.c_str(), nullptr, 0) < 0) {
 		if (err) *err = entryName + " not found in zip";
-		mz_zip_reader_end(&zip);
 		return false;
 	}
-	size_t size = 0;
-	void* data = mz_zip_reader_extract_to_heap(&zip, static_cast<mz_uint>(index), &size, 0);
-	mz_zip_reader_end(&zip);
-	if (!data) {
+	if (!zip.ReadEntry(entryName.c_str(), out)) {
 		if (err) *err = "Failed to read " + entryName;
 		return false;
 	}
-	out.assign(static_cast<const char*>(data), size);
-	mz_free(data);
 	return true;
 }
