@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Model/Modpack.h"
+#include "Network/Modrinth.h"
 #include "Network/PackSources.h"
 
 #include <cstdint>
@@ -19,6 +20,7 @@ struct SourceView {
 	char search[128] = "";
 	char gameVersion[32] = "";
 	int loader = 0; // 0 = any, else caps.loaders[loader - 1]
+	std::string category; // Modrinth category key; empty = any
 	int sort = 0;   // index into caps.sorts
 	std::vector<Modpack> packs;
 	int selected = -1;
@@ -46,6 +48,12 @@ struct DiscoverState {
 	char search[128] = "";
 	char gameVersion[32] = "";
 	std::string loader; // "" = any, else "forge", "neoforge", "fabric" or "quilt"
+	// A Modrinth category ("adventure", "tech", ...); "" = any. Sources that can't filter by
+	// category are skipped while one is chosen. The list loads the first time the menu opens.
+	std::string category;
+	std::vector<ModrinthCategory> categories;
+	bool categoriesLoading = false;
+	std::string categoriesError;
 	std::set<PackSource> sources; // the source filter; empty = every source
 	// With one source: that source's sort index. With several: 0 best match
 	// (the sources' results interleaved by rank), 1 most downloads, 2 name.

@@ -10,10 +10,10 @@ void DiscoverPage::DrawHeader()
 
 void DiscoverPage::Draw(const PageFrame& frame)
 {
+	m_filters.Draw(m_discover.Plan());
+	// Planned again, so a filter changed this frame is already in the search it sends.
 	const DiscoverPlan plan = m_discover.Plan();
-	const bool single = plan.active.size() == 1;
-	m_filters.Draw(plan);
-	m_discover.SendIfDue(plan, single);
+	m_discover.SendIfDue(plan, plan.active.size() == 1);
 	m_discover.Remerge();
 	const std::vector<std::string> searching = m_results.DrawStatus(plan);
 

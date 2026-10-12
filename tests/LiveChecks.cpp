@@ -158,6 +158,32 @@ static void CheckPackCreation(IHttpClient& http, const fs::path& workRoot)
 		!FindContentDownload(http, { ContentKind::Mods, "", "1.20.1", "forge" }, "sodium", download, &error), error);
 }
 
+// Modrinth categories: the list loads, and a category narrows a search.
+static void CheckCategories(HttpClient& http)
+{
+	std::vector<ModrinthCategory> categories;
+	std::string error;
+	if (!FetchModrinthCategories(http, categories, &error)) {
+		Report("Modrinth categories", false, error);
+		return;
+	}
+	std::string names;
+	bool hasAdventure = false;
+	for (const ModrinthCategory& category : categories) {
+		names += (names.empty() ? "" : ", ") + category.label;
+		hasAdventure = hasAdventure || category.key == "adventure";
+	}
+	Report("Modrinth categories", hasAdventure, std::to_string(categories.size()) + ": " + names);
+	SearchFilters any, adventure;
+	adventure.category = "adventure";
+	SourceSearchResult all, filtered;
+	const bool ok = SearchPacks(http, PackSource::Modrinth, "", any, 10, all, &error) &&
+		SearchPacks(http, PackSource::Modrinth, "", adventure, 10, filtered, &error);
+	Report("Modrinth category search", ok && filtered.totalHits > 0 && filtered.totalHits < all.totalHits,
+		std::to_string(filtered.totalHits) + " adventure of " + std::to_string(all.totalHits) + ", first " +
+		(filtered.packs.empty() ? std::string("-") : filtered.packs.front().name) + " " + error);
+}
+
 // Discover paging: page 2 (offset = page size) continues page 1 with no repeats.
 static void CheckPaging(IHttpClient& http, PackSource source, const std::string& query)
 {
@@ -255,6 +281,7 @@ int main()
 	CheckSource(http, PackSource::ATLauncher, "", workRoot);
 	CheckSource(http, PackSource::Technic, "tekkit", workRoot);
 	CheckClientOnlyLookup(http);
+	CheckCategories(http);
 	CheckPaging(http, PackSource::Modrinth, "");
 	CheckPaging(http, PackSource::FTB, "");
 	CheckPaging(http, PackSource::ATLauncher, "");

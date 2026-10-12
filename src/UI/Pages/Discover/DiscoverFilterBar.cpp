@@ -96,6 +96,8 @@ void DiscoverFilterBar::Draw(const DiscoverPlan& plan)
 		Widgets::EndSelect();
 	}
 	ImGui::SameLine();
+	DrawCategoryPicker(filtersChanged);
+	ImGui::SameLine();
 	ImGui::SetNextItemWidth(S(210.0f));
 	const char* sortLabel = single ? singleCaps->sorts[static_cast<std::size_t>(discover.sort)] : kCombinedSorts[discover.sort];
 	if (Widgets::BeginSelect("##sort", (std::string("Sort: ") + sortLabel).c_str())) {
@@ -114,4 +116,38 @@ void DiscoverFilterBar::Draw(const DiscoverPlan& plan)
 		discover.lastSearchEdit = -1.0; // no typing delay
 		m_discover.SaveSourceFilter();
 	}
+}
+
+void DiscoverFilterBar::DrawCategoryPicker(bool& filtersChanged)
+{
+	DiscoverState& discover = m_discover.State();
+	std::string label = "Any category";
+	for (const ModrinthCategory& category : discover.categories) {
+		if (category.key == discover.category)
+			label = category.label;
+	}
+	ImGui::SetNextItemWidth(S(170.0f));
+	if (Widgets::BeginSelect("##category", label.c_str())) {
+		m_discover.LoadCategories(); // the first time the menu opens
+		if (Widgets::ListItem("Any category", discover.category.empty())) {
+			discover.category.clear();
+			filtersChanged = true;
+		}
+		if (discover.categoriesLoading) {
+			UiHelpers::BusyLabel("Loading categories...");
+		} else if (!discover.categoriesError.empty()) {
+			ImGui::TextColored(Theme::C().error, "Couldn't load categories");
+			if (Widgets::ListItem("Retry", false))
+				discover.categoriesError.clear();
+		}
+		for (const ModrinthCategory& category : discover.categories) {
+			if (Widgets::ListItem(category.label.c_str(), discover.category == category.key)) {
+				discover.category = category.key;
+				filtersChanged = true;
+			}
+		}
+		Widgets::EndSelect();
+	}
+	ImGui::SetItemTooltip("Modrinth categories, e.g. Adventure or Technology. Other sources can't filter by category, "
+		"so they're skipped while one is chosen.");
 }

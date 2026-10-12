@@ -4,7 +4,7 @@
 #include "Services/Settings/SettingsStore.h"
 
 // Discover's query controls: the search box, the source chips, and the Minecraft version, loader
-// and sort pickers. Edits go to the DiscoverService's state, which sends the search once typing pauses.
+// category and sort pickers. Edits go to the DiscoverService's state, which sends the search once typing pauses.
 class DiscoverFilterBar {
 public:
 	DiscoverFilterBar(DiscoverService& discover, SettingsStore& settings) : m_discover(discover), m_settings(settings) {}
@@ -16,6 +16,9 @@ public:
 	void Draw(const DiscoverPlan& plan);
 
 private:
+	// The Modrinth category dropdown; the list loads the first time it opens.
+	void DrawCategoryPicker(bool& filtersChanged);
+
 	DiscoverService& m_discover;
 	SettingsStore& m_settings;
 	bool m_focusSearch = false;

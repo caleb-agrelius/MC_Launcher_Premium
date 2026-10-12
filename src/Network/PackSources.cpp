@@ -141,6 +141,7 @@ public:
 			"MOST DOWNLOADED");
 		AllLoaders(caps);
 		caps.changelogs = true;
+		caps.categoryFilter = true;
 		return caps;
 	}
 	bool Search(IHttpClient& http, const std::string& query, const SearchFilters& filters, int limit, SourceSearchResult& out,
@@ -150,6 +151,7 @@ public:
 		options.gameVersion = filters.gameVersion;
 		options.loader = filters.loader;
 		options.offset = filters.offset;
+		options.category = filters.category;
 		if (filters.sort > 0 && filters.sort < static_cast<int>(std::size(kModrinthIndexes)))
 			options.index = kModrinthIndexes[filters.sort];
 		ModrinthSearchResult result;

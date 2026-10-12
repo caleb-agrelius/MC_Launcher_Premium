@@ -24,8 +24,11 @@ public:
 	DiscoverState& State() { return m_state; }
 
 	// Which sources the source filter selects, minus sources that can't be used and, when a loader
-	// is chosen, sources that can't filter by it.
+	// or category is chosen, sources that can't filter by it.
 	DiscoverPlan Plan();
+
+	// Fetches the Modrinth category list for the category picker, once.
+	void LoadCategories();
 
 	// Remembers the source filter in settings.
 	void SaveSourceFilter();

@@ -70,5 +70,4 @@ Play uses the pack's active installed version: its install folder (`PlayRequest:
 - Windows x64 only (process launching and the Java runtime platform).
 - Mod files are kept by size, not re-hashed on every launch. **Manage > Repair files** in My Library re-checks them by hash.
 - Classic jar mods for Minecraft 1.5 and earlier have unit checks, but haven't been tried with a real pack: ATLauncher's current pack list has none.
-- Dedicated servers don't install old Forge from a pack's jar; whole-pack servers still need the loader declared in `pack.json`.
 - Closing the launcher stops preparation but leaves a running game open. Only **Stop game** ends it from the launcher: it sets `PlayRequest::stopGame`, which makes `RunProcess` terminate the process (its `kill` flag) and `PlayModpack` return "Stopped". That shows a "Minecraft was closed" toast instead of an error.

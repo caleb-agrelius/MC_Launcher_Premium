@@ -12,6 +12,7 @@ Browse modpacks and start downloads and installs. UI code is `src/UI/Pages/Disco
 - **Filters** sit under the box (see [pack-sources.md](pack-sources.md)):
   - a **Minecraft version** text box (searches after typing pauses)
   - a **loader** combo (Any loader, Forge, NeoForge, Fabric, Quilt)
+  - a **category** combo (Any category, then Modrinth's modpack categories such as Adventure, Kitchen sink or Technology). The list comes from `FetchModrinthCategories` on a worker the first time the combo opens ("Loading categories...", with **Retry** on failure). Only Modrinth can filter by category (`SourceCapabilities::categoryFilter`), so while one is chosen the other sources are skipped with "<source> can't filter by category"
   - a **Sort** combo
 
   Changing a combo searches immediately.

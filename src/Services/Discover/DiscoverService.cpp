@@ -36,9 +36,30 @@ DiscoverPlan DiscoverService::Plan()
 			plan.skipped.push_back(std::string(PackSourceName(source)) + " can't filter by loader");
 			continue;
 		}
+		if (!m_state.category.empty() && !m_views[source].caps.categoryFilter) {
+			plan.skipped.push_back(std::string(PackSourceName(source)) + " can't filter by category");
+			continue;
+		}
 		plan.active.push_back(source);
 	}
 	return plan;
+}
+
+void DiscoverService::LoadCategories()
+{
+	if (!m_state.categories.empty() || m_state.categoriesLoading || !m_state.categoriesError.empty())
+		return;
+	m_state.categoriesLoading = true;
+	m_scope.Run([this]() {
+		std::vector<ModrinthCategory> categories;
+		std::string error;
+		const bool ok = FetchModrinthCategories(m_rt.http, categories, &error, &m_rt.shuttingDown);
+		m_rt.ui.Post([this, ok, categories, error]() {
+			m_state.categoriesLoading = false;
+			m_state.categories = categories;
+			m_state.categoriesError = ok ? std::string() : error;
+		});
+	});
 }
 
 void DiscoverService::SaveSourceFilter()
@@ -68,6 +89,7 @@ void DiscoverService::SendIfDue(const DiscoverPlan& plan, bool singleSource)
 				view.loader = static_cast<int>(i + 1);
 		}
 		view.sort = singleSource ? discover.sort : 0;
+		view.category = view.caps.categoryFilter ? discover.category : std::string();
 		StartSearch(view);
 	}
 	discover.mergedKey.clear();
@@ -134,6 +156,7 @@ void DiscoverService::StartSearch(SourceView& view, bool append)
 	if (view.loader > 0 && view.loader <= static_cast<int>(view.caps.loaders.size()))
 		filters.loader = view.caps.loaders[static_cast<std::size_t>(view.loader - 1)];
 	filters.sort = view.sort;
+	filters.category = view.category;
 	filters.offset = append ? static_cast<int>(view.packs.size()) : 0;
 	const int limit = m_settings.Get().searchLimit;
 	if (append) {
