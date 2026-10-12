@@ -1,7 +1,0 @@
-<Solution>
-  <Configurations>
-    <Platform Name="x64" />
-    <Platform Name="x86" />
-  </Configurations>
-  <Project Path="MC_Launcher_Premium.vcxproj" Id="e2a061f5-6d23-4bf8-8629-1b1a5cb8c865" />
-</Solution>

@@ -26,8 +26,6 @@ It prints PASS or FAIL per source and skips CurseForge unless `MCLP_CURSEFORGE_A
 1. Configure the project once, then open `build\MC_Launcher_Premium.sln`.
 2. Press **F5**. `MC_Launcher_Premium` is the startup project and runs from the repository root (`VS_STARTUP_PROJECT` and `VS_DEBUGGER_WORKING_DIRECTORY` in `CMakeLists.txt`).
 
-The `MC_Launcher_Premium.slnx` and `.vcxproj` files in the repository root do not build, because they expect ImGui backend files that are not in the repository. Use the solution CMake generates.
-
 Useful breakpoints:
 
 | Area | Code |
