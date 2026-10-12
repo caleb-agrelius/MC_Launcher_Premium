@@ -4,12 +4,15 @@
 #include "Model/Modpack.h"
 #include "Theme.h"
 
+#include "imgui_internal.h" // DC.CursorPos, for entrance animations
+
 #include <algorithm>
 #include <array>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <functional>
+#include <vector>
 
 namespace Widgets {
 
@@ -20,6 +23,72 @@ static bool g_reduceMotion = false;
 void SetReduceMotion(bool reduce)
 {
 	g_reduceMotion = reduce;
+}
+
+static constexpr double kEntranceSeconds = 0.32;
+static constexpr double kEntranceStagger = 0.045; // per list item
+static constexpr int kEntranceMaxStagger = 10;    // later items don't wait any longer
+static std::vector<float> g_entranceOffsets;      // cursor lift per open BeginEntrance
+
+void BeginEntrance(double start, int index)
+{
+	float progress = 1.0f;
+	if (!g_reduceMotion) {
+		const double delay = kEntranceStagger * std::min(index, kEntranceMaxStagger);
+		const double t = std::clamp((ImGui::GetTime() - start - delay) / kEntranceSeconds, 0.0, 1.0);
+		progress = 1.0f - static_cast<float>(std::pow(1.0 - t, 3.0)); // ease-out cubic
+	}
+	const float offset = (1.0f - progress) * S(14.0f);
+	ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * progress);
+	// Moves the layout cursor directly: SetCursorPosY would mark it as an explicit
+	// move, and ImGui asserts when one isn't followed by an item (see EndEntrance).
+	ImGui::GetCurrentWindow()->DC.CursorPos.y += offset;
+	g_entranceOffsets.push_back(offset);
+}
+
+void EndEntrance()
+{
+	ImGui::PopStyleVar();
+	const float offset = g_entranceOffsets.empty() ? 0.0f : g_entranceOffsets.back();
+	if (!g_entranceOffsets.empty())
+		g_entranceOffsets.pop_back();
+	// Take the lift back out of the layout so items below don't move.
+	ImGui::GetCurrentWindow()->DC.CursorPos.y -= offset;
+}
+
+static int g_wheelFrame = -1; // the frame whose wheel input a window already used
+
+void SmoothScroll()
+{
+	ImGuiStorage* storage = ImGui::GetStateStorage();
+	const float scroll = ImGui::GetScrollY();
+	const float maxScroll = ImGui::GetScrollMaxY();
+	float* target = storage->GetFloatRef(ImGui::GetID("##smooth_target"), scroll);
+	float* last = storage->GetFloatRef(ImGui::GetID("##smooth_last"), scroll);
+	// Scrollbar drags, keyboard navigation and SetScrollHereY move the view on their own.
+	if (std::fabs(scroll - *last) > 0.5f)
+		*target = scroll;
+
+	// Children end before their parent, so the innermost window gets the wheel first.
+	const ImGuiIO& io = ImGui::GetIO();
+	const int frame = ImGui::GetFrameCount();
+	if (io.MouseWheel != 0.0f && !io.KeyCtrl && g_wheelFrame != frame && maxScroll > 0.0f &&
+		ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)) {
+		g_wheelFrame = frame;
+		*target -= io.MouseWheel * S(120.0f);
+	}
+	*target = std::clamp(*target, 0.0f, maxScroll);
+
+	float next = *target;
+	if (!g_reduceMotion) {
+		const float follow = 1.0f - std::exp(-io.DeltaTime * 14.0f); // ~70 ms time constant
+		next = scroll + (*target - scroll) * follow;
+		if (std::fabs(*target - next) < 0.5f)
+			next = *target;
+	}
+	if (next != scroll)
+		ImGui::SetScrollY(next);
+	*last = next;
 }
 
 // Faint outline for icons and banners: light on dark themes, dark on light ones.

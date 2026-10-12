@@ -157,6 +157,7 @@ struct SourceView {
 	double lastSearchEdit = -1.0;
 	bool searching = false;
 	int searchGeneration = 0; // results from older searches are ignored
+	double resultsAt = -1000.0; // ImGui::GetTime() when the current results arrived
 	std::string searchStatus;
 	bool searchFailed = false;
 };
@@ -446,6 +447,12 @@ int main(int argc, char** argv)
 		Page page = Page::Discover;
 		bool focusSearch = false; // Ctrl+F
 		bool sourcesExpanded = true; // Discover's source list in the sidebar
+		// Entrance animations: when the shown page (or Discover source) and the pack in the
+		// details pane last changed.
+		int shownPageKey = -1;
+		double pageShownAt = 0.0;
+		std::string detailsPackId;
+		double detailsShownAt = 0.0;
 		HttpClient http;
 		ImageCache images(http);
 		FoxModel fox;
@@ -739,6 +746,7 @@ int main(int argc, char** argv)
 					view.searchFailed = !ok;
 					if (ok) {
 						view.packs = result.packs;
+						view.resultsAt = ImGui::GetTime();
 						view.searchStatus = FormatCount(result.totalHits) + " modpacks on " + sourceName;
 						log << sourceName << " search \"" << query << "\": " << result.packs.size() << " of "
 							<< result.totalHits << " result(s)\n";
@@ -1056,8 +1064,15 @@ int main(int argc, char** argv)
 			// ---- Main content ----
 			ImGui::SameLine();
 			ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(24.0f), S(18.0f)));
-			ImGui::BeginChild("main_content", ImVec2(0.0f, 0.0f), ImGuiChildFlags_AlwaysUseWindowPadding);
+			ImGui::BeginChild("main_content", ImVec2(0.0f, 0.0f), ImGuiChildFlags_AlwaysUseWindowPadding,
+				ImGuiWindowFlags_NoScrollWithMouse);
 			ImGui::PopStyleVar();
+			const int pageKey = static_cast<int>(page) * 100 + (page == Page::Discover ? static_cast<int>(discoverSource) : 0);
+			if (pageKey != shownPageKey) {
+				shownPageKey = pageKey;
+				pageShownAt = ImGui::GetTime();
+			}
+			Widgets::BeginEntrance(pageShownAt);
 			const char* breadcrumb = page == Page::Discover ? "MINECRAFT  /  MODPACKS"
 				: page == Page::Library ? "MINECRAFT  /  LIBRARY"
 				: page == Page::Downloads ? "MINECRAFT  /  DOWNLOADS" : "LAUNCHER  /  SETTINGS";
@@ -1176,7 +1191,9 @@ int main(int argc, char** argv)
 				std::vector<Modpack>& packs = view.packs;
 				int& selected = view.selected;
 				const bool browsing = view.search[0] == '\0' && view.gameVersion[0] == '\0' && view.loader == 0 && view.sort == 0;
-				ImGui::BeginChild("pack_list", ImVec2(S(340.0f), 0.0f), ImGuiChildFlags_Borders);
+				ImGui::BeginChild("pack_list", ImVec2(S(340.0f), 0.0f), ImGuiChildFlags_Borders,
+					ImGuiWindowFlags_NoScrollWithMouse);
+				const double rowsShownAt = std::max(pageShownAt, view.resultsAt);
 				Widgets::SectionLabel(browsing ? caps.browseLabel : "RESULTS");
 				for (std::size_t i = 0; i < packs.size(); ++i) {
 					const Modpack& item = packs[i];
@@ -1193,17 +1210,28 @@ int main(int argc, char** argv)
 							meta = PackSourceName(item.source); // e.g. Technic search results, until selected
 					}
 					ImGui::PushID(static_cast<int>(i));
+					Widgets::BeginEntrance(rowsShownAt, static_cast<int>(i));
 					if (Widgets::PackRow(item, images, selected == static_cast<int>(i), meta))
 						selected = static_cast<int>(i);
+					Widgets::EndEntrance();
 					ImGui::PopID();
 				}
 				if (packs.empty() && !view.searching && sourceAvailable)
 					ImGui::TextDisabled("No modpacks found.");
+				Widgets::SmoothScroll();
 				ImGui::EndChild();
 				ImGui::SameLine();
 
 				// Pack details
-				ImGui::BeginChild("pack_details", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders);
+				ImGui::BeginChild("pack_details", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders,
+					ImGuiWindowFlags_NoScrollWithMouse);
+				const std::string shownId = selected >= 0 && selected < static_cast<int>(packs.size())
+					? packs[static_cast<std::size_t>(selected)].id : std::string();
+				if (shownId != detailsPackId) {
+					detailsPackId = shownId;
+					detailsShownAt = ImGui::GetTime();
+				}
+				Widgets::BeginEntrance(std::max(pageShownAt, detailsShownAt));
 				if (selected >= 0 && selected < static_cast<int>(packs.size())) {
 					const Modpack& pack = packs[static_cast<std::size_t>(selected)];
 					const bool online = pack.source != PackSource::LocalIndex;
@@ -1475,9 +1503,12 @@ int main(int argc, char** argv)
 				} else if (sourceAvailable && !view.searching) {
 					ImGui::TextDisabled("No modpacks match your search.");
 				}
+				Widgets::EndEntrance();
+				Widgets::SmoothScroll();
 				ImGui::EndChild();
 			} else if (page == Page::Library) {
 				const float iconSize = S(64.0f);
+				int cardIndex = 0;
 				for (const auto& [packId, pack] : libraryPacks) {
 					PlayState play;
 					{
@@ -1486,6 +1517,7 @@ int main(int argc, char** argv)
 						if (it != plays.end())
 							play = it->second;
 					}
+					Widgets::BeginEntrance(pageShownAt, cardIndex++);
 					BeginCard(pack.id.c_str());
 					PackIconItem(pack, images, iconSize);
 					ImGui::SameLine(0.0f, S(14.0f));
@@ -1551,6 +1583,7 @@ int main(int argc, char** argv)
 					if (play.busy && !play.playing && play.progress >= 0.0)
 						Widgets::ThinProgressBar(static_cast<float>(play.progress));
 					EndCard();
+					Widgets::EndEntrance();
 				}
 				if (libraryPacks.empty() && Widgets::EmptyState("Your library is empty",
 						"Packs you download and install from Discover show up here.", "Browse modpacks"))
@@ -1565,8 +1598,10 @@ int main(int argc, char** argv)
 						"Pick a modpack on Discover and press Download.", "Browse modpacks"))
 					page = Page::Discover;
 				const float iconSize = S(56.0f);
+				int cardIndex = 0;
 				for (const auto& item : snapshot) {
 					const DownloadState& state = item.second;
+					Widgets::BeginEntrance(pageShownAt, cardIndex++);
 					BeginCard(item.first.c_str());
 					PackIconItem(state.pack, images, iconSize);
 					ImGui::SameLine(0.0f, S(14.0f));
@@ -1621,12 +1656,14 @@ int main(int argc, char** argv)
 					else if (state.installing)
 						Widgets::ThinProgressBar(static_cast<float>(state.installProgress));
 					EndCard();
+					Widgets::EndEntrance();
 				}
 			} else {
 				settingsContext.accountName = account.type == Account::Type::None ? std::string() : account.name;
 				settingsContext.accountKind = account.type == Account::Type::Microsoft ? "Microsoft account"
 					: account.type == Account::Type::Offline ? "Offline (singleplayer)" : "No account yet";
 				const std::string oldCurseForgeKey = CurseForgeApiKey();
+				settingsContext.shownAt = pageShownAt;
 				if (DrawSettingsPage(settings, settingsContext)) {
 					settingsDirty = true;
 					SetCurseForgeApiKey(settings.curseForgeApiKey);
@@ -1663,6 +1700,8 @@ int main(int argc, char** argv)
 				}
 			}
 
+			Widgets::EndEntrance();
+			Widgets::SmoothScroll();
 			ImGui::EndChild();
 			ImGui::End();
 			Toasts::Draw(settings.reduceMotion);
