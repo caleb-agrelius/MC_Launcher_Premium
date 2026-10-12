@@ -10,6 +10,7 @@
 #include <iterator>
 #include <set>
 
+#include "Util/Paths.h"
 #include "Util/Sha1.h"
 
 namespace fs = std::filesystem;
@@ -340,4 +341,63 @@ bool RepairInstance(HttpClient& http, const fs::path& extractedDir, const fs::pa
 	}
 	// Downloads what's missing or was just removed.
 	return PrepareInstance(http, extractedDir, instanceDir, index, progress, err, cancel);
+}
+
+const std::vector<std::string>& PlayerDataPaths()
+{
+	static const std::vector<std::string> paths = {
+		"saves", "screenshots", "resourcepacks", "shaderpacks", "schematics",
+		"servers.dat", "options.txt", "optionsof.txt", "optionsshaders.txt",
+	};
+	return paths;
+}
+
+bool CarryOverPlayerData(const fs::path& fromGameDir, const fs::path& toGameDir, std::size_t& copied,
+	std::string* err, const std::atomic<bool>* cancel)
+{
+	copied = 0;
+	// Worlds nest deeply, so walk and copy with \\?\ paths.
+	const fs::path from = ExtendedPath(fromGameDir);
+	const fs::path to = ExtendedPath(toGameDir);
+	auto copyFile = [&](const fs::path& source) {
+		const fs::path relative = source.lexically_relative(from);
+		const fs::path target = to / relative;
+		std::error_code ec;
+		if (fs::exists(target, ec))
+			return true;
+		fs::create_directories(target.parent_path(), ec);
+		if (!fs::copy_file(source, target, ec)) {
+			if (err) *err = "Couldn't copy " + relative.generic_string() + ": " + ec.message();
+			return false;
+		}
+		++copied;
+		return true;
+	};
+	for (const std::string& name : PlayerDataPaths()) {
+		if (cancel && cancel->load()) {
+			if (err) *err = "Cancelled";
+			return false;
+		}
+		const fs::path source = from / name;
+		std::error_code ec;
+		const fs::file_status status = fs::symlink_status(source, ec);
+		if (fs::is_regular_file(status)) {
+			if (!copyFile(source))
+				return false;
+		} else if (fs::is_directory(status)) {
+			for (fs::recursive_directory_iterator it(source, ec), end; !ec && it != end; it.increment(ec)) {
+				if (cancel && cancel->load()) {
+					if (err) *err = "Cancelled";
+					return false;
+				}
+				if (it->is_regular_file(ec) && !it->is_symlink(ec) && !copyFile(it->path()))
+					return false;
+			}
+			if (ec) {
+				if (err) *err = "Couldn't read " + name + ": " + ec.message();
+				return false;
+			}
+		}
+	}
+	return true;
 }
