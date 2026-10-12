@@ -1,5 +1,8 @@
 #include "Process.h"
 
+#include "Util/DebugTrace.h"
+#include "Util/TracedFs.h"
+
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -52,6 +55,15 @@ static void AppendQuoted(std::wstring& commandLine, const std::wstring& arg)
 		}
 	}
 	commandLine += L'"';
+}
+
+// Traces a child process being started, or failing to.
+static void TraceStart(const std::vector<std::string>& args, const fs::path& workDir, const std::string& startError)
+{
+	if (!Debug::Enabled(Debug::kProcess))
+		return;
+	Debug::Write(Debug::kProcess, (startError.empty() ? "start  " : "FAILED to start: " + startError + "  ") +
+		Debug::DescribeCommand(args) + "  (in " + Debug::PathText(workDir.u8string()) + ")");
 }
 
 static std::string LastErrorText(const std::string& what)
@@ -119,7 +131,7 @@ bool RunProcess(const std::vector<std::string>& args,
 
 	SECURITY_ATTRIBUTES inherit{ sizeof(inherit), nullptr, TRUE };
 	std::error_code ec;
-	fs::create_directories(logFile.parent_path(), ec);
+	TracedFs::CreateDirectories(logFile.parent_path(), ec);
 	HANDLE log = CreateFileW(logFile.wstring().c_str(), FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
 		&inherit, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
 	if (log == INVALID_HANDLE_VALUE) {
@@ -131,6 +143,7 @@ bool RunProcess(const std::vector<std::string>& args,
 	PROCESS_INFORMATION process{};
 	const bool started = StartChild(commandLine, workDir.wstring(), nul, log, process);
 	const std::string startError = started ? std::string() : LastErrorText("Couldn't start " + args[0]);
+	TraceStart(args, workDir, startError);
 	CloseHandle(log);
 	if (nul != INVALID_HANDLE_VALUE)
 		CloseHandle(nul);
@@ -149,6 +162,7 @@ bool RunProcess(const std::vector<std::string>& args,
 			TerminateProcess(process.hProcess, 1);
 			WaitForSingleObject(process.hProcess, 5000);
 			CloseHandle(process.hProcess);
+			Debug::Write(Debug::kProcess, "killed  " + Debug::DescribeCommand({ args[0] }) + " (stopped)");
 			if (err) *err = "Stopped";
 			return false;
 		}
@@ -156,12 +170,14 @@ bool RunProcess(const std::vector<std::string>& args,
 			if (killOnCancel)
 				TerminateProcess(process.hProcess, 1);
 			CloseHandle(process.hProcess);
+			Debug::Write(Debug::kProcess, std::string(killOnCancel ? "killed  " : "left running  ") + Debug::DescribeCommand({ args[0] }) + " (cancelled)");
 			if (err) *err = "Cancelled";
 			return false;
 		}
 	}
 	DWORD code = 0;
 	GetExitCodeProcess(process.hProcess, &code);
+	Debug::Write(Debug::kProcess, "exit " + std::to_string(static_cast<int>(code)) + "  " + Debug::DescribeCommand({ args[0] }));
 	CloseHandle(process.hProcess);
 	if (exitCode) *exitCode = static_cast<int>(code);
 	return true;
@@ -232,6 +248,7 @@ bool ServerProcess::Start(const std::vector<std::string>& args, const fs::path& 
 	PROCESS_INFORMATION process{};
 	const bool started = StartChild(commandLine, workDir.wstring(), inputRead, outputWrite, process);
 	const std::string startError = started ? std::string() : LastErrorText("Couldn't start " + args[0]);
+	TraceStart(args, workDir, startError);
 	CloseHandle(inputRead);
 	CloseHandle(outputWrite);
 	if (!started) {
@@ -246,7 +263,7 @@ bool ServerProcess::Start(const std::vector<std::string>& args, const fs::path& 
 	m_output = outputRead;
 	m_logFile = logFile;
 	std::error_code ec;
-	fs::create_directories(logFile.parent_path(), ec);
+	TracedFs::CreateDirectories(logFile.parent_path(), ec);
 	m_reader = std::thread([this]() { ReadOutput(); });
 	return true;
 #else

@@ -3,6 +3,7 @@
 #include "Util/Hash.h"
 #include "Util/Paths.h"
 #include "Util/Sha1.h"
+#include "Util/TracedFs.h"
 
 #include <algorithm>
 #include <cctype>
@@ -106,13 +107,13 @@ bool LinkTo(const std::string& key, std::uint64_t size, const fs::path& target)
 	if (size != 0 && fs::file_size(LongPath(stored), ec) != size)
 		return false;
 	if (!Matches(key, stored)) {
-		fs::remove(LongPath(stored), ec); // damaged: never hand it out again
+		TracedFs::Remove(LongPath(stored), ec); // damaged: never hand it out again
 		return false;
 	}
-	fs::create_directories(LongPath(target.parent_path()), ec);
-	fs::remove(LongPath(target), ec);
+	TracedFs::CreateDirectories(LongPath(target.parent_path()), ec);
+	TracedFs::Remove(LongPath(target), ec);
 	ec.clear();
-	fs::create_hard_link(LongPath(stored), LongPath(target), ec);
+	TracedFs::CreateHardLink(LongPath(stored), LongPath(target), ec);
 	return !ec;
 }
 
@@ -125,8 +126,8 @@ void Add(const std::string& key, const fs::path& file)
 	std::error_code ec;
 	if (fs::exists(LongPath(stored), ec))
 		return;
-	fs::create_directories(LongPath(stored.parent_path()), ec);
-	fs::create_hard_link(LongPath(file), LongPath(stored), ec); // fails across drives: then it isn't shared
+	TracedFs::CreateDirectories(LongPath(stored.parent_path()), ec);
+	TracedFs::CreateHardLink(LongPath(file), LongPath(stored), ec); // fails across drives: then it isn't shared
 }
 
 std::uint64_t Prune()
@@ -145,7 +146,7 @@ std::uint64_t Prune()
 	for (const fs::path& path : unused) {
 		std::error_code fileError;
 		const std::uint64_t size = fs::file_size(path, fileError);
-		if (fs::remove(path, fileError))
+		if (TracedFs::Remove(path, fileError))
 			freed += size;
 	}
 	return freed;
@@ -215,9 +216,9 @@ ShareResult ShareExisting(const std::vector<fs::path>& gameDirs, const std::func
 		const fs::path stored = PathFor(key);
 		if (!fs::exists(LongPath(stored), ec)) {
 			// First copy seen: it becomes the stored one.
-			fs::create_directories(LongPath(stored.parent_path()), ec);
+			TracedFs::CreateDirectories(LongPath(stored.parent_path()), ec);
 			ec.clear();
-			fs::create_hard_link(file, LongPath(stored), ec);
+			TracedFs::CreateHardLink(file, LongPath(stored), ec);
 			if (ec && result.error.empty())
 				result.error = "Couldn't link into the store (" + ec.message() + "); the store must be on the same drive";
 			continue;
@@ -227,18 +228,18 @@ ShareResult ShareExisting(const std::vector<fs::path>& gameDirs, const std::func
 		// Swap the copy for a link: link to a temporary name first, so the file is never missing.
 		fs::path temp = file;
 		temp += ".mclp-link";
-		fs::remove(temp, ec);
+		TracedFs::Remove(temp, ec);
 		ec.clear();
-		fs::create_hard_link(LongPath(stored), temp, ec);
+		TracedFs::CreateHardLink(LongPath(stored), temp, ec);
 		if (ec) {
 			if (result.error.empty())
 				result.error = "Couldn't link " + file.filename().string() + ": " + ec.message();
 			continue;
 		}
-		fs::rename(temp, file, ec);
+		TracedFs::Rename(temp, file, ec);
 		if (ec) {
 			std::error_code ignored;
-			fs::remove(temp, ignored);
+			TracedFs::Remove(temp, ignored);
 			if (result.error.empty())
 				result.error = "Couldn't replace " + file.filename().string() + ": " + ec.message();
 			continue;

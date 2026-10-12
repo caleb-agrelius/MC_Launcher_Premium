@@ -5,6 +5,7 @@
 #include "Util/SharedFiles.h"
 #include "Util/Sha1.h"
 #include "Util/Json.h"
+#include "Util/TracedFs.h"
 
 #include <nlohmann/json.hpp>
 
@@ -238,7 +239,7 @@ bool InstallContent(IHttpClient& http, const ContentSearch& search, const std::s
 		std::error_code ec;
 		if (fs::exists(target, ec) || fs::exists(off, ec))
 			continue; // already in the pack
-		fs::create_directories(folder, ec);
+		TracedFs::CreateDirectories(folder, ec);
 		// Another pack already has this exact file: link to the shared copy instead.
 		const std::string shareKey = SharedFiles::KeyFor(download.sha1);
 		if (!shareKey.empty() && SharedFiles::LinkTo(shareKey, 0, target)) {
@@ -248,19 +249,19 @@ bool InstallContent(IHttpClient& http, const ContentSearch& search, const std::s
 		fs::path part = target;
 		part += ".part";
 		if (!http.DownloadToFile(download.url, part.string(), nullptr, &error, cancel)) {
-			fs::remove(LongPath(part), ec);
+			TracedFs::Remove(LongPath(part), ec);
 			if (err) *err = "Couldn't download " + fileName + ": " + error;
 			return false;
 		}
 		if (!download.sha1.empty() && Sha1File(LongPath(part).string()) != download.sha1) {
-			fs::remove(LongPath(part), ec);
+			TracedFs::Remove(LongPath(part), ec);
 			if (err) *err = fileName + " didn't match its SHA-1 after downloading. Try again.";
 			return false;
 		}
-		fs::rename(LongPath(part), LongPath(target), ec);
+		TracedFs::Rename(LongPath(part), LongPath(target), ec);
 		if (ec) {
 			const std::string why = ec.message();
-			fs::remove(LongPath(part), ec);
+			TracedFs::Remove(LongPath(part), ec);
 			if (err) *err = "Couldn't save " + fileName + ": " + why;
 			return false;
 		}

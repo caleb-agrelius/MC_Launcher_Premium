@@ -8,6 +8,7 @@
 #include "UI/Theme.h"
 #include "UI/Toasts.h"
 #include "imgui.h"
+#include "Util/TracedFs.h"
 
 #include <chrono>
 #include <filesystem>
@@ -19,9 +20,10 @@ AppRoot::AppRoot(const fs::path& dataRoot, std::ostream& log, GlfwWindow& window
 	ThemeController& theme)
 	: m_log(log), m_window(window), m_settings(settings), m_theme(theme),
 	  m_workers([] { HttpClient::ReleaseThreadHandle(); }),
-	  m_rt{ m_workers, m_uiQueue, m_http, m_notifier, log, m_shuttingDown },
+	  m_tracedHttp(m_http),
+	  m_rt{ m_workers, m_uiQueue, m_tracedHttp, m_notifier, log, m_shuttingDown },
 	  m_library(AppPaths::kLibraryFile, log),
-	  m_images(m_http),
+	  m_images(m_tracedHttp),
 	  m_accounts(m_rt, settings, AppPaths::kAccountFile),
 	  m_downloads(m_rt, m_library, AppPaths::kDownloadsFile),
 	  m_plays(m_rt, settings, m_library, m_accounts, m_downloads, window),
@@ -76,8 +78,8 @@ AppRoot::AppRoot(const fs::path& dataRoot, std::ostream& log, GlfwWindow& window
 {
 	m_navigator.Bind(m_shell);
 	std::error_code ec;
-	fs::create_directories(AppPaths::kDownloadsRoot, ec);
-	fs::create_directories(AppPaths::kInstallsRoot, ec);
+	TracedFs::CreateDirectories(AppPaths::kDownloadsRoot, ec);
+	TracedFs::CreateDirectories(AppPaths::kInstallsRoot, ec);
 	log << "Loaded " << m_library.Packs().size() << " library pack(s)\n";
 	SetCurseForgeApiKey(settings.Get().curseForgeApiKey);
 	m_downloads.LoadSaved();

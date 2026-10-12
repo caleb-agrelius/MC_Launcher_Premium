@@ -14,6 +14,7 @@
 #include "Util/Text.h"
 #include "Util/SharedFiles.h"
 #include "Util/Sha1.h"
+#include "Util/TracedFs.h"
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
@@ -266,7 +267,7 @@ static bool CopyTree(const fs::path& source, const fs::path& target, std::string
 	std::error_code ec;
 	if (!fs::is_directory(LongPath(source), ec))
 		return true;
-	fs::copy(ExtendedPath(source), ExtendedPath(target), fs::copy_options::recursive | fs::copy_options::overwrite_existing, ec);
+	TracedFs::Copy(ExtendedPath(source), ExtendedPath(target), fs::copy_options::recursive | fs::copy_options::overwrite_existing, ec);
 	if (ec) {
 		if (err) *err = "Couldn't copy " + source.filename().string() + ": " + ec.message();
 		return false;
@@ -278,7 +279,7 @@ bool PrepareInstance(IHttpClient& http, const fs::path& extractedDir, const fs::
 	const MrpackIndex& index, const ProgressFn& progress, std::string* err, const std::atomic<bool>* cancel)
 {
 	std::error_code ec;
-	fs::create_directories(instanceDir, ec);
+	TracedFs::CreateDirectories(instanceDir, ec);
 
 	// A file the player turned off (a "<name>.disabled" copy) isn't downloaded again.
 	std::vector<DownloadJob> jobs;
@@ -317,7 +318,7 @@ bool PrepareInstance(IHttpClient& http, const fs::path& extractedDir, const fs::
 	for (const std::string& old : previousFiles) {
 		const fs::path relative = fs::u8path(old);
 		if (currentFiles.count(old) == 0 && IsSafeRelativePath(relative))
-			fs::remove(LongPath(instanceDir / relative), ec);
+			TracedFs::Remove(LongPath(instanceDir / relative), ec);
 	}
 
 	if (progress)
@@ -325,7 +326,7 @@ bool PrepareInstance(IHttpClient& http, const fs::path& extractedDir, const fs::
 	if (!CopyTree(extractedDir / "overrides", instanceDir, err) ||
 		!CopyTree(extractedDir / "client-overrides", instanceDir, err))
 		return false;
-	std::ofstream out(marker, std::ios::trunc);
+	auto out = TracedFs::OpenWrite(marker, std::ios::trunc);
 	out << current << "\n";
 	for (const std::string& file : currentFiles)
 		out << file << "\n";
@@ -350,7 +351,7 @@ bool RepairInstance(IHttpClient& http, const fs::path& extractedDir, const fs::p
 		if (job.sha1.empty() || !fs::is_regular_file(path, ec))
 			continue;
 		if (Sha1File(path.string()) != job.sha1)
-			fs::remove(path, ec);
+			TracedFs::Remove(path, ec);
 	}
 	// Downloads what's missing or was just removed.
 	return PrepareInstance(http, extractedDir, instanceDir, index, progress, err, cancel);
@@ -378,8 +379,8 @@ bool CarryOverPlayerData(const fs::path& fromGameDir, const fs::path& toGameDir,
 		std::error_code ec;
 		if (fs::exists(target, ec))
 			return true;
-		fs::create_directories(target.parent_path(), ec);
-		if (!fs::copy_file(source, target, ec)) {
+		TracedFs::CreateDirectories(target.parent_path(), ec);
+		if (!TracedFs::CopyFile(source, target, ec)) {
 			if (err) *err = "Couldn't copy " + relative.generic_string() + ": " + ec.message();
 			return false;
 		}

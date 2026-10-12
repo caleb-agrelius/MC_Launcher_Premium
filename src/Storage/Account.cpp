@@ -1,4 +1,5 @@
 #include "Account.h"
+#include "Util/TracedFs.h"
 
 #include <nlohmann/json.hpp>
 
@@ -173,7 +174,7 @@ bool SaveAccounts(const std::string& path, const AccountList& list)
 		return false;
 	data.swap(encrypted);
 #endif
-	std::ofstream ofs(path, std::ios::binary | std::ios::trunc);
+	auto ofs = TracedFs::OpenWrite(path, std::ios::binary | std::ios::trunc);
 	if (!ofs.is_open())
 		return false;
 	ofs.write(data.data(), static_cast<std::streamsize>(data.size()));

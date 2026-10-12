@@ -1,4 +1,5 @@
 #include "GameOptions.h"
+#include "Util/TracedFs.h"
 
 #include <cmath>
 #include <cstdio>
@@ -219,10 +220,10 @@ bool ApplyGameOptions(const fs::path& instanceDir, const GameOptionsSettings& op
 			lines.push_back(key + ":" + value);
 	}
 
-	fs::create_directories(instanceDir, ec);
+	TracedFs::CreateDirectories(instanceDir, ec);
 	const fs::path temp = instanceDir / "options.txt.mclp-tmp";
 	{
-		std::ofstream out(temp, std::ios::trunc | std::ios::binary);
+		auto out = TracedFs::OpenWrite(temp, std::ios::trunc | std::ios::binary);
 		for (const std::string& line : lines)
 			out << line << "\n";
 		if (!out.good()) {
@@ -230,12 +231,12 @@ bool ApplyGameOptions(const fs::path& instanceDir, const GameOptionsSettings& op
 			return false;
 		}
 	}
-	fs::rename(temp, path, ec);
+	TracedFs::Rename(temp, path, ec);
 	if (ec) {
 		if (err) *err = "Couldn't update " + path.string() + ": " + ec.message();
-		fs::remove(temp, ec);
+		TracedFs::Remove(temp, ec);
 		return false;
 	}
-	std::ofstream(marker) << "applied\n";
+	TracedFs::OpenWrite(marker) << "applied\n";
 	return true;
 }

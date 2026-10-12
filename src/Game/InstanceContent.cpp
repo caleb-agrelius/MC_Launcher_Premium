@@ -1,5 +1,6 @@
 #include "InstanceContent.h"
 #include "Util/Text.h"
+#include "Util/TracedFs.h"
 
 #include <miniz/miniz.h>
 #include <nlohmann/json.hpp>
@@ -102,9 +103,9 @@ bool SetContentEnabled(const fs::path& folder, const std::string& fileName, bool
 	}
 	// Both copies (e.g. a pack update re-added a disabled mod): keep the one being switched to.
 	if (fs::exists(to, ec))
-		fs::remove_all(from, ec);
+		TracedFs::RemoveAll(from, ec);
 	else
-		fs::rename(from, to, ec);
+		TracedFs::Rename(from, to, ec);
 	if (ec) {
 		if (err) *err = "Couldn't rename " + fileName + ": " + ec.message() + ". Close the game or stop the server first.";
 		return false;
@@ -123,7 +124,7 @@ bool DeleteContent(const fs::path& folder, const std::string& fileName, std::str
 	off += kDisabledSuffix;
 	std::error_code ec;
 	for (const fs::path& path : { on, off }) {
-		fs::remove_all(path, ec);
+		TracedFs::RemoveAll(path, ec);
 		if (ec) {
 			if (err) *err = "Couldn't delete " + fileName + ": " + ec.message() + ". Close the game or stop the server first.";
 			return false;
@@ -170,13 +171,13 @@ bool AddContent(const fs::path& gameDir, ContentKind kind, const fs::path& sourc
 		if (err) *err = name + " is already in " + info.folder + ".";
 		return false;
 	}
-	fs::create_directories(folder, ec);
+	TracedFs::CreateDirectories(folder, ec);
 	if (isFolder)
-		fs::copy(source, target, fs::copy_options::recursive, ec);
+		TracedFs::Copy(source, target, fs::copy_options::recursive, ec);
 	else
-		fs::copy_file(source, target, ec);
+		TracedFs::CopyFile(source, target, ec);
 	if (ec) {
-		fs::remove_all(target, ec);
+		TracedFs::RemoveAll(target, ec);
 		if (err) *err = "Couldn't copy " + name + " into " + info.folder + ": " + ec.message();
 		return false;
 	}

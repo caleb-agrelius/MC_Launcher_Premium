@@ -84,6 +84,7 @@ The executable locates the repository by searching upward from its own folder fo
 | --- | --- |
 | `mcdebug build` | Configure and build the Debug executable |
 | `mcdebug run` | Build, then start the executable from the repository root |
+| `mcdebug debug [channels]` | Build, then run it in this console with the [debug harness](docs/features/debug-harness.md) on: API requests, file operations, processes and `app.log` lines print as they happen, e.g. `mcdebug debug http,file` |
 | `mcdebug help` | List commands |
 
 - CMake is taken from `PATH`, or from the Visual Studio installation if it is not on `PATH`.

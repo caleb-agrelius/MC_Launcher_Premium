@@ -8,6 +8,7 @@
 #include "Game/PackInstance.h"
 #include "Network/HttpClient.h"
 #include "Util/Process.h"
+#include "Util/TracedFs.h"
 
 #include <algorithm>
 #include <fstream>
@@ -125,7 +126,7 @@ static std::string PathString(const fs::path& path)
 // Windows' 32K command-line limit. Backslashes and quotes are escaped.
 static bool WriteArgFile(const fs::path& path, const std::vector<std::string>& args, std::string* err)
 {
-	std::ofstream ofs(path, std::ios::trunc);
+	auto ofs = TracedFs::OpenWrite(path, std::ios::trunc);
 	for (const std::string& arg : args) {
 		ofs << '"';
 		for (char c : arg) {
@@ -171,8 +172,8 @@ static void MapAssetsToResources(const fs::path& root, const ResolvedVersion& ve
 		std::error_code ec;
 		if (fs::exists(target, ec))
 			continue;
-		fs::create_directories(target.parent_path(), ec);
-		fs::copy_file(root / "assets" / "objects" / hash.substr(0, 2) / hash, target, ec);
+		TracedFs::CreateDirectories(target.parent_path(), ec);
+		TracedFs::CopyFile(root / "assets" / "objects" / hash.substr(0, 2) / hash, target, ec);
 	}
 }
 

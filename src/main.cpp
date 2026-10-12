@@ -2,10 +2,14 @@
 // Services/ (what the launcher does) and UI/ (what it shows).
 #include "App/Application.h"
 #include "Platform/Platform.h"
+#include "Util/DebugTrace.h"
 
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
+#include <string>
+#include <vector>
 
 namespace fs = std::filesystem;
 
@@ -33,16 +37,27 @@ fs::path FindDataRoot()
 
 }
 
-int main()
+int main(int argc, char** argv)
 {
+	// The debug harness (--debug[=channels] or MCLP_DEBUG) traces to the console; off by default.
+	std::vector<std::string> debugWarnings;
+	const unsigned debugChannels = Debug::ConfigureFromEnvironment(argc, argv, debugWarnings);
+	for (const std::string& warning : debugWarnings)
+		std::cerr << warning << "\n";
 	// Run from the folder that holds resources/, so the index, app.log, downloads/ and installs/
 	// all resolve the same way however the app is launched.
 	const fs::path dataRoot = FindDataRoot();
 	std::error_code chdirError;
 	if (!dataRoot.empty())
 		fs::current_path(dataRoot, chdirError);
-	std::ofstream log("app.log", std::ios::app);
+	std::ofstream logFile("app.log", std::ios::app);
+	// With the log channel on, app.log lines also show in the console.
+	Debug::LogTee logTee(logFile.rdbuf());
+	std::ostream teedLog(&logTee);
+	std::ostream& log = Debug::Enabled(Debug::kLog) ? teedLog : static_cast<std::ostream&>(logFile);
 	try {
+		if (debugChannels)
+			Debug::Write(Debug::kLog, "Debug harness on: " + Debug::ChannelNames(debugChannels));
 		log << "Starting app\n";
 		if (dataRoot.empty())
 			log << "Could not find " << kIndexRelativePath.string() << " near the working directory or executable\n";
@@ -52,12 +67,12 @@ int main()
 	}
 	catch (const std::exception& ex) {
 		log << "Unhandled exception: " << ex.what() << "\n";
-		log.close();
+		logFile.close();
 		throw;
 	}
 	catch (...) {
 		log << "Unhandled unknown exception\n";
-		log.close();
+		logFile.close();
 		throw;
 	}
 }

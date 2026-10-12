@@ -30,7 +30,7 @@ Everything a service or page needs from "the rest of the app" is an abstract cla
 |---|---|---|
 | `ITaskRunner` | run this off the UI thread | `WorkerPool` |
 | `IUiPoster` | run this on the UI thread next frame | `UiQueue` |
-| `IHttpClient` | the network | `HttpClient` (libcurl) |
+| `IHttpClient` | the network | `HttpClient` (libcurl), wrapped by `TracingHttpClient` for the debug harness |
 | `INotifier` | a message for the player | `ToastNotifier` (toasts) |
 | `IWindowControl` | minimize, restore, close the launcher | `GlfwWindow` |
 | `IDisplayMetrics` | the monitor's DPI scale | `ThemeController` |

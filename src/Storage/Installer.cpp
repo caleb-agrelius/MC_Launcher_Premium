@@ -1,6 +1,8 @@
 #include "Installer.h"
+#include "Util/DebugTrace.h"
 #include "Util/Paths.h"
 #include "Util/ZipArchive.h"
+#include "Util/TracedFs.h"
 #include <filesystem>
 #include <string>
 #include <utility>
@@ -47,6 +49,8 @@ bool ExtractZip(const std::string& zipPath,
 
 	const int num = static_cast<int>(mz_zip_reader_get_num_files(zip));
 	int extracted = 0;
+	Debug::Write(Debug::kFile, "extract    " + Debug::PathText(zipPath) + " -> " + Debug::PathText(targetDir) + " (" +
+		std::to_string(num) + " entries" + (prefix.empty() ? std::string() : ", from " + prefix) + ")");
 
 	for (int i = 0; i < num; ++i) {
 		if (cancel && cancel->load()) {
@@ -82,14 +86,14 @@ bool ExtractZip(const std::string& zipPath,
 		fs::path outPath = LongPath(fs::path(targetDir) / fs::path(filename).lexically_normal());
 
 		if (mz_zip_reader_is_file_a_directory(zip, i)) {
-			fs::create_directories(outPath);
+			TracedFs::CreateDirectories(outPath);
 			++extracted;
 			if (progress) progress(num, extracted);
 			continue;
 		}
 
 		// ensure parent dir
-		if (outPath.has_parent_path()) fs::create_directories(outPath.parent_path());
+		if (outPath.has_parent_path()) TracedFs::CreateDirectories(outPath.parent_path());
 
 		FILE* out = OpenFile(outPath, "wb");
 		const bool extractedOk = out && mz_zip_reader_extract_to_cfile(zip, i, out, 0);
@@ -104,6 +108,7 @@ bool ExtractZip(const std::string& zipPath,
 		if (progress) progress(num, extracted);
 	}
 
+	Debug::Write(Debug::kFile, "extracted  " + Debug::PathText(targetDir) + " (" + std::to_string(extracted) + " entries)");
 	return true;
 }
 

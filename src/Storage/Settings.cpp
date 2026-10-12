@@ -1,4 +1,5 @@
 #include "Settings.h"
+#include "Util/TracedFs.h"
 
 #include <nlohmann/json.hpp>
 
@@ -124,7 +125,7 @@ Settings LoadSettings(const std::string& path)
 
 bool SaveSettings(const std::string& path, const Settings& settings)
 {
-	std::ofstream ofs(path, std::ios::trunc);
+	auto ofs = TracedFs::OpenWrite(path, std::ios::trunc);
 	if (!ofs.is_open())
 		return false;
 	json j;

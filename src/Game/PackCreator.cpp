@@ -1,6 +1,7 @@
 #include "PackCreator.h"
 
 #include "Network/HttpClient.h"
+#include "Util/TracedFs.h"
 
 #include <nlohmann/json.hpp>
 
@@ -152,7 +153,7 @@ bool WriteCustomPack(const fs::path& installDir, const std::string& version, con
 {
 	std::error_code ec;
 	for (const char* folder : { "mods", "resourcepacks", "shaderpacks" })
-		fs::create_directories(installDir / "minecraft" / folder, ec);
+		TracedFs::CreateDirectories(installDir / "minecraft" / folder, ec);
 	if (ec) {
 		if (err) *err = "Couldn't create " + installDir.u8string() + ": " + ec.message();
 		return false;
@@ -167,7 +168,7 @@ bool WriteCustomPack(const fs::path& installDir, const std::string& version, con
 		{ "notes", json::array() },
 		{ "clientOnlyFiles", json::array() },
 	};
-	std::ofstream out(installDir / "pack.json", std::ios::trunc);
+	auto out = TracedFs::OpenWrite(installDir / "pack.json", std::ios::trunc);
 	out << pack.dump(2) << "\n";
 	if (!out.good()) {
 		if (err) *err = "Couldn't write " + (installDir / "pack.json").u8string();
