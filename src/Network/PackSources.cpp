@@ -49,39 +49,39 @@ public:
 		return caps;
 	}
 	virtual bool Available(std::string* /*reason*/) const { return true; }
-	virtual bool Search(HttpClient&, const std::string& /*query*/, const SearchFilters&, int /*limit*/, SourceSearchResult&,
+	virtual bool Search(IHttpClient&, const std::string& /*query*/, const SearchFilters&, int /*limit*/, SourceSearchResult&,
 						std::string* err, const std::atomic<bool>*) const
 	{
 		return Unsupported(err, " search isn't supported");
 	}
-	virtual bool LatestVersion(HttpClient&, const Modpack&, PackVersionInfo&, std::string* err, const std::atomic<bool>*) const
+	virtual bool LatestVersion(IHttpClient&, const Modpack&, PackVersionInfo&, std::string* err, const std::atomic<bool>*) const
 	{
 		return Unsupported(err, " versions aren't supported");
 	}
-	virtual bool ListVersions(HttpClient&, const Modpack&, std::vector<PackVersionInfo>&, std::string* err,
+	virtual bool ListVersions(IHttpClient&, const Modpack&, std::vector<PackVersionInfo>&, std::string* err,
 							  const std::atomic<bool>*) const
 	{
 		return Unsupported(err, " packs have only one version");
 	}
-	virtual bool OptionalMods(HttpClient&, const Modpack&, std::vector<OptionalMod>&, std::string*, const std::atomic<bool>*) const
+	virtual bool OptionalMods(IHttpClient&, const Modpack&, std::vector<OptionalMod>&, std::string*, const std::atomic<bool>*) const
 	{
 		return true; // none
 	}
 	// The full description as Markdown or HTML; empty means the pack's summary is all there is.
-	virtual bool DescriptionMarkup(HttpClient&, const Modpack&, std::string&, std::string*, const std::atomic<bool>*) const
+	virtual bool DescriptionMarkup(IHttpClient&, const Modpack&, std::string&, std::string*, const std::atomic<bool>*) const
 	{
 		return true;
 	}
-	virtual bool ChangelogMarkup(HttpClient&, const Modpack&, std::string&, std::string* err, const std::atomic<bool>*) const
+	virtual bool ChangelogMarkup(IHttpClient&, const Modpack&, std::string&, std::string* err, const std::atomic<bool>*) const
 	{
 		return Unsupported(err, " doesn't publish changelogs");
 	}
-	virtual bool Mods(HttpClient&, const Modpack&, const std::string& /*workDir*/, PackModList&, std::string* err,
+	virtual bool Mods(IHttpClient&, const Modpack&, const std::string& /*workDir*/, PackModList&, std::string* err,
 					  const std::atomic<bool>*) const
 	{
 		return Unsupported(err, " packs don't list their mods");
 	}
-	virtual bool Plan(HttpClient&, const Modpack&, const std::string& /*workDir*/, InstallPlan&,
+	virtual bool Plan(IHttpClient&, const Modpack&, const std::string& /*workDir*/, InstallPlan&,
 					  std::function<void(const std::string&)>, std::string* err, const std::atomic<bool>*) const
 	{
 		return Unsupported(err, " packs can't be installed this way");
@@ -143,7 +143,7 @@ public:
 		caps.changelogs = true;
 		return caps;
 	}
-	bool Search(HttpClient& http, const std::string& query, const SearchFilters& filters, int limit, SourceSearchResult& out,
+	bool Search(IHttpClient& http, const std::string& query, const SearchFilters& filters, int limit, SourceSearchResult& out,
 				std::string* err, const std::atomic<bool>* cancel) const override
 	{
 		ModrinthSearchOptions options;
@@ -159,7 +159,7 @@ public:
 		out.totalHits = result.totalHits;
 		return true;
 	}
-	bool LatestVersion(HttpClient& http, const Modpack& pack, PackVersionInfo& out, std::string* err,
+	bool LatestVersion(IHttpClient& http, const Modpack& pack, PackVersionInfo& out, std::string* err,
 					   const std::atomic<bool>* cancel) const override
 	{
 		ModrinthVersion version;
@@ -168,7 +168,7 @@ public:
 		out = FromModrinth(std::move(version));
 		return true;
 	}
-	bool ListVersions(HttpClient& http, const Modpack& pack, std::vector<PackVersionInfo>& out, std::string* err,
+	bool ListVersions(IHttpClient& http, const Modpack& pack, std::vector<PackVersionInfo>& out, std::string* err,
 					  const std::atomic<bool>* cancel) const override
 	{
 		std::vector<ModrinthVersion> versions;
@@ -178,17 +178,17 @@ public:
 			out.push_back(FromModrinth(std::move(version)));
 		return true;
 	}
-	bool DescriptionMarkup(HttpClient& http, const Modpack& pack, std::string& out, std::string* err,
+	bool DescriptionMarkup(IHttpClient& http, const Modpack& pack, std::string& out, std::string* err,
 						   const std::atomic<bool>* cancel) const override
 	{
 		return FetchModrinthDescription(http, ModrinthProject(pack), out, err, cancel);
 	}
-	bool ChangelogMarkup(HttpClient& http, const Modpack& pack, std::string& out, std::string* err,
+	bool ChangelogMarkup(IHttpClient& http, const Modpack& pack, std::string& out, std::string* err,
 						 const std::atomic<bool>* cancel) const override
 	{
 		return FetchModrinthChangelog(http, ModrinthProject(pack), pack.sourceVersionId, pack.version, out, err, cancel);
 	}
-	bool Mods(HttpClient& http, const Modpack& pack, const std::string&, PackModList& out, std::string* err,
+	bool Mods(IHttpClient& http, const Modpack& pack, const std::string&, PackModList& out, std::string* err,
 			  const std::atomic<bool>* cancel) const override
 	{
 		if (!FetchModrinthPackMods(http, pack.sourceVersionId, out.mods, err, cancel))
@@ -220,37 +220,37 @@ public:
 				"MCLP_CURSEFORGE_API_KEY environment variable (see README.md).";
 		return false;
 	}
-	bool Search(HttpClient& http, const std::string& query, const SearchFilters& filters, int limit, SourceSearchResult& out,
+	bool Search(IHttpClient& http, const std::string& query, const SearchFilters& filters, int limit, SourceSearchResult& out,
 				std::string* err, const std::atomic<bool>* cancel) const override
 	{
 		return SearchCurseForgeModpacks(http, query, filters, limit, out, err, cancel);
 	}
-	bool LatestVersion(HttpClient& http, const Modpack& pack, PackVersionInfo& out, std::string* err,
+	bool LatestVersion(IHttpClient& http, const Modpack& pack, PackVersionInfo& out, std::string* err,
 					   const std::atomic<bool>* cancel) const override
 	{
 		return FetchCurseForgeVersion(http, pack, out, err, cancel);
 	}
-	bool ListVersions(HttpClient& http, const Modpack& pack, std::vector<PackVersionInfo>& out, std::string* err,
+	bool ListVersions(IHttpClient& http, const Modpack& pack, std::vector<PackVersionInfo>& out, std::string* err,
 					  const std::atomic<bool>* cancel) const override
 	{
 		return ListCurseForgeVersions(http, pack, out, err, cancel);
 	}
-	bool DescriptionMarkup(HttpClient& http, const Modpack& pack, std::string& out, std::string* err,
+	bool DescriptionMarkup(IHttpClient& http, const Modpack& pack, std::string& out, std::string* err,
 						   const std::atomic<bool>* cancel) const override
 	{
 		return FetchCurseForgeDescription(http, pack, out, err, cancel);
 	}
-	bool ChangelogMarkup(HttpClient& http, const Modpack& pack, std::string& out, std::string* err,
+	bool ChangelogMarkup(IHttpClient& http, const Modpack& pack, std::string& out, std::string* err,
 						 const std::atomic<bool>* cancel) const override
 	{
 		return FetchCurseForgeChangelog(http, pack, out, err, cancel);
 	}
-	bool Mods(HttpClient& http, const Modpack& pack, const std::string& workDir, PackModList& out, std::string* err,
+	bool Mods(IHttpClient& http, const Modpack& pack, const std::string& workDir, PackModList& out, std::string* err,
 			  const std::atomic<bool>* cancel) const override
 	{
 		return FetchCurseForgePackMods(http, pack, workDir, out.mods, err, cancel);
 	}
-	bool Plan(HttpClient& http, const Modpack& pack, const std::string& workDir, InstallPlan& plan,
+	bool Plan(IHttpClient& http, const Modpack& pack, const std::string& workDir, InstallPlan& plan,
 			  std::function<void(const std::string&)> status, std::string* err, const std::atomic<bool>* cancel) const override
 	{
 		return BuildCurseForgePlan(http, pack, workDir, plan, std::move(status), err, cancel);
@@ -268,37 +268,37 @@ public:
 		caps.changelogs = true;
 		return caps;
 	}
-	bool Search(HttpClient& http, const std::string& query, const SearchFilters& filters, int limit, SourceSearchResult& out,
+	bool Search(IHttpClient& http, const std::string& query, const SearchFilters& filters, int limit, SourceSearchResult& out,
 				std::string* err, const std::atomic<bool>* cancel) const override
 	{
 		return SearchFtbModpacks(http, query, filters, limit, out, err, cancel);
 	}
-	bool LatestVersion(HttpClient& http, const Modpack& pack, PackVersionInfo& out, std::string* err,
+	bool LatestVersion(IHttpClient& http, const Modpack& pack, PackVersionInfo& out, std::string* err,
 					   const std::atomic<bool>* cancel) const override
 	{
 		return FetchFtbVersion(http, pack, out, err, cancel);
 	}
-	bool ListVersions(HttpClient& http, const Modpack& pack, std::vector<PackVersionInfo>& out, std::string* err,
+	bool ListVersions(IHttpClient& http, const Modpack& pack, std::vector<PackVersionInfo>& out, std::string* err,
 					  const std::atomic<bool>* cancel) const override
 	{
 		return ListFtbVersions(http, pack, out, err, cancel);
 	}
-	bool DescriptionMarkup(HttpClient& http, const Modpack& pack, std::string& out, std::string* err,
+	bool DescriptionMarkup(IHttpClient& http, const Modpack& pack, std::string& out, std::string* err,
 						   const std::atomic<bool>* cancel) const override
 	{
 		return FetchFtbDescription(http, pack, out, err, cancel);
 	}
-	bool ChangelogMarkup(HttpClient& http, const Modpack& pack, std::string& out, std::string* err,
+	bool ChangelogMarkup(IHttpClient& http, const Modpack& pack, std::string& out, std::string* err,
 						 const std::atomic<bool>* cancel) const override
 	{
 		return FetchFtbChangelog(http, pack, out, err, cancel);
 	}
-	bool Mods(HttpClient& http, const Modpack& pack, const std::string&, PackModList& out, std::string* err,
+	bool Mods(IHttpClient& http, const Modpack& pack, const std::string&, PackModList& out, std::string* err,
 			  const std::atomic<bool>* cancel) const override
 	{
 		return FetchFtbPackMods(http, pack, out.mods, err, cancel);
 	}
-	bool Plan(HttpClient& http, const Modpack& pack, const std::string&, InstallPlan& plan,
+	bool Plan(IHttpClient& http, const Modpack& pack, const std::string&, InstallPlan& plan,
 			  std::function<void(const std::string&)> status, std::string* err, const std::atomic<bool>* cancel) const override
 	{
 		return BuildFtbPlan(http, pack, plan, std::move(status), err, cancel);
@@ -315,22 +315,22 @@ public:
 		caps.installsPacks = true;
 		return caps;
 	}
-	bool Search(HttpClient& http, const std::string& query, const SearchFilters& filters, int limit, SourceSearchResult& out,
+	bool Search(IHttpClient& http, const std::string& query, const SearchFilters& filters, int limit, SourceSearchResult& out,
 				std::string* err, const std::atomic<bool>* cancel) const override
 	{
 		return SearchTechnicModpacks(http, query, filters, limit, out, err, cancel);
 	}
-	bool LatestVersion(HttpClient& http, const Modpack& pack, PackVersionInfo& out, std::string* err,
+	bool LatestVersion(IHttpClient& http, const Modpack& pack, PackVersionInfo& out, std::string* err,
 					   const std::atomic<bool>* cancel) const override
 	{
 		return FetchTechnicVersion(http, pack, out, err, cancel);
 	}
-	bool ListVersions(HttpClient& http, const Modpack& pack, std::vector<PackVersionInfo>& out, std::string* err,
+	bool ListVersions(IHttpClient& http, const Modpack& pack, std::vector<PackVersionInfo>& out, std::string* err,
 					  const std::atomic<bool>* cancel) const override
 	{
 		return ListTechnicVersions(http, pack, out, err, cancel);
 	}
-	bool Mods(HttpClient& http, const Modpack& pack, const std::string&, PackModList& out, std::string* err,
+	bool Mods(IHttpClient& http, const Modpack& pack, const std::string&, PackModList& out, std::string* err,
 			  const std::atomic<bool>* cancel) const override
 	{
 		if (!FetchTechnicPackMods(http, pack, out.mods, err, cancel))
@@ -339,7 +339,7 @@ public:
 			out.note = "This pack is a single archive, so its mods aren't known until it's installed.";
 		return true;
 	}
-	bool Plan(HttpClient& http, const Modpack& pack, const std::string&, InstallPlan& plan,
+	bool Plan(IHttpClient& http, const Modpack& pack, const std::string&, InstallPlan& plan,
 			  std::function<void(const std::string&)> status, std::string* err, const std::atomic<bool>* cancel) const override
 	{
 		return BuildTechnicPlan(http, pack, plan, std::move(status), err, cancel);
@@ -357,32 +357,32 @@ public:
 		caps.installsPacks = true;
 		return caps;
 	}
-	bool Search(HttpClient& http, const std::string& query, const SearchFilters& filters, int limit, SourceSearchResult& out,
+	bool Search(IHttpClient& http, const std::string& query, const SearchFilters& filters, int limit, SourceSearchResult& out,
 				std::string* err, const std::atomic<bool>* cancel) const override
 	{
 		return SearchAtLauncherModpacks(http, query, filters, limit, out, err, cancel);
 	}
-	bool LatestVersion(HttpClient& http, const Modpack& pack, PackVersionInfo& out, std::string* err,
+	bool LatestVersion(IHttpClient& http, const Modpack& pack, PackVersionInfo& out, std::string* err,
 					   const std::atomic<bool>* cancel) const override
 	{
 		return FetchAtLauncherVersion(http, pack, out, err, cancel);
 	}
-	bool ListVersions(HttpClient& http, const Modpack& pack, std::vector<PackVersionInfo>& out, std::string* err,
+	bool ListVersions(IHttpClient& http, const Modpack& pack, std::vector<PackVersionInfo>& out, std::string* err,
 					  const std::atomic<bool>* cancel) const override
 	{
 		return ListAtLauncherVersions(http, pack, out, err, cancel);
 	}
-	bool OptionalMods(HttpClient& http, const Modpack& pack, std::vector<OptionalMod>& out, std::string* err,
+	bool OptionalMods(IHttpClient& http, const Modpack& pack, std::vector<OptionalMod>& out, std::string* err,
 					  const std::atomic<bool>* cancel) const override
 	{
 		return FetchAtLauncherOptionalMods(http, pack, out, err, cancel);
 	}
-	bool Mods(HttpClient& http, const Modpack& pack, const std::string&, PackModList& out, std::string* err,
+	bool Mods(IHttpClient& http, const Modpack& pack, const std::string&, PackModList& out, std::string* err,
 			  const std::atomic<bool>* cancel) const override
 	{
 		return FetchAtLauncherPackMods(http, pack, out.mods, err, cancel);
 	}
-	bool Plan(HttpClient& http, const Modpack& pack, const std::string& workDir, InstallPlan& plan,
+	bool Plan(IHttpClient& http, const Modpack& pack, const std::string& workDir, InstallPlan& plan,
 			  std::function<void(const std::string&)> status, std::string* err, const std::atomic<bool>* cancel) const override
 	{
 		return BuildAtLauncherPlan(http, pack, workDir, plan, std::move(status), err, cancel);
@@ -436,7 +436,7 @@ bool IsSourceAvailable(PackSource source, std::string* reason)
 	return Client(source).Available(reason);
 }
 
-bool SearchPacks(HttpClient& http,
+bool SearchPacks(IHttpClient& http,
 				 PackSource source,
 				 const std::string& query,
 				 const SearchFilters& filters,
@@ -449,7 +449,7 @@ bool SearchPacks(HttpClient& http,
 	return Client(source).Search(http, query, filters, limit, out, err, cancel);
 }
 
-bool FetchPackVersion(HttpClient& http,
+bool FetchPackVersion(IHttpClient& http,
 					  const Modpack& pack,
 					  PackVersionInfo& out,
 					  std::string* err,
@@ -459,7 +459,7 @@ bool FetchPackVersion(HttpClient& http,
 	return Client(pack.source).LatestVersion(http, pack, out, err, cancel);
 }
 
-bool ListPackVersions(HttpClient& http,
+bool ListPackVersions(IHttpClient& http,
 					  const Modpack& pack,
 					  std::vector<PackVersionInfo>& out,
 					  std::string* err,
@@ -496,7 +496,7 @@ void ApplyPackVersion(Modpack& pack, const PackVersionInfo& version)
 	pack.filesLoaded = true;
 }
 
-bool FetchOptionalMods(HttpClient& http,
+bool FetchOptionalMods(IHttpClient& http,
 					   const Modpack& pack,
 					   std::vector<OptionalMod>& out,
 					   std::string* err,
@@ -506,7 +506,7 @@ bool FetchOptionalMods(HttpClient& http,
 	return Client(pack.source).OptionalMods(http, pack, out, err, cancel);
 }
 
-bool FetchPackDescription(HttpClient& http,
+bool FetchPackDescription(IHttpClient& http,
 						  const Modpack& pack,
 						  std::string& out,
 						  std::string* err,
@@ -520,7 +520,7 @@ bool FetchPackDescription(HttpClient& http,
 	return true;
 }
 
-bool FetchPackChangelog(HttpClient& http,
+bool FetchPackChangelog(IHttpClient& http,
 						const Modpack& pack,
 						std::string& out,
 						std::string* err,
@@ -534,7 +534,7 @@ bool FetchPackChangelog(HttpClient& http,
 	return true;
 }
 
-bool FetchPackMods(HttpClient& http,
+bool FetchPackMods(IHttpClient& http,
 				   const Modpack& pack,
 				   const std::string& workDir,
 				   PackModList& out,
@@ -553,7 +553,7 @@ bool FetchPackMods(HttpClient& http,
 	return true;
 }
 
-bool BuildInstallPlan(HttpClient& http,
+bool BuildInstallPlan(IHttpClient& http,
 					  const Modpack& pack,
 					  const std::string& workDir,
 					  InstallPlan& plan,

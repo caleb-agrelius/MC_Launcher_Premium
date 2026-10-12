@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-class HttpClient;
+class IHttpClient;
 
 // What a modpack needs, read from the modrinth.index.json of an extracted .mrpack.
 struct MrpackIndex {
@@ -55,7 +55,7 @@ bool ReadMrpackIndex(const std::filesystem::path& extractedDir, MrpackIndex& out
 
 // Checks every file the pack lists against its SHA-1, deletes damaged ones, then runs
 // PrepareInstance to download whatever is missing. The player's configs are kept.
-bool RepairInstance(HttpClient& http,
+bool RepairInstance(IHttpClient& http,
 					const std::filesystem::path& extractedDir,
 					const std::filesystem::path& instanceDir,
 					const MrpackIndex& index,
@@ -68,7 +68,7 @@ bool RepairInstance(HttpClient& http,
 // (the player turned it off) is there. overrides/ and
 // client-overrides/ are copied only the first time each pack version is
 // prepared, so later changes the player makes (options, configs) are kept.
-bool PrepareInstance(HttpClient& http,
+bool PrepareInstance(IHttpClient& http,
 					 const std::filesystem::path& extractedDir,
 					 const std::filesystem::path& instanceDir,
 					 const MrpackIndex& index,

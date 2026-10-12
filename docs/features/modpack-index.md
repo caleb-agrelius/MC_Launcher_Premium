@@ -4,7 +4,7 @@ The local modpack list. Discover normally shows live Modrinth results (see [modr
 
 ## Source
 - Loaded once at startup from `resources/index.json` in the data folder, which is found by searching the working directory and the executable's folder and its parents (see [app-shell.md](app-shell.md)).
-- Code: `LoadIndex()` in `src/Model/Modpack.cpp`, called from `main()` in `src/main.cpp`.
+- Code: `LoadIndex()` in `src/Model/Modpack.cpp`, called from `AppRoot` (`src/App/AppRoot.cpp`), which gives it to `DiscoverService` as the offline fallback.
 - There is no remote index or refresh yet; editing the JSON requires restarting the app.
 
 ## Format

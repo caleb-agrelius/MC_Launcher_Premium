@@ -5,19 +5,19 @@
 #include <string>
 #include <vector>
 
-class HttpClient;
+class IHttpClient;
 
 // New packs the player builds themselves (My Library > New pack...): a Minecraft version,
 // a mod loader, and content added afterwards from Manage > Content.
 
 // Minecraft release versions, newest first (Mojang's version manifest).
-bool FetchMinecraftReleases(HttpClient& http, std::vector<std::string>& out, std::string* err = nullptr,
+bool FetchMinecraftReleases(IHttpClient& http, std::vector<std::string>& out, std::string* err = nullptr,
 							const std::atomic<bool>* cancel = nullptr);
 
 // The versions of loader ("fabric", "quilt", "forge" or "neoforge") made for minecraftVersion,
 // newest (or recommended) first, in the form pack.json and InstallLoader use (e.g. "0.16.9",
 // "47.2.0", "21.1.77"). Empty when the loader has none for that version.
-bool FetchLoaderVersions(HttpClient& http, const std::string& loader, const std::string& minecraftVersion,
+bool FetchLoaderVersions(IHttpClient& http, const std::string& loader, const std::string& minecraftVersion,
 						 std::vector<std::string>& out, std::string* err = nullptr,
 						 const std::atomic<bool>* cancel = nullptr);
 

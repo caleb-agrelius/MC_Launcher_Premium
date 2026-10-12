@@ -28,7 +28,7 @@ static std::string SafeName(const std::string& name)
 	return safe;
 }
 
-static bool GetJson(HttpClient& http, const std::string& url, json& out, std::string* err, const std::atomic<bool>* cancel)
+static bool GetJson(IHttpClient& http, const std::string& url, json& out, std::string* err, const std::atomic<bool>* cancel)
 {
 	std::string body;
 	if (!http.Get(url, body, err, cancel))
@@ -54,7 +54,7 @@ struct AtlPack {
 static std::mutex g_cacheMutex;
 static std::vector<AtlPack> g_cache;
 
-static bool LoadPacks(HttpClient& http, std::vector<AtlPack>& out, std::string* err, const std::atomic<bool>* cancel)
+static bool LoadPacks(IHttpClient& http, std::vector<AtlPack>& out, std::string* err, const std::atomic<bool>* cancel)
 {
 	{
 		std::lock_guard<std::mutex> lock(g_cacheMutex);
@@ -107,7 +107,7 @@ static bool LoadPacks(HttpClient& http, std::vector<AtlPack>& out, std::string* 
 	return true;
 }
 
-bool SearchAtLauncherModpacks(HttpClient& http,
+bool SearchAtLauncherModpacks(IHttpClient& http,
 							  const std::string& query,
 							  const SearchFilters& filters,
 							  int limit,
@@ -149,10 +149,10 @@ bool SearchAtLauncherModpacks(HttpClient& http,
 
 static std::string ConfigsUrl(const Modpack& pack, const std::string& version, const char* file)
 {
-	return std::string(kServer) + "packs/" + pack.sourceId + "/versions/" + HttpClient::UrlEncode(version) + "/" + file;
+	return std::string(kServer) + "packs/" + pack.sourceId + "/versions/" + IHttpClient::UrlEncode(version) + "/" + file;
 }
 
-bool ListAtLauncherVersions(HttpClient& http,
+bool ListAtLauncherVersions(IHttpClient& http,
 		const Modpack& pack,
 		std::vector<PackVersionInfo>& out,
 		std::string* err,
@@ -183,7 +183,7 @@ bool ListAtLauncherVersions(HttpClient& http,
 	return true;
 }
 
-bool FetchAtLauncherVersion(HttpClient& http,
+bool FetchAtLauncherVersion(IHttpClient& http,
 							const Modpack& pack,
 							PackVersionInfo& out,
 							std::string* err,
@@ -223,7 +223,7 @@ static const char* FolderForType(const std::string& type, const std::string& mcF
 	return nullptr; // mcpc, millenaire, decomp, unknown
 }
 
-bool FetchAtLauncherOptionalMods(HttpClient& http,
+bool FetchAtLauncherOptionalMods(IHttpClient& http,
 								 const Modpack& pack,
 								 std::vector<OptionalMod>& out,
 								 std::string* err,
@@ -260,7 +260,7 @@ bool FetchAtLauncherOptionalMods(HttpClient& http,
 	return true;
 }
 
-bool BuildAtLauncherPlan(HttpClient& http,
+bool BuildAtLauncherPlan(IHttpClient& http,
 						 const Modpack& pack,
 						 const std::string& workDir,
 						 InstallPlan& plan,
@@ -388,7 +388,7 @@ bool BuildAtLauncherPlan(HttpClient& http,
 	return true;
 }
 
-bool FetchAtLauncherPackMods(HttpClient& http,
+bool FetchAtLauncherPackMods(IHttpClient& http,
 							 const Modpack& pack,
 							 std::vector<PackMod>& out,
 							 std::string* err,

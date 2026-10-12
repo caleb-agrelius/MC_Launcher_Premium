@@ -297,7 +297,7 @@ static bool LaunchVersion(const PlayRequest& request, const ResolvedVersion& ver
 // Installs vanilla Minecraft, Java and the loader into the shared game root, then
 // launches. Shared by .mrpack instances and whole-pack installs.
 // loaderJar: a Forge universal jar the pack ships (or empty); old Forge is installed from it.
-static bool InstallAndLaunch(HttpClient& http, const PlayRequest& request, const std::string& minecraftVersion,
+static bool InstallAndLaunch(IHttpClient& http, const PlayRequest& request, const std::string& minecraftVersion,
 	LoaderKind loader, const std::string& loaderVersion, const fs::path& loaderJar, const ProgressFn& progress,
 	std::string* err, const std::atomic<bool>* cancel)
 {
@@ -391,7 +391,7 @@ static void SkipRemovedContent(MrpackIndex& index, const ContentChanges& changes
 		[&](const DownloadJob& file) { return removed.count(file.path.generic_u8string()) > 0; }), index.files.end());
 }
 
-bool RepairModpack(HttpClient& http, const PlayRequest& request, const ProgressFn& progress, std::string* err,
+bool RepairModpack(IHttpClient& http, const PlayRequest& request, const ProgressFn& progress, std::string* err,
 	const std::atomic<bool>* cancel)
 {
 	if (progress)
@@ -406,7 +406,7 @@ bool RepairModpack(HttpClient& http, const PlayRequest& request, const ProgressF
 	return true;
 }
 
-bool PlayModpack(HttpClient& http, const PlayRequest& request, const ProgressFn& progress, std::string* err,
+bool PlayModpack(IHttpClient& http, const PlayRequest& request, const ProgressFn& progress, std::string* err,
 	const std::atomic<bool>* cancel)
 {
 	if (progress)

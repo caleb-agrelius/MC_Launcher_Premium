@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-class HttpClient;
+class IHttpClient;
 
 struct PlayRequest {
 	std::filesystem::path gameRoot;     // shared Minecraft files (minecraft/)
@@ -30,7 +30,7 @@ std::vector<std::string> SplitArguments(const std::string& text);
 
 // Re-checks an .mrpack instance's files against their hashes and re-downloads damaged or
 // missing ones (see RepairInstance). Doesn't launch.
-bool RepairModpack(HttpClient& http,
+bool RepairModpack(IHttpClient& http,
 				   const PlayRequest& request,
 				   const ProgressFn& progress,
 				   std::string* err,
@@ -43,7 +43,7 @@ bool RepairModpack(HttpClient& http,
 // request.stopGame is set while the game runs, the game is killed and
 // PlayModpack returns false with err = "Stopped".
 // progress receives "Playing" (fraction 1) once the game has started.
-bool PlayModpack(HttpClient& http,
+bool PlayModpack(IHttpClient& http,
 				 const PlayRequest& request,
 				 const ProgressFn& progress,
 				 std::string* err,

@@ -24,9 +24,97 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(imgui_backend_source)
 
+# Each OS has its own definitions of the Platform functions (src/Platform/Platform.h).
+if (WIN32)
+  set(PLATFORM_SOURCES src/Platform/Platform_win32.cpp)
+else()
+  set(PLATFORM_SOURCES src/Platform/Platform_posix.cpp)
+endif()
+
 add_executable(MC_Launcher_Premium
   src/main.cpp
-  src/Platform.cpp
+  ${PLATFORM_SOURCES}
+  src/App/AppRoot.cpp
+  src/App/Application.cpp
+  src/App/GlfwWindow.cpp
+  src/App/ThemeController.cpp
+  src/Core/TaskScope.cpp
+  src/Core/UiQueue.cpp
+  src/Core/WorkerPool.cpp
+  src/Services/Account/AccountService.cpp
+  src/Services/Discover/DiscoverService.cpp
+  src/Services/Discover/OptionalModsService.cpp
+  src/Services/Discover/PackDetailsService.cpp
+  src/Services/Downloads/DownloadService.cpp
+  src/Services/Library/CustomPackService.cpp
+  src/Services/Library/PackContentService.cpp
+  src/Services/Library/PackLibrary.cpp
+  src/Services/Library/UninstallService.cpp
+  src/Services/Play/PlayService.cpp
+  src/Services/Servers/ServerService.cpp
+  src/Services/Settings/JavaScanService.cpp
+  src/Services/Settings/SettingsStore.cpp
+  src/Services/Settings/SharedFilesService.cpp
+  src/Services/Updates/UpdateService.cpp
+  src/UI/Common/UiHelpers.cpp
+  src/UI/Common/VersionPicker.cpp
+  src/UI/Dialogs/DeleteServerDialog.cpp
+  src/UI/Dialogs/DialogHost.cpp
+  src/UI/Dialogs/LaunchSettingsDialog.cpp
+  src/UI/Dialogs/NewPackDialogHost.cpp
+  src/UI/Dialogs/OptionalModsDialog.cpp
+  src/UI/Dialogs/StopGameDialog.cpp
+  src/UI/Dialogs/UninstallDialog.cpp
+  src/UI/Dialogs/UpdateDialog.cpp
+  src/UI/Pages/Discover/DiscoverDetails.cpp
+  src/UI/Pages/Discover/DiscoverFilterBar.cpp
+  src/UI/Pages/Discover/DiscoverPage.cpp
+  src/UI/Pages/Discover/DiscoverResultList.cpp
+  src/UI/Pages/Discover/PackInfoTabs.cpp
+  src/UI/Pages/Discover/PackInstallSection.cpp
+  src/UI/Pages/Discover/PackPlayButton.cpp
+  src/UI/Pages/Downloads/DownloadsPage.cpp
+  src/UI/Pages/Library/LibraryPackCard.cpp
+  src/UI/Pages/Library/LibraryPage.cpp
+  src/UI/Pages/Manage/ChangelogTab.cpp
+  src/UI/Pages/Manage/ContentBrowser.cpp
+  src/UI/Pages/Manage/ContentModel.cpp
+  src/UI/Pages/Manage/ContentTab.cpp
+  src/UI/Pages/Manage/LogReader.cpp
+  src/UI/Pages/Manage/LogsTab.cpp
+  src/UI/Pages/Manage/ManageHeader.cpp
+  src/UI/Pages/Manage/ManagePage.cpp
+  src/UI/Pages/Manage/ManagePageHost.cpp
+  src/UI/Pages/Manage/OverviewCards.cpp
+  src/UI/Pages/Manage/OverviewTab.cpp
+  src/UI/Pages/Manage/ScreenshotsTab.cpp
+  src/UI/Pages/Servers/DockerStatusView.cpp
+  src/UI/Pages/Servers/ServerConsole.cpp
+  src/UI/Pages/Servers/ServerDetails.cpp
+  src/UI/Pages/Servers/ServerDockerTab.cpp
+  src/UI/Pages/Servers/ServerFilesCard.cpp
+  src/UI/Pages/Servers/ServerList.cpp
+  src/UI/Pages/Servers/ServerModsTab.cpp
+  src/UI/Pages/Servers/ServerRunCard.cpp
+  src/UI/Pages/Servers/ServerSettingsTab.cpp
+  src/UI/Pages/Servers/ServersPage.cpp
+  src/UI/Pages/Settings/AboutTab.cpp
+  src/UI/Pages/Settings/AccountTab.cpp
+  src/UI/Pages/Settings/AppearanceTab.cpp
+  src/UI/Pages/Settings/DownloadsTab.cpp
+  src/UI/Pages/Settings/GameOptionsTab.cpp
+  src/UI/Pages/Settings/LaunchSettingsCards.cpp
+  src/UI/Pages/Settings/MinecraftTab.cpp
+  src/UI/Pages/Settings/PackLaunchSettings.cpp
+  src/UI/Pages/Settings/SettingsLayout.cpp
+  src/UI/Pages/Settings/SettingsPage.cpp
+  src/UI/Pages/Settings/SettingsPageHost.cpp
+  src/UI/Pages/Settings/ThemeEditor.cpp
+  src/UI/Shell/AccountPanel.cpp
+  src/UI/Shell/AppShell.cpp
+  src/UI/Shell/Mascot.cpp
+  src/UI/Shell/Shortcuts.cpp
+  src/UI/Shell/Sidebar.cpp
   src/Game/GameFiles.cpp
   src/Game/GameOptions.cpp
   src/Game/InstanceContent.cpp
@@ -57,9 +145,7 @@ add_executable(MC_Launcher_Premium
   src/UI/ImageCache.cpp
   src/UI/LogView.cpp
   src/UI/Logo.cpp
-  src/UI/ManagePage.cpp
   src/UI/NewPackDialog.cpp
-  src/UI/SettingsPage.cpp
   src/UI/Theme.cpp
   src/UI/Toasts.cpp
   src/UI/Widgets.cpp
@@ -115,7 +201,7 @@ include(CTest)
 if (BUILD_TESTING)
   add_executable(launcher_checks
     tests/LauncherChecks.cpp
-    src/Platform.cpp
+    ${PLATFORM_SOURCES}
     src/Game/GameFiles.cpp
     src/Game/GameOptions.cpp
     src/Game/InstanceContent.cpp
@@ -154,7 +240,7 @@ if (BUILD_TESTING)
   # Checks against the real pack APIs. Not a CTest test: they need the internet.
   add_executable(live_checks
     tests/LiveChecks.cpp
-    src/Platform.cpp
+    ${PLATFORM_SOURCES}
     src/Game/GameFiles.cpp
     src/Game/GameOptions.cpp
     src/Game/InstanceContent.cpp

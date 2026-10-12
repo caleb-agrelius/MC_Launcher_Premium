@@ -6,7 +6,7 @@
 #include <functional>
 #include <string>
 
-class HttpClient;
+class IHttpClient;
 
 // Client for the Technic Platform API (https://api.technicpack.net/). No key is needed, but
 // every request must send a "build" value; we send our own launcher identifier.
@@ -15,7 +15,7 @@ class HttpClient;
 // The API has no filters or sorts. When a Minecraft version filter or the "Most installed"
 // sort is chosen, each result's details are fetched (4 at a time) and filtered/sorted here.
 
-bool SearchTechnicModpacks(HttpClient& http,
+bool SearchTechnicModpacks(IHttpClient& http,
 						   const std::string& query,
 						   const SearchFilters& filters,
 						   int limit,
@@ -26,7 +26,7 @@ bool SearchTechnicModpacks(HttpClient& http,
 // Every version: a single-zip pack's one version, or a Solder pack's builds (newest
 // first, the recommended and latest builds marked). The Minecraft version is looked up
 // for the newest 10 builds only.
-bool ListTechnicVersions(HttpClient& http,
+bool ListTechnicVersions(IHttpClient& http,
 		const Modpack& pack,
 		std::vector<PackVersionInfo>& out,
 		std::string* err = nullptr,
@@ -34,20 +34,20 @@ bool ListTechnicVersions(HttpClient& http,
 
 // Pack details (author, description, Minecraft version) plus the version to install:
 // the Solder server's recommended build, or the single zip's version.
-bool FetchTechnicVersion(HttpClient& http,
+bool FetchTechnicVersion(IHttpClient& http,
 						 const Modpack& pack,
 						 PackVersionInfo& out,
 						 std::string* err = nullptr,
 						 const std::atomic<bool>* cancel = nullptr);
 
 // A Solder build's mods. Single-zip packs succeed with an empty list.
-bool FetchTechnicPackMods(HttpClient& http,
+bool FetchTechnicPackMods(IHttpClient& http,
 						  const Modpack& pack,
 						  std::vector<PackMod>& out,
 						  std::string* err = nullptr,
 						  const std::atomic<bool>* cancel = nullptr);
 
-bool BuildTechnicPlan(HttpClient& http,
+bool BuildTechnicPlan(IHttpClient& http,
 					  const Modpack& pack,
 					  InstallPlan& plan,
 					  std::function<void(const std::string&)> status,

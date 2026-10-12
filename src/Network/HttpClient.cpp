@@ -310,7 +310,7 @@ void HttpClient::ReleaseThreadHandle()
 	CurrentThreadHandle().Release();
 }
 
-std::string HttpClient::UrlEncode(const std::string& text)
+std::string IHttpClient::UrlEncode(const std::string& text)
 {
 	char* escaped = curl_easy_escape(nullptr, text.c_str(), static_cast<int>(text.size()));
 	if (!escaped)

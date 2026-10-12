@@ -70,7 +70,7 @@ static std::vector<std::string> KeyHeader()
 }
 
 // GET/POST with the key. A 403 means the key was rejected, which deserves a clearer message.
-static bool ApiGet(HttpClient& http, const std::string& path, json& out, std::string* err, const std::atomic<bool>* cancel)
+static bool ApiGet(IHttpClient& http, const std::string& path, json& out, std::string* err, const std::atomic<bool>* cancel)
 {
 	std::string body, error;
 	if (!http.Get(std::string(kApiBase) + path, body, &error, cancel, KeyHeader())) {
@@ -87,7 +87,7 @@ static bool ApiGet(HttpClient& http, const std::string& path, json& out, std::st
 	return true;
 }
 
-static bool ApiPost(HttpClient& http, const std::string& path, const json& request, json& out, std::string* err, const std::atomic<bool>* cancel)
+static bool ApiPost(IHttpClient& http, const std::string& path, const json& request, json& out, std::string* err, const std::atomic<bool>* cancel)
 {
 	std::string body, error;
 	if (!http.Post(std::string(kApiBase) + path, request.dump(), body, &error, cancel, KeyHeader())) {
@@ -156,7 +156,7 @@ static std::string Sha1Of(const json& file)
 	return {};
 }
 
-bool SearchCurseForgeModpacks(HttpClient& http,
+bool SearchCurseForgeModpacks(IHttpClient& http,
 							  const std::string& query,
 							  const SearchFilters& filters,
 							  int limit,
@@ -178,9 +178,9 @@ bool SearchCurseForgeModpacks(HttpClient& http,
 	if (sortField != 0)
 		path += "&sortField=" + std::to_string(sortField) + (sortField == 4 ? "&sortOrder=asc" : "&sortOrder=desc");
 	if (!query.empty())
-		path += "&searchFilter=" + HttpClient::UrlEncode(query);
+		path += "&searchFilter=" + IHttpClient::UrlEncode(query);
 	if (!filters.gameVersion.empty())
-		path += "&gameVersion=" + HttpClient::UrlEncode(filters.gameVersion);
+		path += "&gameVersion=" + IHttpClient::UrlEncode(filters.gameVersion);
 	if (const int loader = LoaderType(filters.loader); loader != 0)
 		path += "&modLoaderType=" + std::to_string(loader);
 
@@ -231,7 +231,7 @@ bool SearchCurseForgeModpacks(HttpClient& http,
 	return true;
 }
 
-bool ListCurseForgeVersions(HttpClient& http,
+bool ListCurseForgeVersions(IHttpClient& http,
 		const Modpack& pack,
 		std::vector<PackVersionInfo>& out,
 		std::string* err,
@@ -243,7 +243,7 @@ bool ListCurseForgeVersions(HttpClient& http,
 	try {
 		for (int index = 0; index < kMaxFiles; index += kPageSize) {
 			json response;
-			if (!ApiGet(http, "/mods/" + HttpClient::UrlEncode(pack.sourceId) + "/files?index=" + std::to_string(index) +
+			if (!ApiGet(http, "/mods/" + IHttpClient::UrlEncode(pack.sourceId) + "/files?index=" + std::to_string(index) +
 					"&pageSize=" + std::to_string(kPageSize), response, err, cancel))
 				return false;
 			const json files = response.value("data", json::array());
@@ -280,7 +280,7 @@ bool ListCurseForgeVersions(HttpClient& http,
 	return true;
 }
 
-bool FetchCurseForgeVersion(HttpClient& http,
+bool FetchCurseForgeVersion(IHttpClient& http,
 							const Modpack& pack,
 							PackVersionInfo& out,
 							std::string* err,
@@ -288,7 +288,7 @@ bool FetchCurseForgeVersion(HttpClient& http,
 {
 	out = {};
 	json response;
-	if (!ApiGet(http, "/mods/" + HttpClient::UrlEncode(pack.sourceId), response, err, cancel))
+	if (!ApiGet(http, "/mods/" + IHttpClient::UrlEncode(pack.sourceId), response, err, cancel))
 		return false;
 	try {
 		const json& project = response.at("data");
@@ -382,7 +382,7 @@ static const char* FolderForClass(int classId)
 	}
 }
 
-int FillFromModrinthByHash(HttpClient& http, std::vector<PlannedFile>& files, const std::atomic<bool>* cancel)
+int FillFromModrinthByHash(IHttpClient& http, std::vector<PlannedFile>& files, const std::atomic<bool>* cancel)
 {
 	json hashes = json::array();
 	for (const PlannedFile& file : files) {
@@ -423,7 +423,7 @@ int FillFromModrinthByHash(HttpClient& http, std::vector<PlannedFile>& files, co
 	return found;
 }
 
-bool ResolveCurseForgeFiles(HttpClient& http,
+bool ResolveCurseForgeFiles(IHttpClient& http,
 							const std::vector<CurseForgeFileRef>& refs,
 							std::vector<PlannedFile>& out,
 							std::string* err,
@@ -490,11 +490,11 @@ bool ResolveCurseForgeFiles(HttpClient& http,
 
 // Downloads the pack's zip (pack.sourceVersionId) into workDir, unless a copy with the
 // right SHA-1 is already there, and reads its manifest.json.
-static bool DownloadPackManifest(HttpClient& http, const Modpack& pack, const std::string& workDir, std::string& zipPath,
+static bool DownloadPackManifest(IHttpClient& http, const Modpack& pack, const std::string& workDir, std::string& zipPath,
 	CurseForgeManifest& manifest, std::string* err, const std::atomic<bool>* cancel)
 {
 	json fileResponse;
-	if (!ApiGet(http, "/mods/" + HttpClient::UrlEncode(pack.sourceId) + "/files/" + HttpClient::UrlEncode(pack.sourceVersionId),
+	if (!ApiGet(http, "/mods/" + IHttpClient::UrlEncode(pack.sourceId) + "/files/" + IHttpClient::UrlEncode(pack.sourceVersionId),
 			fileResponse, err, cancel))
 		return false;
 	std::string zipUrl, zipName, zipSha1;
@@ -537,7 +537,7 @@ static bool DownloadPackManifest(HttpClient& http, const Modpack& pack, const st
 	return ParseCurseForgeManifest(manifestText, manifest, err);
 }
 
-bool BuildCurseForgePlan(HttpClient& http,
+bool BuildCurseForgePlan(IHttpClient& http,
 						 const Modpack& pack,
 						 const std::string& workDir,
 						 InstallPlan& plan,
@@ -586,7 +586,7 @@ bool BuildCurseForgePlan(HttpClient& http,
 	return true;
 }
 
-bool FetchCurseForgePackMods(HttpClient& http,
+bool FetchCurseForgePackMods(IHttpClient& http,
 							 const Modpack& pack,
 							 const std::string& workDir,
 							 std::vector<PackMod>& out,
@@ -634,7 +634,7 @@ bool FetchCurseForgePackMods(HttpClient& http,
 	return true;
 }
 
-bool FetchCurseForgeDescription(HttpClient& http,
+bool FetchCurseForgeDescription(IHttpClient& http,
 								const Modpack& pack,
 								std::string& out,
 								std::string* err,
@@ -642,13 +642,13 @@ bool FetchCurseForgeDescription(HttpClient& http,
 {
 	out.clear();
 	json response;
-	if (!ApiGet(http, "/mods/" + HttpClient::UrlEncode(pack.sourceId) + "/description", response, err, cancel))
+	if (!ApiGet(http, "/mods/" + IHttpClient::UrlEncode(pack.sourceId) + "/description", response, err, cancel))
 		return false;
 	out = StringOrEmpty(response, "data");
 	return true;
 }
 
-bool FetchCurseForgeChangelog(HttpClient& http,
+bool FetchCurseForgeChangelog(IHttpClient& http,
 							  const Modpack& pack,
 							  std::string& out,
 							  std::string* err,
@@ -656,7 +656,7 @@ bool FetchCurseForgeChangelog(HttpClient& http,
 {
 	out.clear();
 	json response;
-	if (!ApiGet(http, "/mods/" + HttpClient::UrlEncode(pack.sourceId) + "/files/" + HttpClient::UrlEncode(pack.sourceVersionId) +
+	if (!ApiGet(http, "/mods/" + IHttpClient::UrlEncode(pack.sourceId) + "/files/" + IHttpClient::UrlEncode(pack.sourceVersionId) +
 			"/changelog", response, err, cancel))
 		return false;
 	out = StringOrEmpty(response, "data");

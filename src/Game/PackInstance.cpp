@@ -1,6 +1,6 @@
 #include "PackInstance.h"
 
-#include <miniz/miniz.h>
+#include "Util/ZipArchive.h"
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -114,18 +114,8 @@ static bool LoaderFromVersionJson(const std::string& text, InstalledPack& out)
 
 static bool ReadZipEntry(const fs::path& zipPath, const char* entry, std::string& out)
 {
-	mz_zip_archive zip;
-	std::memset(&zip, 0, sizeof(zip));
-	if (!mz_zip_reader_init_file(&zip, zipPath.string().c_str(), 0))
-		return false;
-	std::size_t size = 0;
-	void* data = mz_zip_reader_extract_file_to_heap(&zip, entry, &size, 0);
-	mz_zip_reader_end(&zip);
-	if (!data)
-		return false;
-	out.assign(static_cast<const char*>(data), size);
-	mz_free(data);
-	return true;
+	ZipReader zip;
+	return zip.Open(zipPath) && zip.ReadEntry(entry, out);
 }
 
 bool ReadInstalledPack(const fs::path& installDir, InstalledPack& out, std::string* err)
@@ -284,7 +274,7 @@ static bool CopyTree(const fs::path& source, const fs::path& target, std::string
 	return true;
 }
 
-bool PrepareInstance(HttpClient& http, const fs::path& extractedDir, const fs::path& instanceDir,
+bool PrepareInstance(IHttpClient& http, const fs::path& extractedDir, const fs::path& instanceDir,
 	const MrpackIndex& index, const ProgressFn& progress, std::string* err, const std::atomic<bool>* cancel)
 {
 	std::error_code ec;
@@ -342,7 +332,7 @@ bool PrepareInstance(HttpClient& http, const fs::path& extractedDir, const fs::p
 	return true;
 }
 
-bool RepairInstance(HttpClient& http, const fs::path& extractedDir, const fs::path& instanceDir,
+bool RepairInstance(IHttpClient& http, const fs::path& extractedDir, const fs::path& instanceDir,
 	const MrpackIndex& index, const ProgressFn& progress, std::string* err, const std::atomic<bool>* cancel)
 {
 	std::size_t checked = 0;

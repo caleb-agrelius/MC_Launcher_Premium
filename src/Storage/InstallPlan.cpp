@@ -107,7 +107,7 @@ static bool WritePackJson(const InstallPlan& plan, const std::string& path, cons
 	return ofs.good();
 }
 
-bool RunInstallPlan(HttpClient& http,
+bool RunInstallPlan(IHttpClient& http,
 					const InstallPlan& plan,
 					const std::string& installDir,
 					std::function<void(const InstallProgress&)> progress,

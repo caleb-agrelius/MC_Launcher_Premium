@@ -176,7 +176,7 @@ static bool CopyWholePackFiles(const ServerSetupRequest& request, const Installe
 	return true;
 }
 
-static bool GetJson(HttpClient& http, const std::string& url, json& out, std::string* err, const std::atomic<bool>* cancel)
+static bool GetJson(IHttpClient& http, const std::string& url, json& out, std::string* err, const std::atomic<bool>* cancel)
 {
 	std::string body;
 	if (!http.Get(url, body, err, cancel))
@@ -229,7 +229,7 @@ static bool CopyOverrides(const fs::path& extractedDir, const fs::path& target, 
 }
 
 // The vanilla server jar, from the version JSON (downloads.server).
-static bool DownloadVanillaServer(HttpClient& http, const fs::path& gameRoot, const std::string& minecraftVersion,
+static bool DownloadVanillaServer(IHttpClient& http, const fs::path& gameRoot, const std::string& minecraftVersion,
 	const fs::path& target, const ProgressFn& progress, std::string* err, const std::atomic<bool>* cancel)
 {
 	if (!InstallVanillaJson(http, gameRoot, minecraftVersion, err, cancel))
@@ -312,7 +312,7 @@ const std::vector<std::string>& LegacyForgeLibraryMirrors()
 // retired URLs, so this lays the server out the way they did: the jar in the server folder, and the
 // files its manifest's Class-Path names beside it (the vanilla server and libraries/). Libraries
 // the client already installed are copied from gameRoot/libraries/. Sets jarName to the jar to run.
-static bool InstallLegacyForgeServer(HttpClient& http, const fs::path& gameRoot, const fs::path& forgeJar,
+static bool InstallLegacyForgeServer(IHttpClient& http, const fs::path& gameRoot, const fs::path& forgeJar,
 	const std::string& minecraftVersion, const std::string& forgeVersion, const fs::path& serverDir, std::string& jarName,
 	const ProgressFn& progress, std::string* err, const std::atomic<bool>* cancel)
 {
@@ -417,7 +417,7 @@ static bool RunInstaller(const std::vector<std::vector<std::string>>& attempts, 
 	return false;
 }
 
-bool SetupServer(HttpClient& http, const ServerSetupRequest& request, ServerInfo& out, const ProgressFn& progress,
+bool SetupServer(IHttpClient& http, const ServerSetupRequest& request, ServerInfo& out, const ProgressFn& progress,
 	std::string* err, const std::atomic<bool>* cancel)
 {
 	out = ServerInfo{};

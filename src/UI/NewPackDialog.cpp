@@ -43,7 +43,7 @@ void NewPackDialog::LoadReleases(const NewPackDialogContext& context)
 		return;
 	m_releasesLoading = true;
 	m_releasesError.clear();
-	HttpClient* http = context.http;
+	IHttpClient* http = context.http;
 	auto post = context.tasks.post;
 	context.tasks.run([this, http, post]() {
 		auto releases = std::make_shared<std::vector<std::string>>();
@@ -72,7 +72,7 @@ void NewPackDialog::LoadLoaderVersions(const NewPackDialogContext& context)
 	if (loader.empty())
 		return; // vanilla
 	m_loaderLoading = true;
-	HttpClient* http = context.http;
+	IHttpClient* http = context.http;
 	auto post = context.tasks.post;
 	context.tasks.run([this, http, post, loader, minecraft, key]() {
 		auto versions = std::make_shared<std::vector<std::string>>();

@@ -11,7 +11,7 @@
 namespace fs = std::filesystem;
 using json = nlohmann::json;
 
-bool FetchMinecraftReleases(HttpClient& http, std::vector<std::string>& out, std::string* err, const std::atomic<bool>* cancel)
+bool FetchMinecraftReleases(IHttpClient& http, std::vector<std::string>& out, std::string* err, const std::atomic<bool>* cancel)
 {
 	out.clear();
 	std::string body;
@@ -55,7 +55,7 @@ std::string NeoForgeVersionPrefix(const std::string& minecraftVersion)
 	return rest.find('.') == std::string::npos ? rest + ".0." : rest + ".";
 }
 
-bool FetchLoaderVersions(HttpClient& http, const std::string& loader, const std::string& minecraftVersion,
+bool FetchLoaderVersions(IHttpClient& http, const std::string& loader, const std::string& minecraftVersion,
 						 std::vector<std::string>& out, std::string* err, const std::atomic<bool>* cancel)
 {
 	out.clear();
@@ -63,8 +63,8 @@ bool FetchLoaderVersions(HttpClient& http, const std::string& loader, const std:
 	if (loader == "fabric" || loader == "quilt") {
 		// Both metas list the loaders for a Minecraft version, newest first.
 		const std::string url = loader == "fabric"
-			? "https://meta.fabricmc.net/v2/versions/loader/" + HttpClient::UrlEncode(minecraftVersion)
-			: "https://meta.quiltmc.org/v3/versions/loader/" + HttpClient::UrlEncode(minecraftVersion);
+			? "https://meta.fabricmc.net/v2/versions/loader/" + IHttpClient::UrlEncode(minecraftVersion)
+			: "https://meta.quiltmc.org/v3/versions/loader/" + IHttpClient::UrlEncode(minecraftVersion);
 		std::string error;
 		if (!http.Get(url, body, &error, cancel)) {
 			if (error == "HTTP 404" || error == "HTTP 400")

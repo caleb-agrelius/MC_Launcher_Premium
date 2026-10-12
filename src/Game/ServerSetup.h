@@ -11,7 +11,7 @@
 #include <string>
 #include <vector>
 
-class HttpClient;
+class IHttpClient;
 
 // One-click dedicated servers for installed packs: the pack's server-side files, its mod
 // loader's server, and a Java to run it, in servers/<pack id>/. Modrinth packs are built
@@ -51,7 +51,7 @@ bool CanCreateServer(const std::filesystem::path& extractedDir);
 
 // Downloads and installs everything the server needs. Safe to run again to update the
 // server after the pack was reinstalled; world, configs and server.properties are kept.
-bool SetupServer(HttpClient& http,
+bool SetupServer(IHttpClient& http,
 				 const ServerSetupRequest& request,
 				 ServerInfo& out,
 				 const ProgressFn& progress,

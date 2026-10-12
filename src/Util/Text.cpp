@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <regex>
 #include <sstream>
 #include <vector>
@@ -229,6 +231,11 @@ std::string ToLower(std::string text)
 	return text;
 }
 
+bool ContainsIgnoreCase(const std::string& haystack, const std::string& lowerNeedle)
+{
+	return ToLower(haystack).find(lowerNeedle) != std::string::npos;
+}
+
 std::string FormatFileSize(std::uint64_t bytes)
 {
 	const char* units[] = { "B", "KB", "MB", "GB" };
@@ -241,4 +248,21 @@ std::string FormatFileSize(std::uint64_t bytes)
 	char formatted[32];
 	std::snprintf(formatted, sizeof(formatted), unit == 0 ? "%.0f %s" : "%.1f %s", size, units[unit]);
 	return formatted;
+}
+
+std::string FormatFileTime(std::filesystem::file_time_type time)
+{
+	namespace fs = std::filesystem;
+	const auto system = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+		time - fs::file_time_type::clock::now() + std::chrono::system_clock::now());
+	const std::time_t seconds = std::chrono::system_clock::to_time_t(system);
+	std::tm local{};
+#ifdef _WIN32
+	localtime_s(&local, &seconds);
+#else
+	localtime_r(&seconds, &local);
+#endif
+	char text[32];
+	std::strftime(text, sizeof(text), "%Y-%m-%d %H:%M", &local);
+	return text;
 }

@@ -27,7 +27,7 @@ static std::string JoinStrings(const json& array, const std::string& separator)
 }
 
 // Search hits use null for missing icons/gallery images, which json::value() would throw on.
-bool SearchModrinthModpacks(HttpClient& http,
+bool SearchModrinthModpacks(IHttpClient& http,
 							const std::string& query,
 							const ModrinthSearchOptions& options,
 							int limit,
@@ -44,13 +44,13 @@ bool SearchModrinthModpacks(HttpClient& http,
 		facets.push_back(json::array({ "categories:" + options.loader }));
 	const std::string index = !options.index.empty() ? options.index : (query.empty() ? "downloads" : "relevance");
 	std::string url = std::string(kApiBase) + "/search?facets=" +
-		HttpClient::UrlEncode(facets.dump()) +
+		IHttpClient::UrlEncode(facets.dump()) +
 		"&limit=" + std::to_string(limit) +
 		"&index=" + index;
 	if (options.offset > 0)
 		url += "&offset=" + std::to_string(options.offset);
 	if (!query.empty())
-		url += "&query=" + HttpClient::UrlEncode(query);
+		url += "&query=" + IHttpClient::UrlEncode(query);
 
 	std::string body;
 	if (!http.Get(url, body, err, cancel))
@@ -132,7 +132,7 @@ static bool ParseModrinthVersion(const json& version, ModrinthVersion& out)
 	return true;
 }
 
-bool ListModrinthVersions(HttpClient& http,
+bool ListModrinthVersions(IHttpClient& http,
 						  const std::string& projectIdOrSlug,
 						  std::vector<ModrinthVersion>& out,
 						  std::string* err,
@@ -140,7 +140,7 @@ bool ListModrinthVersions(HttpClient& http,
 {
 	out.clear();
 	std::string body;
-	if (!http.Get(std::string(kApiBase) + "/project/" + HttpClient::UrlEncode(projectIdOrSlug) + "/version", body, err, cancel))
+	if (!http.Get(std::string(kApiBase) + "/project/" + IHttpClient::UrlEncode(projectIdOrSlug) + "/version", body, err, cancel))
 		return false;
 	try {
 		for (const auto& version : json::parse(body)) {
@@ -160,7 +160,7 @@ bool ListModrinthVersions(HttpClient& http,
 	return true;
 }
 
-bool FetchLatestModrinthVersion(HttpClient& http,
+bool FetchLatestModrinthVersion(IHttpClient& http,
 								const std::string& projectIdOrSlug,
 								ModrinthVersion& out,
 								std::string* err,
@@ -168,7 +168,7 @@ bool FetchLatestModrinthVersion(HttpClient& http,
 {
 	out = {};
 	const std::string url = std::string(kApiBase) + "/project/" +
-		HttpClient::UrlEncode(projectIdOrSlug) + "/version";
+		IHttpClient::UrlEncode(projectIdOrSlug) + "/version";
 
 	std::string body;
 	if (!http.Get(url, body, err, cancel))
@@ -201,7 +201,7 @@ bool FetchLatestModrinthVersion(HttpClient& http,
 	return true;
 }
 
-bool FetchModrinthPackMods(HttpClient& http,
+bool FetchModrinthPackMods(IHttpClient& http,
 						   const std::string& versionId,
 						   std::vector<PackMod>& out,
 						   std::string* err,
@@ -209,7 +209,7 @@ bool FetchModrinthPackMods(HttpClient& http,
 {
 	out.clear();
 	std::string body;
-	if (!http.Get(std::string(kApiBase) + "/version/" + HttpClient::UrlEncode(versionId), body, err, cancel))
+	if (!http.Get(std::string(kApiBase) + "/version/" + IHttpClient::UrlEncode(versionId), body, err, cancel))
 		return false;
 	std::vector<std::string> ids;
 	try {
@@ -229,7 +229,7 @@ bool FetchModrinthPackMods(HttpClient& http,
 		json batch = json::array();
 		for (std::size_t i = start; i < ids.size() && i < start + 100; ++i)
 			batch.push_back(ids[i]);
-		if (!http.Get(std::string(kApiBase) + "/projects?ids=" + HttpClient::UrlEncode(batch.dump()), body, err, cancel))
+		if (!http.Get(std::string(kApiBase) + "/projects?ids=" + IHttpClient::UrlEncode(batch.dump()), body, err, cancel))
 			return false;
 		try {
 			for (const auto& project : json::parse(body)) {
@@ -253,7 +253,7 @@ bool FetchModrinthPackMods(HttpClient& http,
 	return true;
 }
 
-bool FindModrinthClientOnly(HttpClient& http,
+bool FindModrinthClientOnly(IHttpClient& http,
 							const std::vector<std::string>& sha1s,
 							std::set<std::string>& clientOnly,
 							std::string* err,
@@ -287,7 +287,7 @@ bool FindModrinthClientOnly(HttpClient& http,
 		json batch = json::array();
 		for (std::size_t i = start; i < projects.size() && i < start + 100; ++i)
 			batch.push_back(projects[i]);
-		if (!http.Get(std::string(kApiBase) + "/projects?ids=" + HttpClient::UrlEncode(batch.dump()), body, err, cancel))
+		if (!http.Get(std::string(kApiBase) + "/projects?ids=" + IHttpClient::UrlEncode(batch.dump()), body, err, cancel))
 			return false;
 		try {
 			for (const auto& project : json::parse(body)) {
@@ -306,7 +306,7 @@ bool FindModrinthClientOnly(HttpClient& http,
 	return true;
 }
 
-bool FetchModrinthDescription(HttpClient& http,
+bool FetchModrinthDescription(IHttpClient& http,
 							  const std::string& projectIdOrSlug,
 							  std::string& out,
 							  std::string* err,
@@ -314,7 +314,7 @@ bool FetchModrinthDescription(HttpClient& http,
 {
 	out.clear();
 	std::string body;
-	if (!http.Get(std::string(kApiBase) + "/project/" + HttpClient::UrlEncode(projectIdOrSlug), body, err, cancel))
+	if (!http.Get(std::string(kApiBase) + "/project/" + IHttpClient::UrlEncode(projectIdOrSlug), body, err, cancel))
 		return false;
 	try {
 		out = StringOrEmpty(json::parse(body), "body");
@@ -326,14 +326,14 @@ bool FetchModrinthDescription(HttpClient& http,
 	return true;
 }
 
-bool FetchModrinthBanner(HttpClient& http,
+bool FetchModrinthBanner(IHttpClient& http,
 						 const std::string& projectIdOrSlug,
 						 std::string& outUrl,
 						 std::string* err,
 						 const std::atomic<bool>* cancel)
 {
 	outUrl.clear();
-	const std::string url = std::string(kApiBase) + "/project/" + HttpClient::UrlEncode(projectIdOrSlug);
+	const std::string url = std::string(kApiBase) + "/project/" + IHttpClient::UrlEncode(projectIdOrSlug);
 
 	std::string body;
 	if (!http.Get(url, body, err, cancel))
@@ -366,7 +366,7 @@ bool FetchModrinthBanner(HttpClient& http,
 	return true;
 }
 
-bool FetchModrinthChangelog(HttpClient& http,
+bool FetchModrinthChangelog(IHttpClient& http,
 							const std::string& projectIdOrSlug,
 							const std::string& versionId,
 							const std::string& versionNumber,
@@ -377,8 +377,8 @@ bool FetchModrinthChangelog(HttpClient& http,
 	out.clear();
 	std::string body;
 	const std::string url = versionId.empty()
-		? std::string(kApiBase) + "/project/" + HttpClient::UrlEncode(projectIdOrSlug) + "/version"
-		: std::string(kApiBase) + "/version/" + HttpClient::UrlEncode(versionId);
+		? std::string(kApiBase) + "/project/" + IHttpClient::UrlEncode(projectIdOrSlug) + "/version"
+		: std::string(kApiBase) + "/version/" + IHttpClient::UrlEncode(versionId);
 	if (!http.Get(url, body, err, cancel))
 		return false;
 	try {

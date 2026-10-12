@@ -6,11 +6,11 @@
 #include <string>
 #include <vector>
 
-class HttpClient;
+class IHttpClient;
 
 // What the dialog needs from the app. Rebuilt every frame.
 struct NewPackDialogContext {
-	HttpClient* http = nullptr;
+	IHttpClient* http = nullptr;
 	BackgroundTasks tasks;
 };
 

@@ -4,10 +4,26 @@
 
 | Path | Contents |
 | --- | --- |
-| `src/main.cpp` | Window, render loop, pages, background workers |
-| `src/Platform.*` | Opening folders, the system Open dialog (`PickFiles`), system memory, network addresses |
+| `src/main.cpp` | Program start and stop: finds the data folder, opens `app.log`, runs `Application` |
+| `src/App/Application.*` | Opens the window, runs the frame loop, shuts down in order |
+| `src/App/AppRoot.*` | Composition root: builds every service and page and wires them through interfaces |
+| `src/App/GlfwWindow.*` | The window: GLFW, the OpenGL context, the ImGui backends, dropped files, placement |
+| `src/App/ThemeController.*` | Applies the theme, UI scale and monitor DPI at startup and when they change |
+| `src/Core/` | Framework-free infrastructure and interfaces: `ITaskRunner`/`WorkerPool`, `IUiPoster`/`UiQueue`, `TaskScope`, `INotifier`, `Runtime`, `IWindowControl`, `IDisplayMetrics`, `AppInfo` |
+| `src/Platform/Platform.h` | Everything the launcher needs from the OS: opening folders and files, the Open dialog, memory, network addresses, the executable's folder, the title bar |
+| `src/Platform/Platform_win32.cpp`, `src/Platform/Platform_posix.cpp` | The definitions for each OS; CMake builds the one that matches |
+| `src/Services/AppPaths.h` | File and folder names under the data folder |
+| `src/Services/Settings/` | `SettingsStore`, `JavaScanService`, `SharedFilesService` |
+| `src/Services/Library/` | `PackLibrary`, `UninstallService`, `CustomPackService`, `PackContentService` |
+| `src/Services/Downloads/` | `DownloadService` and `DownloadState` |
+| `src/Services/Account/` | `AccountService` |
+| `src/Services/Play/` | `PlayService` |
+| `src/Services/Servers/` | `ServerService` and `ServerState` |
+| `src/Services/Updates/` | `UpdateService` |
+| `src/Services/Discover/` | `DiscoverService`, `PackDetailsService`, `OptionalModsService` and the Discover state structs |
 | `src/Model/Modpack.*` | `Modpack` / `PackFile` structs, `resources/index.json` loader |
-| `src/Network/HttpClient.*` | libcurl wrapper: downloads, GET/POST, headers, cancellation |
+| `src/Network/IHttpClient.h` | The network as an interface (`Get`, `Post`, `DownloadToFile`) that everything else depends on |
+| `src/Network/HttpClient.*` | The libcurl implementation: downloads, GET/POST, headers, cancellation |
 | `src/Network/PackSources.*` | Single entry point for search, versions, and installs across sources |
 | `src/Network/Modrinth.*` | Modrinth API client |
 | `src/Network/CurseForge.*` | CurseForge API client and API key handling |
@@ -34,10 +50,15 @@
 | `src/UI/Widgets.*` | Shared widgets and animations |
 | `src/UI/Logo.*` | The logo's pixels and wordmark font |
 | `src/UI/LogView.*` | Selectable, copyable log and console text |
-| `src/UI/BackgroundTasks.h` | How pages run slow work on a worker and post results back to the UI thread |
-| `src/UI/ManagePage.*` | A pack's Manage page |
-| `src/UI/NewPackDialog.*` | My Library > New pack... |
-| `src/UI/SettingsPage.*` | Settings page |
+| `src/UI/BackgroundTasks.h` | How the Manage page and New pack dialog run slow work on a worker and post results back to the UI thread |
+| `src/UI/Pages/Manage/` | A pack's Manage page: `ManagePage` plus one class per tab and card; `ManagePageHost` connects it to the app |
+| `src/UI/NewPackDialog.*` | My Library > New pack... (the view; `NewPackDialogHost` creates the pack) |
+| `src/UI/Pages/Settings/` | Settings page: `SettingsPage` plus one class per tab; `SettingsPageHost` connects it to the app |
+| `src/UI/Navigation.h` | `Page` and `INavigator` |
+| `src/UI/Common/` | `UiHelpers` (right-aligned buttons, pack icon, page header, busy and empty-state labels, source colors), `RunInBackground` (Background.h) and `VersionPicker` |
+| `src/UI/Shell/` | `AppShell` (sidebar, current page, dialogs), `Sidebar`, `AccountPanel`, `Mascot`, `Shortcuts`, `NavigatorProxy`, `ToastNotifier` |
+| `src/UI/Pages/` | `IPage` and one folder per page: `Discover/` (filter bar, result list, details and its parts), `Library/`, `Downloads/`, `Servers/` (list, details, Run, Settings, Mods and Docker tabs, console), `Manage/`, `Settings/` |
+| `src/UI/Dialogs/` | `IDialogs`, `DialogHost` and one class per dialog (stop game, launch settings, new pack, optional mods, delete server, uninstall, update) |
 | `src/UI/Toasts.*` | Toast notifications |
 | `src/UI/ImageCache.*` | Asynchronous icon and banner loading (PNG, JPEG, GIF, WebP) |
 | `src/UI/MobModel.*`, `src/UI/Mobs.*` | Sidebar mob rendering and randomly selected box-built mobs |
@@ -45,11 +66,14 @@
 | `src/Util/Paths.*` | Long (260+ character) Windows paths |
 | `src/Util/Process.*` | Process launching and interactive server console |
 | `src/Util/Text.*` | Markdown/HTML descriptions to plain text, shortening, compact counts (`FormatCount`), file sizes (`FormatFileSize`), `ToLower` |
+| `src/Util/ZipArchive.h` | `ZipReader` and `ZipWriter`: RAII wrappers over miniz so a zip handle is always closed |
+| `src/Util/PathSafety.h` | Checks that a path from an archive stays inside the folder it is extracted to |
 | `src/Util/Json.h` | `StringOrEmpty`: a JSON field as a string, or empty when it's missing or not a string |
 | `src/assets/` | `minecraft_fox.glb` |
 | `resources/index.json` | Offline fallback pack list |
 | `resources/logo.ico`, `resources/logo.png`, `resources/app.rc` | The logo as the executable's icon, written by `logo_export` |
 | `tools/LogoExport.cpp` | `logo_export`: writes `resources/logo.ico` and `resources/logo.png` |
+| `docs/architecture.md` | Layers, interfaces, threads and lifetimes |
 | `docs/features/` | Feature documentation, indexed in `CLAUDE.md` |
 | `tests/` | Regression checks, opt-in live API checks (`LiveChecks.cpp`), and Windows window smoke test |
 | `mcdebug.cmd` | Build and run helper (see the [README](../README.md#mcdebug)) |

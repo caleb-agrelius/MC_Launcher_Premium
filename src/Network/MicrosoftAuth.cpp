@@ -342,14 +342,14 @@ static std::string Form(std::initializer_list<std::pair<const char*, std::string
 			body += '&';
 		body += key;
 		body += '=';
-		body += HttpClient::UrlEncode(value);
+		body += IHttpClient::UrlEncode(value);
 	}
 	return body;
 }
 
 // Sends a request and parses the JSON response. Error statuses still parse
 // (their bodies describe the problem); a non-JSON body gives an error.
-static bool RequestJson(HttpClient& http, const std::string& url, const std::vector<std::string>& headers,
+static bool RequestJson(IHttpClient& http, const std::string& url, const std::vector<std::string>& headers,
 	const std::string& body, json& out, long& status, std::string* err, const std::atomic<bool>* cancel)
 {
 	std::string response;
@@ -376,7 +376,7 @@ static std::string OAuthError(const json& j, long status)
 
 // Xbox Live -> XSTS -> Minecraft login -> profile. msAccessToken is a Microsoft
 // OAuth access token with the XboxLive.signin scope.
-static bool LoginWithMicrosoftToken(HttpClient& http, const std::string& msAccessToken, Account& account,
+static bool LoginWithMicrosoftToken(IHttpClient& http, const std::string& msAccessToken, Account& account,
 	std::string* err, const std::atomic<bool>* cancel)
 {
 	json j;
@@ -463,7 +463,7 @@ static bool LoginWithMicrosoftToken(HttpClient& http, const std::string& msAcces
 	return true;
 }
 
-bool SignInWithMicrosoft(HttpClient& http, const std::string& clientId, Account& account,
+bool SignInWithMicrosoft(IHttpClient& http, const std::string& clientId, Account& account,
 	std::string* err, const std::atomic<bool>* cancel)
 {
 	account = {};
@@ -498,12 +498,12 @@ bool SignInWithMicrosoft(HttpClient& http, const std::string& clientId, Account&
 		return false;
 	const std::string redirectUri = "http://localhost:" + std::to_string(port);
 	const std::string authorizationUrl = std::string(kAuthorizeUrl) +
-		"?client_id=" + HttpClient::UrlEncode(clientId) +
+		"?client_id=" + IHttpClient::UrlEncode(clientId) +
 		"&response_type=code&response_mode=query" +
-		"&redirect_uri=" + HttpClient::UrlEncode(redirectUri) +
-		"&scope=" + HttpClient::UrlEncode(kScope) +
-		"&state=" + HttpClient::UrlEncode(state) +
-		"&code_challenge=" + HttpClient::UrlEncode(challenge) +
+		"&redirect_uri=" + IHttpClient::UrlEncode(redirectUri) +
+		"&scope=" + IHttpClient::UrlEncode(kScope) +
+		"&state=" + IHttpClient::UrlEncode(state) +
+		"&code_challenge=" + IHttpClient::UrlEncode(challenge) +
 		"&code_challenge_method=S256&prompt=select_account";
 	if (reinterpret_cast<INT_PTR>(ShellExecuteA(nullptr, "open", authorizationUrl.c_str(),
 			nullptr, nullptr, SW_SHOWNORMAL)) <= 32) {
@@ -551,7 +551,7 @@ bool SignInWithMicrosoft(HttpClient& http, const std::string& clientId, Account&
 #endif
 }
 
-bool RefreshMicrosoftAccount(HttpClient& http, const std::string& clientId, Account& account,
+bool RefreshMicrosoftAccount(IHttpClient& http, const std::string& clientId, Account& account,
 	std::string* err, const std::atomic<bool>* cancel)
 {
 	if (account.refreshToken.empty()) {

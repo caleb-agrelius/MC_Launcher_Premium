@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-class HttpClient;
+class IHttpClient;
 
 // Client for the CurseForge API (https://api.curseforge.com/v1). Every request needs an
 // API key; see CurseForgeApiKey(). Files whose authors turned off third-party downloads
@@ -24,7 +24,7 @@ void SetCurseForgeApiKey(const std::string& key);
 // The MCLP_CURSEFORGE_API_KEY environment variable, or empty if it isn't set.
 std::string CurseForgeEnvApiKey();
 
-bool SearchCurseForgeModpacks(HttpClient& http,
+bool SearchCurseForgeModpacks(IHttpClient& http,
 							  const std::string& query,
 							  const SearchFilters& filters,
 							  int limit,
@@ -34,14 +34,14 @@ bool SearchCurseForgeModpacks(HttpClient& http,
 
 // Every file of a modpack project (pack.sourceId), newest first, read page by page
 // (up to 500 files).
-bool ListCurseForgeVersions(HttpClient& http,
+bool ListCurseForgeVersions(IHttpClient& http,
 		const Modpack& pack,
 		std::vector<PackVersionInfo>& out,
 		std::string* err = nullptr,
 		const std::atomic<bool>* cancel = nullptr);
 
 // The newest release file of a modpack project (pack.sourceId).
-bool FetchCurseForgeVersion(HttpClient& http,
+bool FetchCurseForgeVersion(IHttpClient& http,
 							const Modpack& pack,
 							PackVersionInfo& out,
 							std::string* err = nullptr,
@@ -49,7 +49,7 @@ bool FetchCurseForgeVersion(HttpClient& http,
 
 // Downloads the pack zip (pack.sourceVersionId) into workDir, reads its manifest.json,
 // and resolves every listed file.
-bool BuildCurseForgePlan(HttpClient& http,
+bool BuildCurseForgePlan(IHttpClient& http,
 						 const Modpack& pack,
 						 const std::string& workDir,
 						 InstallPlan& plan,
@@ -59,7 +59,7 @@ bool BuildCurseForgePlan(HttpClient& http,
 
 // The projects listed in the pack zip's manifest (downloaded into workDir, like
 // BuildCurseForgePlan, so a later install reuses it), with names and summaries.
-bool FetchCurseForgePackMods(HttpClient& http,
+bool FetchCurseForgePackMods(IHttpClient& http,
 							 const Modpack& pack,
 							 const std::string& workDir,
 							 std::vector<PackMod>& out,
@@ -68,13 +68,13 @@ bool FetchCurseForgePackMods(HttpClient& http,
 
 // The project's full description (HTML), from /mods/{id}/description.
 // The changelog (HTML) of the pack's file (pack.sourceVersionId).
-bool FetchCurseForgeChangelog(HttpClient& http,
+bool FetchCurseForgeChangelog(IHttpClient& http,
 							  const Modpack& pack,
 							  std::string& out,
 							  std::string* err = nullptr,
 							  const std::atomic<bool>* cancel = nullptr);
 
-bool FetchCurseForgeDescription(HttpClient& http,
+bool FetchCurseForgeDescription(IHttpClient& http,
 								const Modpack& pack,
 								std::string& out,
 								std::string* err = nullptr,
@@ -108,7 +108,7 @@ struct CurseForgeFileRef {
 // Resolves files to download URLs and hashes (POST /mods/files and /mods), then tries
 // Modrinth for files without a URL. out has one PlannedFile per ref, in order.
 // Also used by FTB for its CurseForge-hosted files.
-bool ResolveCurseForgeFiles(HttpClient& http,
+bool ResolveCurseForgeFiles(IHttpClient& http,
 							const std::vector<CurseForgeFileRef>& refs,
 							std::vector<PlannedFile>& out,
 							std::string* err = nullptr,
@@ -116,4 +116,4 @@ bool ResolveCurseForgeFiles(HttpClient& http,
 
 // Fills in URLs for blocked files (url empty, sha1 set) from Modrinth's hash lookup.
 // Returns how many were found. Failures leave the files blocked.
-int FillFromModrinthByHash(HttpClient& http, std::vector<PlannedFile>& files, const std::atomic<bool>* cancel = nullptr);
+int FillFromModrinthByHash(IHttpClient& http, std::vector<PlannedFile>& files, const std::atomic<bool>* cancel = nullptr);

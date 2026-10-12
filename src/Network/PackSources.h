@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-class HttpClient;
+class IHttpClient;
 
 // One entry point per operation for every online pack source. Each source's own
 // client (Modrinth.h, CurseForge.h, ...) does the work; these functions dispatch on
@@ -48,7 +48,7 @@ struct SourceSearchResult {
 	std::uint64_t totalHits = 0;
 };
 
-bool SearchPacks(HttpClient& http,
+bool SearchPacks(IHttpClient& http,
 				 PackSource source,
 				 const std::string& query,
 				 const SearchFilters& filters,
@@ -76,7 +76,7 @@ struct PackVersionInfo {
 	bool sourceIsSolder = false; // Technic
 };
 
-bool FetchPackVersion(HttpClient& http,
+bool FetchPackVersion(IHttpClient& http,
 					  const Modpack& pack,
 					  PackVersionInfo& out,
 					  std::string* err = nullptr,
@@ -85,7 +85,7 @@ bool FetchPackVersion(HttpClient& http,
 // Every version a pack has, newest first, for the version picker. Each entry can be
 // passed to ApplyPackVersion. Entries may lack details the source only gives per
 // version (e.g. a Technic Solder build's Minecraft version).
-bool ListPackVersions(HttpClient& http,
+bool ListPackVersions(IHttpClient& http,
 					  const Modpack& pack,
 					  std::vector<PackVersionInfo>& out,
 					  std::string* err = nullptr,
@@ -105,7 +105,7 @@ struct OptionalMod {
 
 // The optional mods of the pack's version (pack.sourceVersionId). Sources without
 // optional mods succeed with an empty list.
-bool FetchOptionalMods(HttpClient& http,
+bool FetchOptionalMods(IHttpClient& http,
 					   const Modpack& pack,
 					   std::vector<OptionalMod>& out,
 					   std::string* err = nullptr,
@@ -114,7 +114,7 @@ bool FetchOptionalMods(HttpClient& http,
 // The pack's full description as plain text (see MarkupToPlainText). Technic and
 // ATLauncher search results already hold it, so they make no request. Falls back to
 // pack.description when the source has nothing longer.
-bool FetchPackDescription(HttpClient& http,
+bool FetchPackDescription(IHttpClient& http,
 						  const Modpack& pack,
 						  std::string& out,
 						  std::string* err = nullptr,
@@ -122,7 +122,7 @@ bool FetchPackDescription(HttpClient& http,
 
 // The changelog of the pack's version (pack.sourceVersionId) as plain text. Only for
 // sources whose capabilities have changelogs (Modrinth, CurseForge, FTB).
-bool FetchPackChangelog(HttpClient& http,
+bool FetchPackChangelog(IHttpClient& http,
 						const Modpack& pack,
 						std::string& out,
 						std::string* err = nullptr,
@@ -147,7 +147,7 @@ struct PackModList {
 // The mods in the pack's version (pack.sourceVersionId, so the pack's version must be
 // loaded first). CurseForge downloads the pack zip into workDir to read its manifest; the
 // install reuses it. Technic single-zip packs succeed with an empty list and a note.
-bool FetchPackMods(HttpClient& http,
+bool FetchPackMods(IHttpClient& http,
 				   const Modpack& pack,
 				   const std::string& workDir,
 				   PackModList& out,
@@ -157,7 +157,7 @@ bool FetchPackMods(HttpClient& http,
 // Builds the install plan for the pack's chosen version (pack.sourceVersionId). May
 // download the pack's own archive (e.g. a CurseForge zip) into workDir first.
 // status reports what it is doing, for the UI.
-bool BuildInstallPlan(HttpClient& http,
+bool BuildInstallPlan(IHttpClient& http,
 					  const Modpack& pack,
 					  const std::string& workDir,
 					  InstallPlan& plan,

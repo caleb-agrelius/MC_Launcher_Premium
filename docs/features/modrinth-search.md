@@ -45,9 +45,9 @@ Live modpack search and version lookup against the public Modrinth API (`https:/
 - `HttpClient::UrlEncode()` percent-encodes query parameters.
 - Every request sends `User-Agent: MC_Launcher_Premium/0.1` (`HttpClient::kUserAgent`), as Modrinth asks clients to identify themselves. Modrinth's rate limit is 300 requests per minute.
 
-## Threading (`src/main.cpp`)
+## Threading (`src/Core/`, `src/Services/Discover/`)
 This applies to every source.
-- Searches, version lookups, and banner lookups run on worker threads (`StartWorker`), with `shuttingDown` as the cancel flag.
+- Searches, version lookups, and banner lookups run on worker threads (the service's `TaskScope` over `WorkerPool`), with the shutdown flag as the cancel flag.
 - Results are posted to `UiQueue`, which is drained at the start of each frame. A sub-page's pack list, selection, and the lookup state (`filesLoading`, `filesErrors`) are therefore only modified on the UI thread.
 - Each sub-page's searches get a `searchGeneration` number. Results from an older search than that sub-page's latest are dropped, so typing quickly can't show stale results.
 - Version-lookup and banner-lookup results are applied to every pack in the sub-page's current list with a matching `id`. If the list has changed since the lookup started, the result is discarded.

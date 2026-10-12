@@ -35,7 +35,7 @@ static std::vector<std::string> ModLoaders(const ContentSearch& search)
 	return { search.loader };
 }
 
-bool SearchContent(HttpClient& http, const ContentSearch& search, int limit, std::vector<ContentProject>& out,
+bool SearchContent(IHttpClient& http, const ContentSearch& search, int limit, std::vector<ContentProject>& out,
 				   std::string* err, const std::atomic<bool>* cancel)
 {
 	out.clear();
@@ -50,10 +50,10 @@ bool SearchContent(HttpClient& http, const ContentSearch& search, int limit, std
 			any.push_back("categories:" + loader);
 		facets.push_back(any);
 	}
-	std::string url = std::string(kApiBase) + "/search?facets=" + HttpClient::UrlEncode(facets.dump()) +
+	std::string url = std::string(kApiBase) + "/search?facets=" + IHttpClient::UrlEncode(facets.dump()) +
 		"&limit=" + std::to_string(limit) + "&index=" + (search.query.empty() ? "downloads" : "relevance");
 	if (!search.query.empty())
-		url += "&query=" + HttpClient::UrlEncode(search.query);
+		url += "&query=" + IHttpClient::UrlEncode(search.query);
 	std::string body;
 	if (!http.Get(url, body, err, cancel))
 		return false;
@@ -80,19 +80,19 @@ bool SearchContent(HttpClient& http, const ContentSearch& search, int limit, std
 	return true;
 }
 
-bool FindContentDownload(HttpClient& http, const ContentSearch& search, const std::string& projectId,
+bool FindContentDownload(IHttpClient& http, const ContentSearch& search, const std::string& projectId,
 						 ContentDownload& out, std::string* err, const std::atomic<bool>* cancel)
 {
 	out = ContentDownload{};
-	std::string url = std::string(kApiBase) + "/project/" + HttpClient::UrlEncode(projectId) + "/version";
+	std::string url = std::string(kApiBase) + "/project/" + IHttpClient::UrlEncode(projectId) + "/version";
 	std::string separator = "?";
 	if (!search.gameVersion.empty()) {
-		url += separator + "game_versions=" + HttpClient::UrlEncode(json::array({ search.gameVersion }).dump());
+		url += separator + "game_versions=" + IHttpClient::UrlEncode(json::array({ search.gameVersion }).dump());
 		separator = "&";
 	}
 	const std::vector<std::string> loaders = ModLoaders(search);
 	if (!loaders.empty())
-		url += separator + "loaders=" + HttpClient::UrlEncode(json(loaders).dump());
+		url += separator + "loaders=" + IHttpClient::UrlEncode(json(loaders).dump());
 	std::string body;
 	if (!http.Get(url, body, err, cancel))
 		return false;
@@ -149,7 +149,7 @@ bool FindContentDownload(HttpClient& http, const ContentSearch& search, const st
 	return true;
 }
 
-bool FindInstalledProjects(HttpClient& http, const fs::path& folder, std::set<std::string>& projectIds,
+bool FindInstalledProjects(IHttpClient& http, const fs::path& folder, std::set<std::string>& projectIds,
 						   std::string* err, const std::atomic<bool>* cancel)
 {
 	std::vector<std::string> sha1s;
@@ -183,7 +183,7 @@ bool FindInstalledProjects(HttpClient& http, const fs::path& folder, std::set<st
 	return true;
 }
 
-bool InstallContent(HttpClient& http, const ContentSearch& search, const std::string& projectId,
+bool InstallContent(IHttpClient& http, const ContentSearch& search, const std::string& projectId,
 					const fs::path& gameDir, std::vector<AddedContent>& added, std::vector<std::string>& notes,
 					std::string* err, const std::atomic<bool>* cancel)
 {

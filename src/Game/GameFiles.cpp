@@ -53,7 +53,7 @@ static bool ReadJsonFile(const fs::path& path, json& out, std::string* err)
 	return true;
 }
 
-static bool GetJson(HttpClient& http, const std::string& url, json& out, std::string* err, const std::atomic<bool>* cancel)
+static bool GetJson(IHttpClient& http, const std::string& url, json& out, std::string* err, const std::atomic<bool>* cancel)
 {
 	std::string body;
 	if (!http.Get(url, body, err, cancel))
@@ -97,7 +97,7 @@ static fs::path UniquePartPath(const fs::path& path)
 	return part;
 }
 
-static bool DownloadOne(HttpClient& http, const DownloadJob& job, std::string& error, const std::atomic<bool>* cancel)
+static bool DownloadOne(IHttpClient& http, const DownloadJob& job, std::string& error, const std::atomic<bool>* cancel)
 {
 	std::error_code ec;
 	fs::create_directories(LongPath(job.path.parent_path()), ec);
@@ -146,7 +146,7 @@ static bool DownloadOne(HttpClient& http, const DownloadJob& job, std::string& e
 	return false;
 }
 
-bool DownloadAll(HttpClient& http, const std::vector<DownloadJob>& jobs, const std::string& step,
+bool DownloadAll(IHttpClient& http, const std::vector<DownloadJob>& jobs, const std::string& step,
 	const ProgressFn& progress, std::string* err, const std::atomic<bool>* cancel)
 {
 	std::vector<const DownloadJob*> pending;
@@ -367,7 +367,7 @@ static void ResolveLibraries(const fs::path& root, const json& libraries, Resolv
 	}
 }
 
-bool InstallVanillaJson(HttpClient& http, const fs::path& root, const std::string& minecraftVersion,
+bool InstallVanillaJson(IHttpClient& http, const fs::path& root, const std::string& minecraftVersion,
 	std::string* err, const std::atomic<bool>* cancel)
 {
 	const fs::path path = root / "versions" / minecraftVersion / (minecraftVersion + ".json");
@@ -475,7 +475,7 @@ static DownloadJob JobFor(const LibraryFile& file)
 	return job;
 }
 
-bool InstallGameFiles(HttpClient& http, const fs::path& root, const ResolvedVersion& version,
+bool InstallGameFiles(IHttpClient& http, const fs::path& root, const ResolvedVersion& version,
 	const ProgressFn& progress, std::string* err, const std::atomic<bool>* cancel)
 {
 	std::vector<DownloadJob> jobs;
@@ -574,7 +574,7 @@ bool InstallGameFiles(HttpClient& http, const fs::path& root, const ResolvedVers
 	return true;
 }
 
-bool InstallJavaRuntime(HttpClient& http, const fs::path& root, const std::string& component, bool windowed,
+bool InstallJavaRuntime(IHttpClient& http, const fs::path& root, const std::string& component, bool windowed,
 	fs::path& javaExe, const ProgressFn& progress, std::string* err, const std::atomic<bool>* cancel)
 {
 	const fs::path runtimeDir = root / "runtime" / component;

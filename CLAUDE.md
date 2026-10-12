@@ -10,9 +10,10 @@ Other docs: [docs/development.md](docs/development.md) (debugging, logs, trouble
 
 | Doc | Read when working on |
 |---|---|
+| [architecture.md](docs/architecture.md) | Where code belongs: layers, interfaces, threads and lifetimes, adding a service or page |
 | [app-shell.md](docs/features/app-shell.md) | Startup/shutdown, window, render loop, sidebar navigation, logging |
 | [ui-theme.md](docs/features/ui-theme.md) | Color themes, fonts, DPI and UI scaling, shared widgets, toasts (`src/UI/Theme`, `src/UI/Widgets`, `src/UI/Toasts`) |
-| [settings.md](docs/features/settings.md) | Settings page, `settings.json` fields, Minecraft launch defaults (`src/UI/SettingsPage`, `src/Storage/Settings`) |
+| [settings.md](docs/features/settings.md) | Settings page, `settings.json` fields, Minecraft launch defaults (`src/UI/Pages/Settings`, `src/Storage/Settings`) |
 | [images.md](docs/features/images.md) | Pack icons and banners: `ImageCache` (download, decode, GL textures) |
 | [modpack-index.md](docs/features/modpack-index.md) | `resources/index.json` (offline fallback), `LoadIndex`, `Modpack`/`PackFile` structs |
 | [pack-sources.md](docs/features/pack-sources.md) | Source dispatcher (`PackSources`), search filters, Discover sub-pages, install plans (`InstallPlan`, `RunInstallPlan`) |
@@ -26,7 +27,7 @@ Other docs: [docs/development.md](docs/development.md) (debugging, logs, trouble
 | [shared-files.md](docs/features/shared-files.md) | Sharing identical mod files between packs (hard links, `minecraft/shared-files/`, `SharedFiles`) |
 | [installation.md](docs/features/installation.md) | Zip extraction (`InstallZip`), the `installs/` layout |
 | [library.md](docs/features/library.md) | My Library page |
-| [manage.md](docs/features/manage.md) | A pack's Manage page: overview, content (mods, resource and shader packs), changelog, logs, screenshots (`src/UI/ManagePage`, `src/Game/InstanceContent`) |
+| [manage.md](docs/features/manage.md) | A pack's Manage page: overview, content (mods, resource and shader packs), changelog, logs, screenshots (`src/UI/Pages/Manage`, `src/Game/InstanceContent`) |
 | [servers.md](docs/features/servers.md) | Dedicated server setup, settings, EULA, process lifecycle and console |
 | [launching.md](docs/features/launching.md) | PLAY: `.mrpack` instances, Minecraft/Java/loader install, version JSON, launch command |
 | [accounts.md](docs/features/accounts.md) | Microsoft sign-in, offline mode, `account.dat` |
@@ -35,3 +36,7 @@ Other docs: [docs/development.md](docs/development.md) (debugging, logs, trouble
 ## Keeping docs current
 
 When a change adds, removes, or changes user-visible behavior or a feature's internals, update the matching doc in the same change. Add a new doc and table row for a new area. Docs describe current behavior only. Put future work in `planned.md`.
+
+## Code style
+
+Follow the C++ Core Guidelines.
