@@ -12,7 +12,7 @@ Browse modpacks and start downloads and installs. UI code is `src/UI/Pages/Disco
 - **Filters** sit under the box (see [pack-sources.md](pack-sources.md)):
   - a **Minecraft version** text box (searches after typing pauses)
   - a **loader** combo (Any loader, Forge, NeoForge, Fabric, Quilt)
-  - a **category** combo (Any category, then Modrinth's modpack categories such as Adventure, Kitchen sink or Technology). The list comes from `FetchModrinthCategories` on a worker the first time the combo opens ("Loading categories...", with **Retry** on failure). Only Modrinth can filter by category (`SourceCapabilities::categoryFilter`), so while one is chosen the other sources are skipped with "<source> can't filter by category"
+  - a **category** combo (Any category, then Modrinth's modpack categories such as Adventure, Kitchen sink or Technology). The list comes from `FetchModrinthCategories`, run by `DiscoverService::LoadCategories()` on a worker the first time the combo opens ("Loading categories...", with **Retry** on failure). Only Modrinth can filter by category (`SourceCapabilities::categoryFilter`), so while one is chosen the other sources are skipped with "<source> can't filter by category"
   - a **Sort** combo
 
   Changing a combo searches immediately.
@@ -21,7 +21,7 @@ Browse modpacks and start downloads and installs. UI code is `src/UI/Pages/Disco
 - With several sources, **Best match** interleaves results by source rank; **Most downloads** and **Name** sort the combined list. With one source, its native sorts are available.
 - **Offline fallback (Modrinth only):** if the search fails, the list shows packs from `resources/index.json` whose name or description contains the query (case-insensitive). See [modpack-index.md](modpack-index.md).
 - Each search shows up to `settings.searchLimit` results (30 by default, 10–100, set in Settings > Downloads). CurseForge caps a page at 50.
-- **Load more:** when any searched source has more results than it has returned (`SourceView::HasMore`), a **Load more** button sits at the end of the list. It asks each such source for its next page (`startSearch(view, true)`, with `SearchFilters::offset` set to the number already loaded) and adds the results below the current ones. Repeats are skipped, and the selection and scroll position stay put.
+- **Load more:** when any searched source has more results than it has returned (`SourceView::HasMore`), a **Load more** button sits at the end of the list. It asks each such source for its next page (`DiscoverService::StartSearch(view, true)`, with `SearchFilters::offset` set to the number already loaded) and adds the results below the current ones. Repeats are skipped, and the selection and scroll position stay put.
   - While pages load, the button becomes "Loading more...". A failed page shows "Couldn't load more: <source>: <error>" and the button stays, so it can be retried.
   - An empty page ends that source's results. A new search discards pages still loading.
   - The merged list keeps its order: with several sources, new pages continue the interleaving by rank, or are sorted in when the list is sorted by downloads or name.
