@@ -8,6 +8,7 @@
 #include "Game/JavaFinder.h"
 #include "Game/PackCreator.h"
 #include "Game/Launcher.h"
+#include "Game/PackInstance.h"
 #include "Game/ServerSetup.h"
 #include "Util/Process.h"
 #include "Util/Text.h"
@@ -775,6 +776,10 @@ int main(int argc, char** argv)
 				log << "Could not save " << kDownloadsFile << "\n";
 		};
 
+		// Told about every finished version install, ok or not, after the library has been
+		// updated. Set further down by pack updates. UI thread only.
+		std::function<void(const Modpack& pack, bool ok)> onVersionInstalled;
+
 		// Extracts a downloaded file into installs/<pack id>/ and, on success, adds
 		// the pack to My Library. Used by Discover and the Downloads page.
 		auto startInstall = [&](const std::string& url, const Modpack& pack, const std::string& zipPath) {
@@ -789,7 +794,7 @@ int main(int argc, char** argv)
 			const InstalledVersion version = PlanInstalledVersion(libraryPacks, pack, false);
 			const std::string targetDir = version.installDir;
 			StartWorker(workers, [zipPath, targetDir, &downloads, &downloadsMutex, &shuttingDown, &uiQueue,
-				&libraryPacks, &log, url, pack, version]() {
+				&libraryPacks, &log, &onVersionInstalled, url, pack, version]() {
 				std::string error;
 				// Start from an empty folder, so another version's overrides don't linger.
 				std::error_code clearError;
@@ -811,16 +816,74 @@ int main(int argc, char** argv)
 						current.installError = error;
 				}
 				if (ok) {
-					uiQueue.Post([&libraryPacks, &log, pack, version]() {
+					uiQueue.Post([&libraryPacks, &log, &onVersionInstalled, pack, version]() {
 						AddInstalledVersion(libraryPacks, pack, version);
 						SaveLibrary(libraryPacks, log);
 						Toasts::Push(Toasts::Kind::Success, "Files extracted", pack.name + " " + pack.version + " is in your library.");
+						if (onVersionInstalled)
+							onVersionInstalled(pack, true);
 					});
-				} else if (!shuttingDown.load()) {
-					uiQueue.Post([name = pack.name, error]() {
-						Toasts::Push(Toasts::Kind::Error, "Extraction failed", name + ": " + error);
+				} else {
+					uiQueue.Post([&onVersionInstalled, pack, error, cancelled = shuttingDown.load()]() {
+						if (!cancelled)
+							Toasts::Push(Toasts::Kind::Error, "Extraction failed", pack.name + ": " + error);
+						if (onVersionInstalled)
+							onVersionInstalled(pack, false);
 					});
 				}
+			});
+		};
+
+		// Downloads one of a pack's files into downloads/<pack id>/, then extracts it with
+		// startInstall. Discover's one-step Install and pack updates use it.
+		auto startDownloadInstall = [&](const Modpack& pack, const PackFile& file) {
+			DownloadState started;
+			started.fileName = file.name;
+			started.pack = pack;
+			started.active = true;
+			{
+				std::lock_guard<std::mutex> lock(downloadsMutex);
+				downloads[file.url] = started;
+			}
+			const std::string url = file.url;
+			// Per-pack folder so same-named files from different packs don't collide.
+			const fs::path packDownloadDir = fs::path("downloads") / pack.id;
+			const std::string outputPath = (packDownloadDir / file.name).string();
+			StartWorker(workers, [&http, &downloads, &downloadsMutex, &shuttingDown, &uiQueue, &saveDownloads,
+				&startInstall, &onVersionInstalled, url, packDownloadDir, outputPath, pack]() {
+				std::string error;
+				std::error_code dirError;
+				fs::create_directories(packDownloadDir, dirError);
+				auto progress = [&](double total, double now) {
+					std::lock_guard<std::mutex> lock(downloadsMutex);
+					DownloadState& current = downloads[url];
+					current.total = total;
+					current.now = now;
+				};
+				const bool ok = http.DownloadToFile(url, outputPath, progress, &error, &shuttingDown);
+				{
+					std::lock_guard<std::mutex> lock(downloadsMutex);
+					DownloadState& current = downloads[url];
+					current.active = false;
+					if (ok) {
+						current.outPath = outputPath;
+						current.installing = !shuttingDown.load(); // extraction starts next frame
+					} else {
+						current.error = error;
+					}
+				}
+				if (ok)
+					uiQueue.Post([&saveDownloads]() { saveDownloads(); });
+				if (shuttingDown.load())
+					return; // the file stays downloaded; Install files on Downloads extracts it later
+				if (ok)
+					uiQueue.Post([&startInstall, url, pack, outputPath]() { startInstall(url, pack, outputPath); });
+				else
+					uiQueue.Post([&onVersionInstalled, pack, error]() {
+						Toasts::Push(Toasts::Kind::Error, "Download failed", pack.name + ": " + error);
+						if (onVersionInstalled)
+							onVersionInstalled(pack, false);
+					});
 			});
 		};
 
@@ -1394,8 +1457,8 @@ int main(int argc, char** argv)
 				downloads[key] = std::move(started);
 			}
 			log << "Installing " << pack.id << " " << pack.version << " from " << PackSourceName(pack.source) << "\n";
-			StartWorker(workers, [&http, &downloads, &downloadsMutex, &shuttingDown, &uiQueue, &libraryPacks, &log, key, pack,
-				version]() {
+			StartWorker(workers, [&http, &downloads, &downloadsMutex, &shuttingDown, &uiQueue, &libraryPacks, &log,
+				&onVersionInstalled, key, pack, version]() {
 				auto setStage = [&](const std::string& stage, std::uint64_t done, std::uint64_t total) {
 					std::lock_guard<std::mutex> lock(downloadsMutex);
 					DownloadState& current = downloads[key];
@@ -1430,12 +1493,14 @@ int main(int argc, char** argv)
 					current.notes = plan.notes;
 				}
 				const bool cancelled = shuttingDown.load();
-				uiQueue.Post([&libraryPacks, &log, pack, version, ok, cancelled, error, blockedCount = blocked.size(),
-					fileCount = plan.files.size()]() {
+				uiQueue.Post([&libraryPacks, &log, &onVersionInstalled, pack, version, ok, cancelled, error,
+					blockedCount = blocked.size(), fileCount = plan.files.size()]() {
 					if (!ok) {
 						log << "Install of " << pack.id << " failed: " << error << "\n";
 						if (!cancelled)
 							Toasts::Push(Toasts::Kind::Error, "Install failed", pack.name + ": " + error);
+						if (onVersionInstalled)
+							onVersionInstalled(pack, false);
 						return;
 					}
 					log << "Installed " << pack.id << ": " << fileCount << " file(s), " << blockedCount << " blocked\n";
@@ -1444,6 +1509,8 @@ int main(int argc, char** argv)
 					Toasts::Push(Toasts::Kind::Success, "Pack installed", blockedCount > 0
 						? pack.name + " " + pack.version + ": " + std::to_string(blockedCount) + " file(s) need a manual download."
 						: pack.name + " " + pack.version + " is in your library.");
+					if (onVersionInstalled)
+						onVersionInstalled(pack, true);
 				});
 			});
 		};
@@ -1611,6 +1678,141 @@ int main(int argc, char** argv)
 		backgroundTasks.post = [&uiQueue](std::function<void()> task) { uiQueue.Post(std::move(task)); };
 		ManagePage managePage;
 		NewPackDialog newPackDialog;      // My Library > New pack...
+
+		// ---- Pack updates (UI thread only) ----
+		// An update installs the source's newest version side by side, carries the player's
+		// worlds and options over from the version it replaces, then (optionally) uninstalls
+		// the old version.
+		struct PackUpdate {
+			std::string fromKey;   // the version being updated from
+			std::string toKey;     // VersionKey of the version being installed
+			std::string toVersion; // its display name
+			bool removeOld = false;
+			bool copying = false;  // the install finished; player data is being copied
+		};
+		std::map<std::string, PackUpdate> packUpdates; // running updates, keyed by pack id
+		// The "Update" dialog: the newest version is looked up when it opens.
+		struct UpdateCheck {
+			std::string packId; // empty = closed
+			bool loading = false;
+			std::string error;
+			Modpack target;     // the pack at its newest version, once loaded
+			bool removeOld = false;
+		};
+		UpdateCheck updateCheck;
+		int updateCheckGeneration = 0;
+		auto startUpdateCheck = [&](const Modpack& pack) {
+			updateCheck = UpdateCheck{};
+			updateCheck.packId = pack.id;
+			updateCheck.loading = true;
+			const int generation = ++updateCheckGeneration;
+			StartWorker(workers, [&http, &uiQueue, &shuttingDown, &updateCheck, &updateCheckGeneration, &log, pack, generation]() {
+				PackVersionInfo newest;
+				std::string error;
+				const bool ok = FetchPackVersion(http, pack, newest, &error, &shuttingDown);
+				uiQueue.Post([&updateCheck, &updateCheckGeneration, &log, pack, generation, ok, newest, error]() {
+					if (generation != updateCheckGeneration || updateCheck.packId != pack.id)
+						return; // the dialog was closed or opened for another pack
+					updateCheck.loading = false;
+					if (!ok) {
+						updateCheck.error = error;
+						log << "Update check for " << pack.id << " failed: " << error << "\n";
+						return;
+					}
+					// The library pack, moved to the newest version. ATLauncher keeps its optional mod choices.
+					Modpack target = pack;
+					target.installedVersions.clear();
+					target.activeVersion.clear();
+					ApplyPackVersion(target, newest);
+					updateCheck.target = target;
+					log << "Newest version of " << pack.id << ": " << target.version << "\n";
+				});
+			});
+		};
+		// The file an update downloads for per-file sources (Modrinth): the .mrpack.
+		auto updateFile = [](const Modpack& target) -> const PackFile* {
+			for (const PackFile& file : target.files) {
+				if (file.name.size() > 7 && file.name.compare(file.name.size() - 7, 7, ".mrpack") == 0)
+					return &file;
+			}
+			return target.files.empty() ? nullptr : &target.files.front();
+		};
+		auto startUpdate = [&](const Modpack& libraryPack, const Modpack& target, bool removeOld) {
+			const bool wholePack = GetSourceCapabilities(target.source).installsPacks;
+			const PackFile* file = wholePack ? nullptr : updateFile(target);
+			if (!wholePack && !file) {
+				Toasts::Push(Toasts::Kind::Error, "Couldn't update " + libraryPack.name, "The new version has no file to install.");
+				return;
+			}
+			packUpdates[libraryPack.id] = { libraryPack.activeVersion, VersionKey(target), target.version, removeOld, false };
+			log << "Update " << libraryPack.id << " from " << libraryPack.activeVersion << " to " << VersionKey(target) << "\n";
+			if (wholePack)
+				startPlanInstall(target);
+			else
+				startDownloadInstall(target, *file);
+			Toasts::Push(Toasts::Kind::Info, "Updating " + libraryPack.name + " to " + target.version,
+				"Progress is on the Downloads page.");
+		};
+		// When an update's install finishes: copy the player's data into the new version's game
+		// folder on a worker, then remove the old version if asked.
+		onVersionInstalled = [&](const Modpack& pack, bool ok) {
+			const auto running = packUpdates.find(pack.id);
+			if (running == packUpdates.end() || running->second.copying || running->second.toKey != VersionKey(pack))
+				return;
+			if (!ok) {
+				packUpdates.erase(running); // the install already reported its error
+				return;
+			}
+			const auto entry = libraryPacks.find(pack.id);
+			const InstalledVersion* from = entry == libraryPacks.end() ? nullptr : FindInstalledVersion(entry->second, running->second.fromKey);
+			const InstalledVersion* to = entry == libraryPacks.end() ? nullptr : FindInstalledVersion(entry->second, running->second.toKey);
+			if (!from || !to || from->key == to->key) {
+				packUpdates.erase(running);
+				return;
+			}
+			running->second.copying = true;
+			const fs::path fromDir = fs::absolute(fs::u8path(from->gameDir));
+			const fs::path toDir = fs::absolute(fs::u8path(to->gameDir));
+			StartWorker(workers, [&uiQueue, &shuttingDown, &packUpdates, &libraryPacks, &plays, &playsMutex, &uninstallPack, &log,
+				packId = pack.id, fromDir, toDir]() {
+				std::size_t copied = 0;
+				std::string error;
+				const bool copiedOk = CarryOverPlayerData(fromDir, toDir, copied, &error, &shuttingDown);
+				uiQueue.Post([&packUpdates, &libraryPacks, &plays, &playsMutex, &uninstallPack, &log, packId, copiedOk, copied, error]() {
+					const auto running = packUpdates.find(packId);
+					if (running == packUpdates.end())
+						return;
+					const PackUpdate update = running->second;
+					packUpdates.erase(running);
+					const auto entry = libraryPacks.find(packId);
+					if (entry == libraryPacks.end())
+						return;
+					const std::string name = entry->second.name;
+					log << "Update " << packId << ": copied " << copied << " file(s) of player data"
+						<< (copiedOk ? std::string() : ", then failed: " + error) << "\n";
+					if (!copiedOk) {
+						Toasts::Push(Toasts::Kind::Error, "Couldn't copy your worlds and settings",
+							name + " " + update.toVersion + " is installed, but " + error + ". The old version was kept.");
+						return;
+					}
+					bool playing = false;
+					{
+						std::lock_guard<std::mutex> lock(playsMutex);
+						const auto it = plays.find(packId);
+						playing = it != plays.end() && (it->second.busy || it->second.playing);
+					}
+					if (update.removeOld && !playing && FindInstalledVersion(entry->second, update.fromKey)) {
+						uninstallPack(entry->second, update.fromKey);
+						Toasts::Push(Toasts::Kind::Success, "Updated " + name + " to " + update.toVersion,
+							"Your worlds and settings came along; the old version is being removed.");
+					} else {
+						Toasts::Push(Toasts::Kind::Success, "Updated " + name + " to " + update.toVersion,
+							update.removeOld ? "Your worlds and settings came along. The old version was kept because the game was running."
+							: "Your worlds and settings came along. The old version is still installed.");
+					}
+				});
+			});
+		};
 
 		// The optional-mods picker shown before installing a pack that has some (ATLauncher).
 		struct OptionalPicker {
@@ -2514,54 +2716,8 @@ int main(int argc, char** argv)
 								// One step: download, then extract into installs/<pack id>/ right away.
 								const char* label = hasState ? "Retry" : "Install";
 								AlignRightForButton(label);
-								if (ImGui::Button(label)) {
-									DownloadState started;
-									started.fileName = file.name;
-									started.pack = pack;
-									started.active = true;
-									{
-										std::lock_guard<std::mutex> lock(downloadsMutex);
-										downloads[file.url] = started;
-									}
-									const std::string url = file.url;
-									// Per-pack folder so same-named files from different packs don't collide.
-									const fs::path packDownloadDir = fs::path("downloads") / pack.id;
-									const std::string outputPath = (packDownloadDir / file.name).string();
-									StartWorker(workers, [&http, &downloads, &downloadsMutex, &shuttingDown, &uiQueue, &saveDownloads,
-										&startInstall, url, packDownloadDir, outputPath, pack]() {
-										std::string error;
-										std::error_code dirError;
-										fs::create_directories(packDownloadDir, dirError);
-										auto progress = [&](double total, double now) {
-											std::lock_guard<std::mutex> lock(downloadsMutex);
-											DownloadState& current = downloads[url];
-											current.total = total;
-											current.now = now;
-										};
-										const bool ok = http.DownloadToFile(url, outputPath, progress, &error, &shuttingDown);
-										{
-											std::lock_guard<std::mutex> lock(downloadsMutex);
-											DownloadState& current = downloads[url];
-											current.active = false;
-											if (ok) {
-												current.outPath = outputPath;
-												current.installing = !shuttingDown.load(); // extraction starts next frame
-											} else {
-												current.error = error;
-											}
-										}
-										if (ok)
-											uiQueue.Post([&saveDownloads]() { saveDownloads(); });
-										if (shuttingDown.load())
-											return; // the file stays downloaded; Install files on Downloads extracts it later
-										if (ok)
-											uiQueue.Post([&startInstall, url, pack, outputPath]() { startInstall(url, pack, outputPath); });
-										else
-											uiQueue.Post([packName = pack.name, error]() {
-												Toasts::Push(Toasts::Kind::Error, "Download failed", packName + ": " + error);
-											});
-									});
-								}
+								if (ImGui::Button(label))
+									startDownloadInstall(pack, file);
 								if (hasState && !state.error.empty())
 									ImGui::TextColored(Theme::C().error, "Download failed: %s", state.error.c_str());
 							} else if (state.active) {
@@ -2778,6 +2934,8 @@ int main(int argc, char** argv)
 					ImGui::SameLine(0.0f, S(14.0f));
 					ImGui::BeginGroup();
 					const bool hostable = canHostServer(pack);
+					const auto runningUpdate = packUpdates.find(packId);
+					const bool updating = runningUpdate != packUpdates.end();
 					ImGui::PushTextWrapPos(0.0f);
 					Widgets::Text(fonts.bold, Theme::kFontHeading, Theme::C().text, pack.name.c_str());
 					// With several installed versions, a dropdown picks the active one (what PLAY,
@@ -2793,7 +2951,7 @@ int main(int argc, char** argv)
 					std::string switchTo;
 					if (multipleVersions) {
 						ImGui::SetNextItemWidth(S(190.0f));
-						ImGui::BeginDisabled(play.busy);
+						ImGui::BeginDisabled(play.busy || updating);
 						if (Widgets::BeginSelect("##installed_version", pack.version.c_str())) {
 							for (const InstalledVersion& v : pack.installedVersions) {
 								ImGui::PushID(v.key.c_str());
@@ -2826,6 +2984,11 @@ int main(int argc, char** argv)
 					}
 					if (play.playing) {
 						ImGui::TextColored(Theme::C().accent, "Minecraft is running");
+					} else if (updating) {
+						Widgets::Spinner(Theme::C().accent);
+						ImGui::SameLine();
+						ImGui::TextDisabled(runningUpdate->second.copying ? "Copying your worlds and settings to %s"
+							: "Updating to %s (progress is on the Downloads page)", runningUpdate->second.toVersion.c_str());
 					} else if (play.busy) {
 						Widgets::Spinner(Theme::C().accent);
 						ImGui::SameLine();
@@ -2875,8 +3038,10 @@ int main(int argc, char** argv)
 						}
 						ImGui::SetItemTooltip("Content, changelog, logs, screenshots, versions and launch settings");
 						ImGui::SameLine();
+						ImGui::BeginDisabled(updating);
 						if (Widgets::PrimaryButton("  PLAY  "))
 							startPlay(pack);
+						ImGui::EndDisabled();
 					}
 					ImGui::PopFont();
 					if (play.busy && !play.playing && play.progress >= 0.0)
@@ -3569,6 +3734,13 @@ int main(int argc, char** argv)
 				// Packs the player made have no pack files to compare with, so they're never "modified".
 				const bool customPack = pack.source == PackSource::Custom;
 				context.canRepair = !customPack;
+				context.canUpdate = !customPack && pack.source != PackSource::LocalIndex;
+				if (const auto running = packUpdates.find(pack.id); running != packUpdates.end()) {
+					context.updating = true;
+					context.updateStatus = running->second.copying
+						? "Copying your worlds and settings to " + running->second.toVersion
+						: "Updating to " + running->second.toVersion + " (progress is on the Downloads page)";
+				}
 				context.changes = editing && !customPack ? &editing->contentChanges : nullptr;
 				if (!customPack)
 					context.recordChange = [&libraryPacks, &log, packId = pack.id, versionKey = editing ? editing->key : std::string()](
@@ -3604,6 +3776,7 @@ int main(int argc, char** argv)
 				case ManageAction::StopGame: stopConfirmPackId = pack.id; break;
 				case ManageAction::LaunchSettings: launchSettingsPackId = pack.id; break;
 				case ManageAction::Repair: startRepair(pack); break;
+				case ManageAction::Update: startUpdateCheck(pack); break;
 				case ManageAction::Server:
 					serverPackId = pack.id;
 					page = Page::Servers;
@@ -3944,11 +4117,11 @@ int main(int argc, char** argv)
 								ImGui::TextDisabled("%s", v.gameDir.c_str());
 						}
 						ImGui::Spacing();
-						bool busy = false;
+						bool busy = packUpdates.count(pack.id) > 0;
 						{
 							std::lock_guard<std::mutex> lock(playsMutex);
 							const auto play = plays.find(pack.id);
-							busy = play != plays.end() && play->second.busy;
+							busy = busy || (play != plays.end() && play->second.busy);
 						}
 						{
 							std::lock_guard<std::mutex> lock(downloadsMutex);
@@ -3991,6 +4164,92 @@ int main(int argc, char** argv)
 						ImGui::SameLine();
 						if (ImGui::Button("Keep it")) {
 							uninstallPackId.clear();
+							ImGui::CloseCurrentPopup();
+						}
+						ImGui::EndPopup();
+					}
+				}
+			}
+
+			if (!updateCheck.packId.empty()) {
+				const auto it = libraryPacks.find(updateCheck.packId);
+				if (it == libraryPacks.end()) {
+					updateCheck = UpdateCheck{};
+				} else {
+					ImGui::OpenPopup("Update pack");
+					ImGui::SetNextWindowSize(ImVec2(S(460.0f), 0.0f));
+					if (ImGui::BeginPopupModal("Update pack", nullptr, ImGuiWindowFlags_NoResize)) {
+						const Modpack pack = it->second;
+						const Modpack target = updateCheck.target;
+						const InstalledVersion* installed = target.id.empty() ? nullptr
+							: FindInstalledVersion(pack, VersionKey(target));
+						bool canUpdate = false;
+						if (updateCheck.loading) {
+							Widgets::Spinner(Theme::C().accent);
+							ImGui::SameLine();
+							ImGui::TextDisabled("Checking %s for the newest version...", PackSourceName(pack.source));
+						} else if (!updateCheck.error.empty()) {
+							ImGui::PushStyleColor(ImGuiCol_Text, Theme::C().error);
+							ImGui::TextWrapped("Couldn't check for updates: %s", updateCheck.error.c_str());
+							ImGui::PopStyleColor();
+						} else if (installed && installed->key == pack.activeVersion) {
+							ImGui::TextWrapped("%s %s is the newest version.", pack.name.c_str(), pack.version.c_str());
+						} else if (installed) {
+							ImGui::TextWrapped("The newest version, %s, is already installed. Make it active (the card's version "
+								"dropdown, or Installed versions on its Manage page) to play it.", target.version.c_str());
+						} else {
+							canUpdate = true;
+							std::string newest = target.version;
+							if (!target.gameVersion.empty())
+								newest += " (Minecraft " + target.gameVersion + ")";
+							ImGui::TextWrapped("Update %s from %s to %s?", pack.name.c_str(), pack.version.c_str(), newest.c_str());
+							ImGui::Spacing();
+							ImGui::TextWrapped("The new version is installed next to the current one. Your worlds, screenshots, "
+								"resource and shader packs, schematics, server list and game options are copied over. "
+								"Files the new version ships itself take their place.");
+							if (!target.gameVersion.empty() && !pack.gameVersion.empty() && target.gameVersion != pack.gameVersion) {
+								ImGui::PushStyleColor(ImGuiCol_Text, Theme::C().error);
+								ImGui::TextWrapped("The Minecraft version changes from %s to %s. Back up worlds you care about.",
+									pack.gameVersion.c_str(), target.gameVersion.c_str());
+								ImGui::PopStyleColor();
+							}
+							if (!pack.optionalMods.empty())
+								ImGui::TextDisabled("Your optional mod choices are kept.");
+							ImGui::Spacing();
+							ImGui::Checkbox(("Remove " + pack.version + " afterwards").c_str(), &updateCheck.removeOld);
+							ImGui::SetItemTooltip("Deletes the old version's folders once everything has been copied, "
+								"including its saves folder. Leave it off to keep the old version installed.");
+						}
+						bool busy = packUpdates.count(pack.id) > 0;
+						{
+							std::lock_guard<std::mutex> lock(playsMutex);
+							const auto play = plays.find(pack.id);
+							busy = busy || (play != plays.end() && (play->second.busy || play->second.playing));
+						}
+						{
+							std::lock_guard<std::mutex> lock(downloadsMutex);
+							for (const auto& [key, state] : downloads)
+								busy = busy || (state.pack.id == pack.id && (state.active || state.installing));
+						}
+						if (canUpdate && busy)
+							ImGui::TextColored(Theme::C().error, "Close the game and wait for downloads or installs of this pack to finish first.");
+						ImGui::Spacing();
+						if (canUpdate) {
+							ImGui::BeginDisabled(busy);
+							if (ImGui::Button("Update")) {
+								startUpdate(pack, target, updateCheck.removeOld);
+								updateCheck = UpdateCheck{};
+								ImGui::CloseCurrentPopup();
+							}
+							ImGui::EndDisabled();
+							ImGui::SameLine();
+						} else if (!updateCheck.loading && !updateCheck.error.empty()) {
+							if (ImGui::Button("Try again"))
+								startUpdateCheck(pack);
+							ImGui::SameLine();
+						}
+						if (ImGui::Button(canUpdate ? "Not now" : "Close")) {
+							updateCheck = UpdateCheck{};
 							ImGui::CloseCurrentPopup();
 						}
 						ImGui::EndPopup();

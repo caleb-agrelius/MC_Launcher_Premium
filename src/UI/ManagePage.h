@@ -30,6 +30,10 @@ struct ManagePageContext {
 	bool hasLaunchSettings = false; // the pack has its own launch settings
 	bool canHostServer = false;
 	bool canRepair = true;          // false for packs the player made (nothing to re-download)
+	bool canUpdate = false;         // the pack's source can be asked for its newest version
+	// An update is installing a newer version (main.cpp's packUpdates); updateStatus says how far.
+	bool updating = false;
+	std::string updateStatus;
 	double shownAt = 0.0; // when the page opened, for the entrance animation
 	// Play state.
 	bool playBusy = false;
@@ -55,6 +59,7 @@ enum class ManageAction {
 	StopGame,
 	LaunchSettings,
 	Repair,
+	Update,         // check the source for a newer version (the "Update pack" dialog)
 	Server,         // the pack's server on the Servers page
 	Uninstall,      // the whole pack (versionKey empty) or one version
 	SelectVersion,  // make versionKey the active version

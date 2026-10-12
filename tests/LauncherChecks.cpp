@@ -339,6 +339,44 @@ static void ServerRemoveChecks(const fs::path& dir)
 	Check(!RemoveServer(fs::path(server.root_path()), &error), "A drive root was accepted as a server folder");
 }
 
+// Updating a pack copies the player's worlds and options into the new version's game
+// folder, but not the old version's mods or configs, and never over the new version's files.
+static void PlayerDataChecks(const fs::path& dir)
+{
+	const fs::path from = dir / "update-from";
+	const fs::path to = dir / "update-to";
+	fs::remove_all(ExtendedPath(from));
+	fs::remove_all(ExtendedPath(to));
+	Write(from / "saves" / "World" / "level.dat", "world");
+	fs::path deep = from / "saves" / "World" / "data";
+	while (deep.native().size() < 300)
+		deep /= "nested-folder-name";
+	Write(LongPath(deep / "map.dat"), "deep");
+	Write(from / "screenshots" / "shot.png", "png");
+	Write(from / "servers.dat", "servers");
+	Write(from / "options.txt", "player options");
+	Write(from / "mods" / "old.jar", "old mod");
+	Write(from / "config" / "old.toml", "old config");
+	Write(to / "options.txt", "pack options");
+	Write(to / "mods" / "new.jar", "new mod");
+
+	std::size_t copied = 0;
+	std::string error;
+	Check(CarryOverPlayerData(from, to, copied, &error), error);
+	Check(copied == 4, "Expected 4 copied files, got " + std::to_string(copied));
+	Check(Read(to / "saves" / "World" / "level.dat") == "world", "World was not copied");
+	const fs::path deepCopy = to / deep.lexically_relative(from) / "map.dat";
+	Check(fs::exists(LongPath(deepCopy)), "Deeply nested world file was not copied");
+	Check(Read(to / "screenshots" / "shot.png") == "png" && Read(to / "servers.dat") == "servers",
+		"Screenshots or server list were not copied");
+	Check(Read(to / "options.txt") == "pack options", "The new version's options were overwritten");
+	Check(!fs::exists(to / "mods" / "old.jar") && !fs::exists(to / "config"), "Old mods or configs were copied");
+	Check(CarryOverPlayerData(from, to, copied, &error) && copied == 0, "A second run copied files again");
+	Check(CarryOverPlayerData(dir / "missing", to, copied, &error) && copied == 0, "A missing old folder failed");
+	fs::remove_all(ExtendedPath(from));
+	fs::remove_all(ExtendedPath(to));
+}
+
 // Every color ImGui draws with comes from the theme: none may keep ImGui's stock value
 // (e.g. the default blue of dialog title bars and tabs). Needs an ImGui context.
 static void ThemeColorChecks()
@@ -688,6 +726,7 @@ int main(int argc, char** argv)
 		WholePackServerChecks(dir, executable);
 		DockerChecks(dir);
 		ServerRemoveChecks(dir);
+		PlayerDataChecks(dir);
 		TextChecks();
 		CardChecks();
 		ProcessChecks(dir, executable);

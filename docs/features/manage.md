@@ -11,7 +11,7 @@ A full page for one My Library pack, opened with **Manage** on its Library card.
 - The pack's banner, then chips with the number of mods, resource packs, shader packs, worlds (folders in `saves/`) and screenshots, and when it was last played (the time of `logs/latest.log`). Then the pack's summary.
 - **Installed versions:** every version with its Minecraft version and loaders. The active one has an **Active** chip, and changed ones a **Modified** chip; the others have **Make active**.
 - **Your changes** (only when the active version is modified): see [Your changes](#your-changes). Each has **Uninstall...** (the whole pack when it's the only version). Disabled while the pack is being played or prepared.
-- **Manage:** the game folder and pack files folder as read-only, selectable paths with **Open**, then **Launch settings...** (the per-pack dialog, labeled "(custom)" when the pack has its own), **Repair files** (not for packs the player made), **Host a server** (when the pack can be hosted; opens it on Servers) and **Uninstall...**. These are the actions My Library's old Manage menu had; see [library.md](library.md) for what they do.
+- **Manage:** the game folder and pack files folder as read-only, selectable paths with **Open**, then **Launch settings...** (the per-pack dialog, labeled "(custom)" when the pack has its own), **Update...** (`ManageAction::Update`; not for the local index or packs the player made), **Repair files** (not for packs the player made), **Host a server** (when the pack can be hosted; opens it on Servers) and **Uninstall...**. These are the actions My Library's old Manage menu had; see [library.md](library.md) for what they do, and [Updating a pack](library.md#updating-a-pack) for **Update...**. While an update runs, the header shows its progress and PLAY waits for it.
 
 ## Content
 - Sub-tabs for **Mods**, **Resource packs** and **Shader packs**, each from its folder in the game folder (`mods/`, `resourcepacks/`, `shaderpacks/`). A filter box matches names and file names; **Browse Modrinth**, **Add files...**, **Open folder** and **Refresh** sit beside it.
@@ -51,7 +51,7 @@ Adding a file, removing one, or switching one on or off records a change on the 
   - **Discover:** a chip beside "Installed".
   - **Servers:** "modified pack" in the list and "(installed, modified)" as the pack version.
   - The chip's tooltip lists the counts (`DescribeContentChanges`, e.g. "1 added, 1 turned off").
-- **Keeping changes:** PLAY, **Repair files** and reinstalling the version keep the changes. See [launching.md](launching.md) and [pack-sources.md](pack-sources.md).
+- **Keeping changes:** PLAY, **Repair files** and reinstalling the version keep the changes. **Update...** installs a new version, which starts without them (the player's resource and shader packs are copied over with their worlds). See [launching.md](launching.md) and [pack-sources.md](pack-sources.md).
   - Removed pack files aren't downloaded again, and files with a `.disabled` copy aren't either.
   - After the pack's files are in place, `ApplyContentChanges` deletes removed files again and switches files back, in case a pack update or override brought them back.
   - Reinstalling the same version (`PlanInstalledVersion`, `AddInstalledVersion`) keeps the version's changes.

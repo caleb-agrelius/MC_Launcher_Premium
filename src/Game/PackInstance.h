@@ -72,3 +72,17 @@ bool PrepareInstance(HttpClient& http,
 					 const ProgressFn& progress,
 					 std::string* err,
 					 const std::atomic<bool>* cancel);
+
+// What an update carries from the old version's game folder to the new one's: worlds,
+// screenshots, the player's resource/shader packs and schematics, the server list, and
+// game options. Paths are relative to the game folder.
+const std::vector<std::string>& PlayerDataPaths();
+
+// Copies PlayerDataPaths() from fromGameDir into toGameDir. Files that already exist in
+// toGameDir are kept (the new version's own files win). copied counts files copied.
+// Fails on the first file that can't be copied.
+bool CarryOverPlayerData(const std::filesystem::path& fromGameDir,
+						 const std::filesystem::path& toGameDir,
+						 std::size_t& copied,
+						 std::string* err,
+						 const std::atomic<bool>* cancel = nullptr);

@@ -525,8 +525,11 @@ ManageRequest ManagePage::DrawHeader(const ManagePageContext& context)
 		if (ImGui::Button(label))
 			request.action = ManageAction::CancelPlay;
 		ImGui::EndDisabled();
-	} else if (Widgets::PrimaryButton(label)) {
-		request.action = ManageAction::Play;
+	} else {
+		ImGui::BeginDisabled(context.updating);
+		if (Widgets::PrimaryButton(label))
+			request.action = ManageAction::Play;
+		ImGui::EndDisabled();
 	}
 	ImGui::PopFont();
 
@@ -538,6 +541,10 @@ ManageRequest ManagePage::DrawHeader(const ManagePageContext& context)
 		ImGui::TextDisabled("%s", context.playStep.c_str());
 		if (context.playProgress >= 0.0)
 			Widgets::ThinProgressBar(static_cast<float>(context.playProgress));
+	} else if (context.updating) {
+		Widgets::Spinner(Theme::C().accent);
+		ImGui::SameLine();
+		ImGui::TextDisabled("%s", context.updateStatus.c_str());
 	} else if (!context.playError.empty()) {
 		Widgets::WrappedText(Theme::C().error, context.playError.c_str());
 	}
@@ -597,7 +604,7 @@ ManageRequest ManagePage::DrawOverview(const ManagePageContext& context)
 		const char* uninstall = "Uninstall...";
 		const float buttons = Widgets::ButtonWidth(uninstall) + (active ? 0.0f : Widgets::ButtonWidth("Make active") + ImGui::GetStyle().ItemSpacing.x);
 		ImGui::SameLine(std::max(ImGui::GetCursorPosX(), ImGui::GetWindowContentRegionMax().x - buttons));
-		ImGui::BeginDisabled(context.playBusy);
+		ImGui::BeginDisabled(context.playBusy || context.updating);
 		if (!active) {
 			if (ImGui::Button("Make active"))
 				request = { ManageAction::SelectVersion, v.key };
@@ -617,7 +624,7 @@ ManageRequest ManagePage::DrawOverview(const ManagePageContext& context)
 		Widgets::BeginCard("manage_changes");
 		Widgets::SectionLabel("YOUR CHANGES");
 		const std::string summary = "You changed this version: " + DescribeContentChanges(*context.changes) +
-			". Your changes are kept when you play, repair or update it.";
+			". Your changes are kept when you play or repair it. Updating installs a new version without them.";
 		Widgets::WrappedText(Theme::C().text, summary.c_str());
 		ImGui::Spacing();
 		ImGui::PushFont(nullptr, Theme::kFontSmall);
@@ -630,7 +637,7 @@ ManageRequest ManagePage::DrawOverview(const ManagePageContext& context)
 		}
 		ImGui::PopFont();
 		ImGui::Spacing();
-		ImGui::BeginDisabled(context.playBusy);
+		ImGui::BeginDisabled(context.playBusy || context.updating);
 		if (m_confirmUndo) {
 			ImGui::AlignTextToFramePadding();
 			ImGui::TextUnformatted("Delete the files you added and restore the pack's own?");
@@ -674,9 +681,18 @@ ManageRequest ManagePage::DrawOverview(const ManagePageContext& context)
 	if (ImGui::Button(context.hasLaunchSettings ? "Launch settings (custom)..." : "Launch settings..."))
 		request.action = ManageAction::LaunchSettings;
 	ImGui::SetItemTooltip("Memory, Java and window options for this pack only");
+	if (context.canUpdate) {
+		ImGui::SameLine();
+		ImGui::BeginDisabled(context.updating);
+		if (ImGui::Button("Update..."))
+			request.action = ManageAction::Update;
+		ImGui::EndDisabled();
+		ImGui::SetItemTooltip("Install the newest version from %s and bring your worlds and settings along",
+			PackSourceName(pack.source));
+	}
 	if (context.canRepair) {
 		ImGui::SameLine();
-		ImGui::BeginDisabled(context.playBusy);
+		ImGui::BeginDisabled(context.playBusy || context.updating);
 		if (ImGui::Button("Repair files"))
 			request.action = ManageAction::Repair;
 		ImGui::EndDisabled();
@@ -689,7 +705,7 @@ ManageRequest ManagePage::DrawOverview(const ManagePageContext& context)
 		ImGui::SetItemTooltip("Set up and run this pack as a server on the Servers page");
 	}
 	ImGui::SameLine();
-	ImGui::BeginDisabled(context.playBusy);
+	ImGui::BeginDisabled(context.playBusy || context.updating);
 	if (Widgets::DangerButton(pack.installedVersions.size() > 1 ? "Uninstall all versions..." : "Uninstall..."))
 		request = { ManageAction::Uninstall, std::string() };
 	ImGui::EndDisabled();
