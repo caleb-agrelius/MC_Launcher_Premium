@@ -1,6 +1,8 @@
 #include "Launcher.h"
 
 #include "Game/GameOptions.h"
+#include "Game/InstanceContent.h"
+#include "Game/JavaFinder.h"
 #include "Game/Loaders.h"
 #include "Game/PackInstance.h"
 #include "Network/HttpClient.h"
@@ -9,6 +11,7 @@
 #include <algorithm>
 #include <fstream>
 #include <map>
+#include <set>
 #include <sstream>
 
 namespace fs = std::filesystem;
@@ -102,7 +105,7 @@ static bool CustomJava(const std::string& setting, fs::path& javaw, fs::path& ja
 	if (fs::is_directory(chosen, ec)) // a JDK/JRE folder or its bin/
 		chosen = fs::is_directory(chosen / "bin", ec) ? chosen / "bin" / "javaw.exe" : chosen / "javaw.exe";
 	if (!fs::is_regular_file(chosen, ec)) {
-		if (err) *err = "The Java set in Settings > Minecraft wasn't found: " + setting;
+		if (err) *err = "The Java chosen in the launch settings wasn't found: " + setting;
 		return false;
 	}
 	const fs::path dir = chosen.parent_path();
@@ -311,7 +314,15 @@ static bool InstallAndLaunch(HttpClient& http, const PlayRequest& request, const
 	if (!request.launch.javaPath.empty()) {
 		if (!CustomJava(request.launch.javaPath, javaw, javaConsole, err))
 			return false;
+	} else if (const std::vector<JavaInstall> installs = FindJavaInstalls(root);
+			const JavaInstall* installed = PickJava(installs, vanilla.javaMajor)) {
+		// Automatic: an installed Java with the major version this Minecraft needs.
+		javaw = installed->javaw;
+		javaConsole = installed->java;
+		if (progress)
+			progress("Using " + JavaLabel(*installed), -1.0);
 	} else {
+		// None installed: Mojang's runtime for this version, downloaded once.
 		if (!InstallJavaRuntime(http, root, vanilla.javaComponent, true, javaw, progress, err, cancel))
 			return false;
 		javaConsole = javaw.parent_path() / (javaw.extension() == ".exe" ? "java.exe" : "java");
@@ -339,6 +350,16 @@ static bool InstallAndLaunch(HttpClient& http, const PlayRequest& request, const
 	return LaunchVersion(request, version, javaw, progress, err, cancel);
 }
 
+// Drops the pack files the player removed from the index, so they aren't downloaded again.
+static void SkipRemovedContent(MrpackIndex& index, const ContentChanges& changes)
+{
+	const std::set<std::string> removed = RemovedContent(changes);
+	if (removed.empty())
+		return;
+	index.files.erase(std::remove_if(index.files.begin(), index.files.end(),
+		[&](const DownloadJob& file) { return removed.count(file.path.generic_u8string()) > 0; }), index.files.end());
+}
+
 bool RepairModpack(HttpClient& http, const PlayRequest& request, const ProgressFn& progress, std::string* err,
 	const std::atomic<bool>* cancel)
 {
@@ -347,7 +368,11 @@ bool RepairModpack(HttpClient& http, const PlayRequest& request, const ProgressF
 	MrpackIndex index;
 	if (!ReadMrpackIndex(request.extractedDir, index, err))
 		return false;
-	return RepairInstance(http, request.extractedDir, request.instanceDir, index, progress, err, cancel);
+	SkipRemovedContent(index, request.contentChanges);
+	if (!RepairInstance(http, request.extractedDir, request.instanceDir, index, progress, err, cancel))
+		return false;
+	ApplyContentChanges(request.instanceDir, request.contentChanges);
+	return true;
 }
 
 bool PlayModpack(HttpClient& http, const PlayRequest& request, const ProgressFn& progress, std::string* err,
@@ -372,7 +397,10 @@ bool PlayModpack(HttpClient& http, const PlayRequest& request, const ProgressFn&
 	MrpackIndex index;
 	if (!ReadMrpackIndex(request.extractedDir, index, err))
 		return false;
+	SkipRemovedContent(index, request.contentChanges);
 	if (!PrepareInstance(http, request.extractedDir, request.instanceDir, index, progress, err, cancel))
 		return false;
+	// A new pack version's overrides can bring back files the player removed or switched.
+	ApplyContentChanges(request.instanceDir, request.contentChanges);
 	return InstallAndLaunch(http, request, index.minecraftVersion, index.loader, index.loaderVersion, progress, err, cancel);
 }

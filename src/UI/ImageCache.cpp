@@ -15,6 +15,10 @@
 
 #include <algorithm>
 #include <cstring>
+#include <fstream>
+#include <iterator>
+
+static const char* kFilePrefix = "file:";
 
 // Larger images (raw gallery uploads can be 4K+) are downscaled before upload.
 static constexpr int kMaxTextureSide = 2048;
@@ -25,8 +29,9 @@ static bool IsWebP(const std::string& data)
 		std::memcmp(data.data() + 8, "WEBP", 4) == 0;
 }
 
-// Decodes data to 8-bit RGBA, downscaling so neither side exceeds kMaxTextureSide.
-static bool DecodeImage(const std::string& data, int& width, int& height, std::vector<std::uint8_t>& rgba)
+// Decodes data to 8-bit RGBA, downscaling so neither side exceeds maxSide.
+static bool DecodeImage(const std::string& data, int& width, int& height, std::vector<std::uint8_t>& rgba,
+	int maxSide = kMaxTextureSide)
 {
 	const auto* bytes = reinterpret_cast<const std::uint8_t*>(data.data());
 	std::uint8_t* pixels = nullptr;
@@ -42,9 +47,9 @@ static bool DecodeImage(const std::string& data, int& width, int& height, std::v
 		return false;
 
 	const int largest = width > height ? width : height;
-	if (largest > kMaxTextureSide) {
-		const int newWidth = std::max(1, static_cast<int>(static_cast<long long>(width) * kMaxTextureSide / largest));
-		const int newHeight = std::max(1, static_cast<int>(static_cast<long long>(height) * kMaxTextureSide / largest));
+	if (largest > maxSide) {
+		const int newWidth = std::max(1, static_cast<int>(static_cast<long long>(width) * maxSide / largest));
+		const int newHeight = std::max(1, static_cast<int>(static_cast<long long>(height) * maxSide / largest));
 		rgba.resize(static_cast<std::size_t>(newWidth) * newHeight * 4);
 		stbir_resize_uint8_srgb(pixels, width, height, 0, rgba.data(), newWidth, newHeight, 0, STBIR_RGBA);
 		width = newWidth;
@@ -132,6 +137,23 @@ void ImageCache::Update(double now)
 	}
 }
 
+std::string ImageCache::FileKey(const std::filesystem::path& path, int maxSide)
+{
+	return std::string(kFilePrefix) + std::to_string(std::max(0, maxSide)) + ":" + path.u8string();
+}
+
+void ImageCache::Forget(const std::string& key)
+{
+	const auto it = m_entries.find(key);
+	if (it == m_entries.end() || it->second.status == Status::Queued)
+		return; // a queued load finishes first; forget it afterwards
+	if (it->second.status == Status::Ready) {
+		const GLuint texture = static_cast<GLuint>(it->second.image.texture);
+		glDeleteTextures(1, &texture);
+	}
+	m_entries.erase(it);
+}
+
 void ImageCache::Shutdown()
 {
 	if (m_stopping.exchange(true))
@@ -168,8 +190,24 @@ void ImageCache::WorkerLoop()
 		Decoded result;
 		result.url = url;
 		std::string body;
-		if (m_http.Get(url, body, nullptr, &m_stopping)) {
-			if (!DecodeImage(body, result.width, result.height, result.rgba))
+		int maxSide = kMaxTextureSide;
+		bool loaded = false;
+		if (url.rfind(kFilePrefix, 0) == 0) {
+			// "file:<max side>:<utf-8 path>", from FileKey.
+			const std::size_t colon = url.find(':', std::strlen(kFilePrefix));
+			if (colon != std::string::npos) {
+				const int wanted = std::atoi(url.c_str() + std::strlen(kFilePrefix));
+				if (wanted > 0)
+					maxSide = std::min(wanted, kMaxTextureSide);
+				std::ifstream in(std::filesystem::u8path(url.substr(colon + 1)), std::ios::binary);
+				body.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+				loaded = !body.empty();
+			}
+		} else {
+			loaded = m_http.Get(url, body, nullptr, &m_stopping);
+		}
+		if (loaded) {
+			if (!DecodeImage(body, result.width, result.height, result.rgba, maxSide))
 				result.rgba.clear();
 		}
 

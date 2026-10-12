@@ -6,7 +6,9 @@
 #include <windows.h>
 #endif
 
+#include <chrono>
 #include <fstream>
+#include <vector>
 
 namespace fs = std::filesystem;
 
@@ -56,6 +58,44 @@ static std::string LastErrorText(const std::string& what)
 {
 	return what +" (Windows error " + std::to_string(GetLastError()) + ")";
 }
+
+// Starts a hidden child with the given standard handles. Only those handles are inherited:
+// without the list, a child gets every inheritable handle the launcher has open at that
+// moment, such as another child's pipe or log, which keeps that pipe open after its own
+// process exits and stalls whoever reads it.
+static bool StartChild(std::wstring& commandLine, const std::wstring& dir, HANDLE input, HANDLE output,
+	PROCESS_INFORMATION& process)
+{
+	HANDLE handles[2];
+	DWORD handleCount = 0;
+	if (input && input != INVALID_HANDLE_VALUE)
+		handles[handleCount++] = input;
+	handles[handleCount++] = output;
+
+	SIZE_T attributeSize = 0;
+	InitializeProcThreadAttributeList(nullptr, 1, 0, &attributeSize);
+	std::vector<char> attributeBuffer(attributeSize);
+	auto attributes = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attributeBuffer.data());
+	if (!InitializeProcThreadAttributeList(attributes, 1, 0, &attributeSize))
+		return false;
+	const bool listed = UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, handles,
+		handleCount * sizeof(HANDLE), nullptr, nullptr) != FALSE;
+
+	STARTUPINFOEXW startup{};
+	startup.StartupInfo.cb = sizeof(startup);
+	startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+	startup.StartupInfo.hStdInput = (input && input != INVALID_HANDLE_VALUE) ? input : nullptr;
+	startup.StartupInfo.hStdOutput = output;
+	startup.StartupInfo.hStdError = output;
+	startup.lpAttributeList = listed ? attributes : nullptr;
+	const BOOL started = CreateProcessW(nullptr, commandLine.data(), nullptr, nullptr, TRUE,
+		CREATE_NO_WINDOW | (listed ? EXTENDED_STARTUPINFO_PRESENT : 0), nullptr, dir.empty() ? nullptr : dir.c_str(),
+		&startup.StartupInfo, &process);
+	const DWORD error = GetLastError();
+	DeleteProcThreadAttributeList(attributes);
+	SetLastError(error);
+	return started != FALSE;
+}
 #endif
 
 bool RunProcess(const std::vector<std::string>& args,
@@ -88,16 +128,8 @@ bool RunProcess(const std::vector<std::string>& args,
 	}
 	HANDLE nul = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &inherit, OPEN_EXISTING, 0, nullptr);
 
-	STARTUPINFOW startup{};
-	startup.cb = sizeof(startup);
-	startup.dwFlags = STARTF_USESTDHANDLES;
-	startup.hStdInput = nul;
-	startup.hStdOutput = log;
-	startup.hStdError = log;
 	PROCESS_INFORMATION process{};
-	const std::wstring dir = workDir.wstring();
-	const BOOL started = CreateProcessW(nullptr, commandLine.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW,
-		nullptr, dir.empty() ? nullptr : dir.c_str(), &startup, &process);
+	const bool started = StartChild(commandLine, workDir.wstring(), nul, log, process);
 	const std::string startError = started ? std::string() : LastErrorText("Couldn't start " + args[0]);
 	CloseHandle(log);
 	if (nul != INVALID_HANDLE_VALUE)
@@ -149,8 +181,18 @@ ServerProcess::~ServerProcess()
 		CloseHandle(static_cast<HANDLE>(m_input));
 	m_input = nullptr;
 #endif
-	if (m_reader.joinable())
+	if (m_reader.joinable()) {
+#ifdef _WIN32
+		// The reader ends when every copy of the pipe's write end is closed. A process the
+		// server started itself can still hold one after the server is gone, so stop waiting.
+		const HANDLE reader = static_cast<HANDLE>(m_reader.native_handle());
+		while (!m_readerDone.load()) {
+			CancelSynchronousIo(reader);
+			std::this_thread::sleep_for(std::chrono::milliseconds(20));
+		}
+#endif
 		m_reader.join();
+	}
 #ifdef _WIN32
 	if (m_output)
 		CloseHandle(static_cast<HANDLE>(m_output));
@@ -187,16 +229,8 @@ bool ServerProcess::Start(const std::vector<std::string>& args, const fs::path& 
 	SetHandleInformation(inputWrite, HANDLE_FLAG_INHERIT, 0);
 	SetHandleInformation(outputRead, HANDLE_FLAG_INHERIT, 0);
 
-	STARTUPINFOW startup{};
-	startup.cb = sizeof(startup);
-	startup.dwFlags = STARTF_USESTDHANDLES;
-	startup.hStdInput = inputRead;
-	startup.hStdOutput = outputWrite;
-	startup.hStdError = outputWrite;
 	PROCESS_INFORMATION process{};
-	const std::wstring dir = workDir.wstring();
-	const BOOL started = CreateProcessW(nullptr, commandLine.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW,
-		nullptr, dir.empty() ? nullptr : dir.c_str(), &startup, &process);
+	const bool started = StartChild(commandLine, workDir.wstring(), inputRead, outputWrite, process);
 	const std::string startError = started ? std::string() : LastErrorText("Couldn't start " + args[0]);
 	CloseHandle(inputRead);
 	CloseHandle(outputWrite);
@@ -254,6 +288,7 @@ void ServerProcess::ReadOutput()
 			m_lines.pop_front();
 	}
 #endif
+	m_readerDone.store(true);
 }
 
 bool ServerProcess::Running() const
@@ -313,6 +348,12 @@ bool ServerProcess::WaitForExit(int timeoutMs)
 	(void)timeoutMs;
 	return true;
 #endif
+}
+
+std::uint64_t ServerProcess::TotalLines() const
+{
+	std::lock_guard<std::mutex> lock(m_mutex);
+	return m_totalLines;
 }
 
 std::vector<std::string> ServerProcess::Lines(std::uint64_t* total) const

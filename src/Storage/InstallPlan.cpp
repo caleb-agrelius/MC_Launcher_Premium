@@ -4,6 +4,7 @@
 #include "Storage/Installer.h"
 #include "Util/Hash.h"
 #include "Util/Paths.h"
+#include "Util/Text.h"
 
 #include <nlohmann/json.hpp>
 
@@ -16,13 +17,6 @@
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
-
-static std::string ToLower(std::string text)
-{
-	std::transform(text.begin(), text.end(), text.begin(),
-		[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-	return text;
-}
 
 // Checks a file on disk against the plan's hash, or its size when there's no hash.
 // Returns an empty string when it matches, else a description of the mismatch.
@@ -131,6 +125,15 @@ bool RunInstallPlan(HttpClient& http,
 		if (!IsSafeRelativePath(file.relPath)) {
 			if (err) *err = "Unsafe path in pack manifest: " + file.relPath;
 			return false;
+		}
+		if (!file.extract) {
+			// The player removed or turned off this file.
+			const fs::path relative = fs::path(fs::u8path(file.relPath)).lexically_normal();
+			fs::path disabled = gameDir / relative;
+			disabled += ".disabled";
+			std::error_code existsError;
+			if (plan.skipFiles.count(relative.generic_u8string()) > 0 || fs::exists(disabled, existsError))
+				continue;
 		}
 		if (file.url.empty())
 			blocked.push_back(file);

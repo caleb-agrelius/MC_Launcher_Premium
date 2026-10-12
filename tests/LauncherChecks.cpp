@@ -1,7 +1,11 @@
+#include "Game/InstanceContent.h"
+#include "Game/JavaFinder.h"
+#include "Game/PackCreator.h"
 #include "Game/PackInstance.h"
 #include "Game/ServerSetup.h"
 #include "Network/HttpClient.h"
 #include "Platform.h"
+#include "Storage/Library.h"
 #include "Storage/Settings.h"
 #include "UI/Theme.h"
 #include "UI/Widgets.h"
@@ -11,6 +15,9 @@
 #include "Util/Text.h"
 #include "imgui_internal.h"
 
+#include <miniz/miniz.h>
+
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <fstream>
@@ -47,12 +54,15 @@ static void SettingsChecks(const fs::path& dir)
 	Settings settings;
 	settings.window = { true, -1400, 120, 1280, 760, true };
 	settings.discoverSources = { "modrinth", "ftb" };
+	settings.paneWidths = { { "discover", 412.0f }, { "servers", 5.0f } };
 	Check(SaveSettings(path.string(), settings), "Settings save failed");
 	const Settings restored = LoadSettings(path.string());
 	Check(restored.window.saved && restored.window.x == -1400 && restored.window.y == 120 &&
 		restored.window.width == 1280 && restored.window.height == 760 && restored.window.maximized,
 		"Window placement did not round-trip");
 	Check(restored.discoverSources == settings.discoverSources, "Discover filters did not round-trip");
+	Check(restored.paneWidths.size() == 2 && restored.paneWidths.at("discover") == 412.0f &&
+		restored.paneWidths.at("servers") == kMinPaneWidth, "Pane widths did not round-trip within limits");
 	Write(path, R"({"window":{"width":0,"height":760}})");
 	Check(!LoadSettings(path.string()).window.saved, "Invalid placement was accepted");
 	Check(!LoadSettings((dir / "missing.json").string()).window.saved, "Missing settings changed defaults");
@@ -94,8 +104,28 @@ static void ServerChecks(const fs::path& dir, const fs::path& executable)
 	while ((request.serverDir / deepOverride).native().size() < 280)
 		deepOverride /= "modpack_defaults";
 	Write(LongPath(fs::absolute(request.extractedDir / "overrides" / deepOverride / "deep.cfg")), "deep");
+
+	// Playing copies the same overrides into the client's game folder.
+	const fs::path instanceDir = dir / "instance";
+	Write(instanceDir / "mods/shared.jar", "stub");
+	Write(instanceDir / "mods/client.jar.disabled", "stub"); // turned off: not downloaded again
+	Check(PrepareInstance(http, request.extractedDir, instanceDir, client, {}, &error, nullptr), error);
+	Check(!fs::exists(instanceDir / "mods/client.jar"), "A mod the player turned off was downloaded again");
+	Check(Read(LongPath(fs::absolute(instanceDir / deepOverride / "deep.cfg"))) == "deep" &&
+		Read(instanceDir / "client.txt") == "client only", "Deep client override was not copied");
 	ServerInfo info;
+	Write(instanceDir / "mods/added.jar", "mine");
+	request.addedMods = { instanceDir / "mods/added.jar" };
+	fs::remove(request.serverDir / "mods/server.jar");
+	request.removedFiles = { "mods/server.jar" }; // its URL is unusable, so downloading it would fail
 	Check(SetupServer(http, request, info, {}, &error, nullptr), error);
+	Check(Read(request.serverDir / "mods/added.jar") == "mine" && !fs::exists(request.serverDir / "mods/server.jar") &&
+		!info.notes.empty() && info.notes.back().find("added.jar") != std::string::npos,
+		"The player's added and removed mods didn't reach the server");
+	fs::remove(request.serverDir / "mods/added.jar");
+	Write(request.serverDir / "mods/server.jar", "stub");
+	request.addedMods.clear();
+	request.removedFiles.clear();
 	Check(Read(LongPath(fs::absolute(request.serverDir / deepOverride / "deep.cfg"))) == "deep", "Deep override was not copied");
 	Check(Read(request.serverDir / "config/shared.txt") == "server", "Server override did not win");
 	Check(!fs::exists(request.serverDir / "client.txt") && !fs::exists(request.serverDir / "mods/client.jar"),
@@ -104,6 +134,9 @@ static void ServerChecks(const fs::path& dir, const fs::path& executable)
 		"Server launch info was not saved");
 	Check(ServerCommand(info, 6144)[1] == "-Xmx6144M", "Server memory was not applied");
 	Check(!EulaAccepted(request.serverDir), "EULA was accepted without consent");
+	Check(!ServerUsesDocker(request.serverDir) && SetServerUsesDocker(request.serverDir, true, &error) &&
+		ServerUsesDocker(request.serverDir) && SetServerUsesDocker(request.serverDir, false, &error) &&
+		!ServerUsesDocker(request.serverDir), "The Docker switch didn't round-trip");
 	Check(AcceptEula(request.serverDir, &error) && EulaAccepted(request.serverDir), "EULA acceptance failed");
 	Write(request.serverDir / "server.properties", "# keep me\ncustom-setting=yes\nserver-port=25565\n");
 	ServerProperties props;
@@ -113,6 +146,9 @@ static void ServerChecks(const fs::path& dir, const fs::path& executable)
 	Check(WriteServerProperties(request.serverDir, props, &error), "Properties write failed");
 	Check(ReadServerProperties(request.serverDir).port == 25570 && !ReadServerProperties(request.serverDir).onlineMode &&
 		ReadServerProperties(request.serverDir).serverIp == "100.64.1.2", "Properties did not round-trip");
+	Check(IsValidServerIp("localhost") && IsValidServerIp("LocalHost") && IsLoopbackServerIp("localhost") &&
+		IsLoopbackServerIp("127.0.0.1") && !IsLoopbackServerIp("192.168.1.20") && !IsLoopbackServerIp(""),
+		"localhost wasn't accepted as a loopback host IP");
 	Check(IsValidServerIp("") && IsValidServerIp("192.168.1.20") && IsValidServerIp("10.0.0.255"),
 		"A valid host IP was rejected");
 	Check(!IsValidServerIp("256.1.1.1") && !IsValidServerIp("192.168.1") && !IsValidServerIp("my-pc") &&
@@ -425,18 +461,257 @@ static void ProcessChecks(const fs::path& dir, const fs::path& executable)
 	Check(log.find("argument with spaces") != std::string::npos && log.find("received:say hello") != std::string::npos &&
 		log.find("received:stop") != std::string::npos, "Console input, output or argument quoting failed");
 	Check(!process.Lines().empty(), "Console did not collect lines");
+
+	// Cancelling a running program returns promptly and, with killOnCancel, ends it.
+	std::atomic<bool> cancel{ false };
+	std::thread canceller([&cancel]() {
+		std::this_thread::sleep_for(std::chrono::milliseconds(300));
+		cancel.store(true);
+	});
+	const auto started = std::chrono::steady_clock::now();
+	int exitCode = 0;
+	const bool ran = RunProcess({ executable.string(), "--sleep-fixture", "20" }, dir, dir / "sleep.log", true, &exitCode,
+		&error, &cancel, true);
+	canceller.join();
+	Check(!ran && error == "Cancelled" && std::chrono::steady_clock::now() - started < std::chrono::seconds(3),
+		"Cancelling a running program did not return promptly");
+
+	// A program the server starts must not get the server's console pipe, or the console
+	// would never see the server exit while that program runs.
+	{
+		const auto stopping = std::chrono::steady_clock::now();
+		{
+			ServerProcess server;
+			Check(server.Start({ executable.string(), "--console-fixture", "parent" }, dir, dir / "parent.log", &error), error);
+			server.Send("spawn");
+			server.Send("stop");
+			Check(server.WaitForExit(5000), "Console process with a child did not stop");
+			for (int attempt = 0; attempt < 200; ++attempt) {
+				const std::vector<std::string> lines = server.Lines();
+				if (!lines.empty() && lines.back() == "received:stop")
+					break;
+				std::this_thread::sleep_for(std::chrono::milliseconds(10));
+			}
+		}
+		Check(std::chrono::steady_clock::now() - stopping < std::chrono::seconds(4),
+			"Console reader waited on a child that inherited its pipe");
+	}
 #endif
+}
+
+// A jar holding the given entries, written with miniz.
+static void WriteJar(const fs::path& path, const std::vector<std::pair<std::string, std::string>>& entries)
+{
+	fs::create_directories(path.parent_path());
+	mz_zip_archive zip{};
+	Check(mz_zip_writer_init_heap(&zip, 0, 0) != 0, "Could not start a jar");
+	for (const auto& [name, text] : entries)
+		Check(mz_zip_writer_add_mem(&zip, name.c_str(), text.data(), text.size(), MZ_DEFAULT_COMPRESSION) != 0, "Could not add " + name);
+	void* data = nullptr;
+	std::size_t size = 0;
+	Check(mz_zip_writer_finalize_heap_archive(&zip, &data, &size) != 0, "Could not finish a jar");
+	Write(path, std::string(static_cast<const char*>(data), size));
+	mz_zip_writer_end(&zip);
+}
+
+// Manage > Content: listing, switching off and on, removing, and reading mod names from jars.
+// Automatic Java: version parsing, finding Java homes in folders, and picking per Minecraft version.
+static void JavaChecks(const fs::path& dir)
+{
+	Check(JavaMajorVersion("1.8.0_382") == 8 && JavaMajorVersion("17.0.8") == 17 && JavaMajorVersion("21") == 21 &&
+		JavaMajorVersion("25-ea") == 25 && JavaMajorVersion("") == 0 && JavaMajorVersion("abc") == 0,
+		"Java major versions parsed wrong");
+
+	const fs::path javas = dir / "javas";
+	auto fakeJava = [&](const std::string& folder, const std::string& release) {
+		Write(javas / folder / "bin" / "java.exe", "stub");
+		Write(javas / folder / "bin" / "javaw.exe", "stub");
+		if (!release.empty())
+			Write(javas / folder / "release", release);
+	};
+	fakeJava("jdk-17.0.2", "JAVA_VERSION=\"17.0.8\"\nIMPLEMENTOR=\"Eclipse Adoptium\"\nOS_ARCH=\"x86_64\"\n");
+	fakeJava("jdk-17.0.10", "JAVA_VERSION=\"17.0.10\"\r\nOS_ARCH=\"amd64\"\r\n");
+	fakeJava("jre1.8.0_381", "");                                   // no release file: the folder name
+	fakeJava("vendor/java-runtime-delta", "");                        // a Mojang runtime one level down
+	fakeJava("jdk17-32bit", "JAVA_VERSION=\"17.0.1\"\nOS_ARCH=\"x86\"\n"); // 32-bit: skipped
+	Write(javas / "not-java" / "readme.txt", "no bin");
+
+	const std::vector<JavaInstall> found = ScanJavaFolders({ javas });
+	Check(found.size() == 4, "Expected 4 Java homes, found " + std::to_string(found.size()));
+	const JavaInstall* java17 = PickJava(found, 17);
+	Check(java17 && java17->version == "17.0.10" && java17->javaw.filename() == "javaw.exe",
+		"Automatic Java didn't pick the newest Java 17");
+	const JavaInstall* java8 = PickJava(found, 8);
+	Check(java8 && java8->home.filename() == "jre1.8.0_381", "Automatic Java didn't find Java 8 by folder name");
+	const JavaInstall* java21 = PickJava(found, 21);
+	Check(java21 && java21->home.filename() == "java-runtime-delta" && java21->mojang && !java17->mojang,
+		"Automatic Java didn't read a Mojang runtime's name");
+	Check(!PickJava(found, 16), "Automatic Java picked a different major version");
+	Check(JavaLabel(*PickJava({ found }, 17)) == "Java 17.0.10" &&
+		JavaLabel(found.back()).rfind("Java ", 0) == 0, "Java labels are wrong");
+
+	// The real PC: just make sure the search runs.
+	const std::vector<JavaInstall> installed = FindJavaInstalls(dir / "game");
+	std::cout << "Java on this PC:";
+	for (const JavaInstall& java : installed)
+		std::cout << " " << java.version;
+	std::cout << (installed.empty() ? " none" : "") << "\n";
+}
+
+static void ContentChecks(const fs::path& dir)
+{
+	const fs::path game = dir / "content";
+	WriteJar(game / "mods" / "fabric-mod.jar", { { "fabric.mod.json",
+		R"({ "id": "sodium", "name": "Sodium", "version": "0.6.0", "description": " Fast. ", "authors": ["JellySquid", { "name": "IMS" }] })" } });
+	WriteJar(game / "mods" / "forge-mod.jar.disabled", { { "META-INF/mods.toml",
+		"modLoader=\"javafml\"\n[[mods]]\nmodId=\"jei\"\nversion=\"${file.jarVersion}\"\ndisplayName=\"Just Enough Items\"\n"
+		"description='''\nItem lookup.\n'''\n[[dependencies.jei]]\nmodId=\"forge\"\n" },
+		{ "META-INF/MANIFEST.MF", "Manifest-Version: 1.0\r\nImplementation-Version: 19.21.0\r\n" } });
+	Write(game / "mods" / "notes.txt", "not a mod");
+	Write(game / "resourcepacks" / "Faithful.zip", "zip");
+	fs::create_directories(game / "resourcepacks" / "Unzipped Pack");
+
+	std::vector<ContentFile> mods = ListContent(game, ContentKind::Mods);
+	Check(mods.size() == 2 && mods[0].fileName == "fabric-mod.jar" && mods[0].enabled &&
+		mods[1].fileName == "forge-mod.jar" && !mods[1].enabled, "Mods were not listed with their state");
+	const std::vector<ContentFile> packs = ListContent(game, ContentKind::ResourcePacks);
+	Check(packs.size() == 2 && packs[1].folder, "Resource pack files and folders were not listed");
+
+	ModMetadata meta;
+	Check(ReadModMetadata(game / "mods" / "fabric-mod.jar", meta) && meta.name == "Sodium" && meta.version == "0.6.0" &&
+		meta.description == "Fast." && meta.loader == "Fabric" && meta.authors.size() == 2 && meta.authors[1] == "IMS",
+		"fabric.mod.json was not read");
+	Check(ReadModMetadata(game / "mods" / "forge-mod.jar.disabled", meta) && meta.name == "Just Enough Items" &&
+		meta.version == "19.21.0" && meta.description == "Item lookup." && meta.loader == "Forge", "mods.toml was not read");
+	Check(!ReadModMetadata(game / "mods" / "notes.txt", meta), "A non-jar had metadata");
+
+	std::string error;
+	Check(SetContentEnabled(game / "mods", "forge-mod.jar", true, &error), error);
+	Check(fs::exists(game / "mods" / "forge-mod.jar") && !fs::exists(game / "mods" / "forge-mod.jar.disabled"), "Mod was not enabled");
+	Check(SetContentEnabled(game / "resourcepacks", "Unzipped Pack", false, &error) &&
+		fs::is_directory(game / "resourcepacks" / "Unzipped Pack.disabled"), "Pack folder was not disabled");
+	Check(!SetContentEnabled(game / "mods", "../escape.jar", false, &error), "Unsafe name was accepted");
+	Check(DeleteContent(game / "resourcepacks", "Unzipped Pack", &error) &&
+		!fs::exists(game / "resourcepacks" / "Unzipped Pack.disabled"), "Disabled pack folder was not deleted");
+}
+
+// Adding files to a pack and keeping track of the player's changes.
+static void PackEditChecks(const fs::path& dir)
+{
+	ContentChanges changes;
+	RecordContentChange(changes, "mods/mine.jar", ContentChange::Added);
+	RecordContentChange(changes, "mods/mine.jar", ContentChange::Disabled); // still the player's own file
+	RecordContentChange(changes, "mods/pack.jar", ContentChange::Removed);
+	RecordContentChange(changes, "mods/heavy.jar", ContentChange::Disabled);
+	RecordContentChange(changes, "mods/optional.jar", ContentChange::Enabled);
+	Check(changes.size() == 4 && changes["mods/mine.jar"] == "added" &&
+		DescribeContentChanges(changes) == "1 added, 1 removed, 1 turned off, 1 turned on",
+		"Changes were not recorded: " + DescribeContentChanges(changes));
+	Check(RemovedContent(changes) == std::set<std::string>{ "mods/pack.jar" }, "Removed files were not listed");
+	// Changes that cancel out leave nothing.
+	ContentChanges undone = changes;
+	RecordContentChange(undone, "mods/mine.jar", ContentChange::Removed);
+	RecordContentChange(undone, "mods/pack.jar", ContentChange::Added);
+	RecordContentChange(undone, "mods/heavy.jar", ContentChange::Enabled);
+	RecordContentChange(undone, "mods/optional.jar", ContentChange::Disabled);
+	Check(undone.empty() && DescribeContentChanges(undone).empty(), "Changes that cancel out were kept");
+
+	// Adding files.
+	const fs::path game = dir / "edit" / "game";
+	const fs::path picked = dir / "edit" / "picked";
+	Write(picked / "mine.jar", "mine");
+	Write(picked / "Sky.zip", "zip");
+	Write(picked / "readme.txt", "text");
+	fs::create_directories(picked / "Folder Pack");
+	ContentKind kind;
+	Check(ContentKindForFile(picked / "mine.jar", ContentKind::ShaderPacks, &kind) && kind == ContentKind::Mods &&
+		ContentKindForFile(picked / "Sky.zip", ContentKind::ShaderPacks, &kind) && kind == ContentKind::ShaderPacks &&
+		ContentKindForFile(picked / "Sky.zip", ContentKind::Mods, &kind) && kind == ContentKind::ResourcePacks &&
+		ContentKindForFile(picked / "Folder Pack", ContentKind::Mods, &kind) && kind == ContentKind::ResourcePacks &&
+		!ContentKindForFile(picked / "readme.txt", ContentKind::Mods, &kind), "Dropped files went to the wrong folder");
+	std::string name, error;
+	Check(AddContent(game, ContentKind::Mods, picked / "mine.jar", &name, &error) && name == "mine.jar" &&
+		Read(game / "mods/mine.jar") == "mine", "A mod wasn't added: " + error);
+	Check(!AddContent(game, ContentKind::Mods, picked / "mine.jar", &name, &error) &&
+		error.find("already") != std::string::npos, "A mod was added twice");
+	Check(!AddContent(game, ContentKind::Mods, picked / "Sky.zip", &name, &error), "A zip was added as a mod");
+	Check(AddContent(game, ContentKind::ResourcePacks, picked / "Folder Pack", &name, &error) &&
+		fs::is_directory(game / "resourcepacks/Folder Pack"), "A resource pack folder wasn't added: " + error);
+
+	// Re-applying changes after the pack's files come back (an update or repair), then undoing them.
+	Write(game / "mods/pack.jar", "pack");
+	Write(game / "mods/heavy.jar", "pack");
+	Write(game / "mods/heavy.jar.disabled", "pack"); // an update re-added a mod the player had turned off
+	Write(game / "mods/optional.jar.disabled", "pack");
+	ApplyContentChanges(game, changes);
+	Check(!fs::exists(game / "mods/pack.jar") && !fs::exists(game / "mods/heavy.jar") &&
+		fs::exists(game / "mods/heavy.jar.disabled") && fs::exists(game / "mods/optional.jar") &&
+		fs::exists(game / "mods/mine.jar"), "The player's changes were not re-applied");
+	Check(UndoContentChanges(game, changes, &error), error);
+	Check(!fs::exists(game / "mods/mine.jar") && fs::exists(game / "mods/heavy.jar") &&
+		fs::exists(game / "mods/optional.jar.disabled"), "The player's changes were not undone");
+
+	// Saved per installed version, and kept when the version is installed again.
+	Library library;
+	Modpack pack;
+	pack.id = "edited";
+	pack.name = "Edited";
+	pack.version = "1.0";
+	InstalledVersion version = PlanInstalledVersion(library, pack, false);
+	version.contentChanges = changes;
+	AddInstalledVersion(library, pack, version);
+	const fs::path libraryFile = dir / "edit" / "library.json";
+	Check(SavePackLibrary(libraryFile.string(), library), "Library save failed");
+	const Library loaded = LoadPackLibrary(libraryFile.string());
+	Check(loaded.count("edited") && ActiveInstalledVersion(loaded.at("edited")) &&
+		ActiveInstalledVersion(loaded.at("edited"))->contentChanges == changes, "Changes did not round-trip through library.json");
+	InstalledVersion again = PlanInstalledVersion(library, pack, false);
+	Check(again.contentChanges == changes, "Reinstalling forgot the player's changes");
+	again.contentChanges.clear();
+	AddInstalledVersion(library, pack, again);
+	Check(ActiveInstalledVersion(library.at("edited"))->contentChanges == changes, "Replacing a version dropped its changes");
+}
+
+// New packs made in the launcher.
+static void PackCreatorChecks(const fs::path& dir)
+{
+	Check(CustomPackId("My Cool Pack!", {}) == "custom-my-cool-pack" &&
+		CustomPackId("My Cool Pack", { "custom-my-cool-pack" }) == "custom-my-cool-pack-2" &&
+		CustomPackId("  ***  ", {}) == "custom-pack", "Custom pack ids were not made safely");
+	Check(NeoForgeVersionPrefix("1.21.1") == "21.1." && NeoForgeVersionPrefix("1.21") == "21.0." &&
+		NeoForgeVersionPrefix("26.1") == "26.1.", "NeoForge version prefixes were wrong");
+	Check(PackSourceFromKey("custom") == PackSource::Custom && std::string(PackSourceName(PackSource::Custom)) == "Custom",
+		"The custom source didn't round-trip");
+	const fs::path installDir = dir / "created" / "custom-test@1.0";
+	std::string error;
+	Check(WriteCustomPack(installDir, "1.0", "1.20.1", "fabric", "0.16.9", &error), error);
+	InstalledPack pack;
+	Check(IsWholePackInstall(installDir) && ReadInstalledPack(installDir, pack, &error) && pack.minecraftVersion == "1.20.1" &&
+		pack.loader == LoaderKind::Fabric && pack.loaderVersion == "0.16.9" && pack.version == "1.0" &&
+		fs::is_directory(installDir / "minecraft/mods") && fs::is_directory(installDir / "minecraft/shaderpacks"),
+		"A new pack couldn't be read back: " + error);
+	Check(CanCreateServer(installDir), "A new pack can't be hosted");
+	const fs::path vanillaDir = dir / "created" / "custom-vanilla@1.0";
+	Check(WriteCustomPack(vanillaDir, "1.0", "1.21.1", "", "", &error) && ReadInstalledPack(vanillaDir, pack, &error) &&
+		pack.loader == LoaderKind::Vanilla, "A vanilla pack couldn't be read back: " + error);
 }
 
 int main(int argc, char** argv)
 {
 	if (argc > 1 && std::string(argv[1]) == "-jar")
 		return 0; // cached Forge installer fixture
+	if (argc > 2 && std::string(argv[1]) == "--sleep-fixture") {
+		std::this_thread::sleep_for(std::chrono::seconds(std::stoi(argv[2])));
+		return 0;
+	}
 	if (argc > 2 && std::string(argv[1]) == "--console-fixture") {
 		std::cout << argv[2] << std::endl;
 		std::string line;
 		while (std::getline(std::cin, line)) {
 			std::cout << "received:" << line << std::endl;
+			if (line == "spawn") // a long-running child, like a program a server starts itself
+				RunProcess({ argv[0], "--sleep-fixture", "8" }, fs::current_path(), fs::current_path() / "child.log", false,
+					nullptr, nullptr);
 			if (line == "stop") return 0;
 		}
 		return 1;
@@ -455,6 +730,10 @@ int main(int argc, char** argv)
 		TextChecks();
 		CardChecks();
 		ProcessChecks(dir, executable);
+		ContentChecks(dir);
+		PackEditChecks(dir);
+		PackCreatorChecks(dir);
+		JavaChecks(dir);
 		std::cout << "Window settings, server setup, cards and console checks passed\n";
 		return 0;
 	} catch (const std::exception& ex) {

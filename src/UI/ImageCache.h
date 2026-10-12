@@ -6,6 +6,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
+#include <filesystem>
 #include <map>
 #include <mutex>
 #include <string>
@@ -22,7 +23,7 @@ struct LoadedImage {
 	double readyTime = 0.0; // ImGui time when it became available, for fade-ins
 };
 
-// Downloads and decodes images (PNG, JPEG, WebP, ...) by URL on a small pool of
+// Downloads (or, for FileKey keys, reads from disk) and decodes images (PNG, JPEG, WebP, ...) on a small pool of
 // background threads, then uploads them to OpenGL on the UI thread.
 // Images are cached in memory for the life of the app.
 // All methods except the worker threads' internals must be called on the UI (GL) thread.
@@ -37,6 +38,13 @@ public:
 	// Returns the image if it is ready, else nullptr. The first call for a URL queues a
 	// download; failed URLs are not retried. Empty URLs always return nullptr.
 	const LoadedImage* Get(const std::string& url);
+
+	// The key that loads a local image file through Get. maxSide > 0 downscales it so neither
+	// side is larger (thumbnails); 0 keeps the usual limit.
+	static std::string FileKey(const std::filesystem::path& path, int maxSide = 0);
+
+	// Drops a loaded or failed image (and its texture), so the next Get loads it again.
+	void Forget(const std::string& key);
 
 	// Uploads images decoded since the last call. Call once per frame, before drawing.
 	void Update(double now);

@@ -25,6 +25,7 @@ Other docs: [docs/development.md](docs/development.md) (debugging, logs, trouble
 | [downloads.md](docs/features/downloads.md) | `HttpClient`, download state map and threading, Downloads page |
 | [installation.md](docs/features/installation.md) | Zip extraction (`InstallZip`), the `installs/` layout |
 | [library.md](docs/features/library.md) | My Library page |
+| [manage.md](docs/features/manage.md) | A pack's Manage page: overview, content (mods, resource and shader packs), changelog, logs, screenshots (`src/UI/ManagePage`, `src/Game/InstanceContent`) |
 | [servers.md](docs/features/servers.md) | Dedicated server setup, settings, EULA, process lifecycle and console |
 | [launching.md](docs/features/launching.md) | PLAY: `.mrpack` instances, Minecraft/Java/loader install, version JSON, launch command |
 | [accounts.md](docs/features/accounts.md) | Microsoft sign-in, offline mode, `account.dat` |

@@ -1,8 +1,11 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <string>
+#include <vector>
 
+struct JavaInstall;
 struct Settings;
 
 // Facts about the app and machine that the Settings page shows.
@@ -16,6 +19,12 @@ struct SettingsPageContext {
 	int accountCount = 0;              // saved accounts
 	bool curseForgeEnvKeySet = false;  // MCLP_CURSEFORGE_API_KEY is set
 	double shownAt = 0.0;              // ImGui::GetTime() when the page was opened (entrance animation)
+	// Javas found on this PC (FindJavaInstalls), for the Java choice. The page asks for a
+	// scan with scanJavas when none has run yet, and on Rescan.
+	const std::vector<JavaInstall>* javas = nullptr;
+	bool javasScanned = false;
+	bool javasScanning = false;
+	std::function<void()> scanJavas;
 };
 
 // Draws the Settings page into the current window. Edits settings in place and returns

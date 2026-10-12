@@ -27,6 +27,7 @@ struct SourceCapabilities {
 	bool loaderFilter = false;
 	std::vector<const char*> loaders;        // loader filter values, e.g. "fabric"
 	std::vector<const char*> sorts;          // sort option labels; index 0 is the default
+	bool changelogs = false;                 // FetchPackChangelog works
 	bool installsPacks = false;              // true: "Install pack" runs an InstallPlan
 	                                         // false: the per-file download/extract flow (Modrinth)
 	const char* searchHint = "Search modpacks...";
@@ -117,6 +118,14 @@ bool FetchPackDescription(HttpClient& http,
 						  std::string& out,
 						  std::string* err = nullptr,
 						  const std::atomic<bool>* cancel = nullptr);
+
+// The changelog of the pack's version (pack.sourceVersionId) as plain text. Only for
+// sources whose capabilities have changelogs (Modrinth, CurseForge, FTB).
+bool FetchPackChangelog(HttpClient& http,
+						const Modpack& pack,
+						std::string& out,
+						std::string* err = nullptr,
+						const std::atomic<bool>* cancel = nullptr);
 
 // One mod (or resource pack, shader pack...) a pack version includes, for Discover's Mods tab.
 struct PackMod {

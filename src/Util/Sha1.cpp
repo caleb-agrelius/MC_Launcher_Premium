@@ -1,4 +1,5 @@
 #include "Sha1.h"
+#include "Paths.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -79,7 +80,7 @@ struct Sha1 {
 
 std::string Sha1File(const std::string& path)
 {
-	std::ifstream in(path, std::ios::binary);
+	std::ifstream in(LongPath(std::filesystem::path(path)), std::ios::binary); // deep pack files too
 	if (!in.is_open())
 		return {};
 	Sha1 sha;

@@ -3,11 +3,11 @@
 How Discover talks to more than one modpack site, and how whole packs are installed from a plan. Each source has its own doc for its API details: [modrinth-search.md](modrinth-search.md), [curseforge.md](curseforge.md), [ftb.md](ftb.md), [technic.md](technic.md), [atlauncher.md](atlauncher.md).
 
 ## Dispatcher (`src/Network/PackSources.{h,cpp}`)
-The UI calls these functions with a `PackSource`, and they call that source's client:
+The UI calls these functions with a `PackSource`, and they call that source's client. Inside `PackSources.cpp` each source is a `PackSourceClient` subclass (`ModrinthSource`, `CurseForgeSource`, `FtbSource`, `TechnicSource`, `AtLauncherSource`) that overrides what it supports; the base class answers everything else with a "<Source> ... isn't supported" error. `Client(source)` picks the instance, so adding a source means one new subclass and one line there.
 
 | Function | What it does |
 |---|---|
-| `OnlineSources()` | The sources in filter order: Modrinth, CurseForge, FTB, Technic, ATLauncher |
+| `OnlineSources()` | The sources in filter order: Modrinth, CurseForge, FTB, Technic, ATLauncher. `PackSource::Custom` (key `custom`) is for packs the player made and isn't searched (see [library.md](library.md#new-packs)) |
 | `GetSourceCapabilities(source)` | Which filters and sorts the source supports, its search hint, its list heading, and `installsPacks` |
 | `IsSourceAvailable(source, reason)` | False with a reason when a source can't be used (CurseForge without an API key) |
 | `SearchPacks(http, source, query, filters, limit, out, err, cancel)` | Searches; results have `filesLoaded = false` |
@@ -32,6 +32,13 @@ The UI calls these functions with a `PackSource`, and they call that source's cl
 | Technic, ATLauncher | The description already in the search results, so no request is made |
 
 If the source returns nothing, the pack's summary is used.
+
+### Changelogs
+- `FetchPackChangelog(http, pack, out)` returns the changelog of the pack's version (`pack.sourceVersionId`) as plain text (`MarkupToPlainText`). Sources that have them set `SourceCapabilities::changelogs`:
+  - Modrinth: `GET /v2/version/{id}` `changelog` (Markdown). A pack installed before versions had ids is matched by its version number in `/project/{id}/version`.
+  - CurseForge: `GET /v1/mods/{id}/files/{fileId}/changelog` (HTML).
+  - FTB: `GET /modpack/{id}/{versionId}/changelog` `content` (Markdown).
+- Technic and ATLauncher have none; the call fails with "<source> doesn't publish changelogs". Used by the Manage page's Changelog tab ([manage.md](manage.md)). `live_checks` fetches one per source that has them.
 
 ### Mod lists
 
@@ -72,6 +79,7 @@ Sources whose capabilities set `installsPacks` (every source except Modrinth) in
   3. Downloads the rest on `maxConcurrent` threads into `installDir/minecraft/<relPath>`. Paths past Windows' 260-character limit work (see "Long paths" below).
      - Each file is first written as `<name>.part`, then checked against its SHA-1, MD5 or size, then renamed.
      - A file already on disk that passes the check is kept, so a retry only fetches what's missing.
+     - Files in `plan.skipFiles` (pack files the player removed) and files with a `<name>.disabled` copy (turned off by the player) are skipped. After a successful install, main.cpp re-applies the version's content changes (`ApplyContentChanges`; see [manage.md](manage.md#your-changes)).
      - Extract files are downloaded to `installDir/.cache/`, checked, unpacked into `relPath`, and deleted.
   4. Deletes files the previous install of this pack listed in its `pack.json` `files` and this plan doesn't (e.g. mods dropped when switching versions). Only files installed by name are tracked, not the contents of extracted zips.
   5. Extracts the override zips. They go last, so a pack's own config files win.

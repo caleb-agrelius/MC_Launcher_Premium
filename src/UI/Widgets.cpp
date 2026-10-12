@@ -1,6 +1,7 @@
 #include "Widgets.h"
 
 #include "ImageCache.h"
+#include "Logo.h"
 #include "Model/Modpack.h"
 #include "Theme.h"
 
@@ -12,7 +13,9 @@
 #include <cmath>
 #include <vector>
 #include <cstdio>
+#include <cstring>
 #include <functional>
+#include <unordered_map>
 
 namespace Widgets {
 
@@ -56,10 +59,41 @@ void EndEntrance()
 	ImGui::GetCurrentWindow()->DC.CursorPos.y -= offset;
 }
 
-static int g_wheelFrame = -1; // the frame whose wheel input a window already used
+// Windows that called SmoothScroll recently, with the last frame they did.
+static std::unordered_map<ImGuiID, int> g_smoothWindows;
+static int g_wheelTargetFrame = -1;
+static ImGuiID g_wheelTarget = 0;
+
+// The window the wheel scrolls this frame: starting at the window under the mouse, the
+// first one that can scroll and takes the wheel, walking up through parent child windows.
+// Cards (no wheel, no SmoothScroll) pass it on to the page around them. The walk stops at a
+// popup or top-level window, so a combo list under the mouse never scrolls the page behind it.
+static ImGuiID WheelTarget()
+{
+	ImGuiContext& g = *GImGui;
+	if (g_wheelTargetFrame == g.FrameCount)
+		return g_wheelTarget;
+	g_wheelTargetFrame = g.FrameCount;
+	g_wheelTarget = 0;
+	for (ImGuiWindow* window = g.HoveredWindow; window; window = window->ParentWindow) {
+		const auto smooth = g_smoothWindows.find(window->ID);
+		const bool usesSmooth = smooth != g_smoothWindows.end() && smooth->second >= g.FrameCount - 2;
+		const bool takesWheel = usesSmooth || !(window->Flags & ImGuiWindowFlags_NoScrollWithMouse);
+		if (window->ScrollMax.y > 0.0f && takesWheel && !(window->Flags & ImGuiWindowFlags_NoMouseInputs)) {
+			g_wheelTarget = window->ID;
+			break;
+		}
+		if (!(window->Flags & ImGuiWindowFlags_ChildWindow) || (window->Flags & ImGuiWindowFlags_Popup))
+			break;
+	}
+	return g_wheelTarget;
+}
 
 void SmoothScroll()
 {
+	ImGuiWindow* window = ImGui::GetCurrentWindow();
+	const int frame = ImGui::GetFrameCount();
+	g_smoothWindows[window->ID] = frame;
 	ImGuiStorage* storage = ImGui::GetStateStorage();
 	const float scroll = ImGui::GetScrollY();
 	const float maxScroll = ImGui::GetScrollMaxY();
@@ -69,14 +103,19 @@ void SmoothScroll()
 	if (std::fabs(scroll - *last) > 0.5f)
 		*target = scroll;
 
-	// Children end before their parent, so the innermost window gets the wheel first.
 	const ImGuiIO& io = ImGui::GetIO();
-	const int frame = ImGui::GetFrameCount();
-	if (io.MouseWheel != 0.0f && !io.KeyCtrl && g_wheelFrame != frame && maxScroll > 0.0f &&
-		ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)) {
-		g_wheelFrame = frame;
-		*target -= io.MouseWheel * S(120.0f);
+	// Shift turns the wheel sideways, like ImGui's own scrolling.
+	float wheelX = io.MouseWheelH;
+	float wheelY = io.MouseWheel;
+	if (io.KeyShift && wheelX == 0.0f) {
+		wheelX = wheelY;
+		wheelY = 0.0f;
 	}
+	if (wheelY != 0.0f && !io.KeyCtrl && WheelTarget() == window->ID)
+		*target -= wheelY * S(120.0f);
+	if (wheelX != 0.0f && !io.KeyCtrl && ImGui::GetScrollMaxX() > 0.0f &&
+		ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows | ImGuiHoveredFlags_NoPopupHierarchy))
+		ImGui::SetScrollX(std::clamp(ImGui::GetScrollX() - wheelX * S(120.0f), 0.0f, ImGui::GetScrollMaxX()));
 	*target = std::clamp(*target, 0.0f, maxScroll);
 
 	float next = *target;
@@ -89,6 +128,59 @@ void SmoothScroll()
 	if (next != scroll)
 		ImGui::SetScrollY(next);
 	*last = next;
+}
+
+bool BeginScrollArea(const char* id, ImVec2 size, ImGuiChildFlags childFlags, ImGuiWindowFlags windowFlags)
+{
+	const bool visible = ImGui::BeginChild(id, size, childFlags, windowFlags | ImGuiWindowFlags_NoScrollWithMouse);
+	// Keep content off the scrollbar: rows and cards end a little before it rather than
+	// touching it.
+	ImGuiWindow* window = ImGui::GetCurrentWindow();
+	if (window->ScrollbarY) {
+		const float gap = S(6.0f);
+		window->WorkRect.Max.x -= gap;
+		window->ContentRegionRect.Max.x -= gap;
+	}
+	return visible;
+}
+
+void EndScrollArea()
+{
+	SmoothScroll();
+	ImGui::EndChild();
+}
+
+bool PaneSplitter(const char* id, float* width, float minWidth, float maxWidth)
+{
+	const float gap = ImGui::GetStyle().ItemSpacing.x;
+	const float height = ImGui::GetContentRegionAvail().y;
+	ImGui::InvisibleButton(id, ImVec2(gap, std::max(1.0f, height)));
+	const bool hovered = ImGui::IsItemHovered();
+	const bool active = ImGui::IsItemActive();
+	if (hovered || active)
+		ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+	bool changed = false;
+	if (active) {
+		const float delta = ImGui::GetIO().MouseDelta.x / S(1.0f);
+		const float next = std::clamp(*width + delta, minWidth, std::max(minWidth, maxWidth));
+		if (next != *width) {
+			*width = next;
+			changed = true;
+		}
+	}
+	if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip) && !active)
+		ImGui::SetTooltip("Drag to resize");
+	// A soft grip in the middle of the gap, shown while hovered or dragged.
+	if (hovered || active) {
+		const ImVec2 min = ImGui::GetItemRectMin();
+		const ImVec2 max = ImGui::GetItemRectMax();
+		const float x = (min.x + max.x) * 0.5f;
+		const float y = (min.y + max.y) * 0.5f;
+		const float half = std::min(S(28.0f), (max.y - min.y) * 0.5f);
+		ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(x - S(2.0f), y - half), ImVec2(x + S(2.0f), y + half),
+			ImGui::GetColorU32(active ? Theme::C().accent : Theme::C().textDim), S(2.0f));
+	}
+	return changed;
 }
 
 // Faint outline for icons and banners: light on dark themes, dark on light ones.
@@ -206,20 +298,116 @@ static void DrawSelectionBar(ImDrawList* drawList, ImVec2 min, ImVec2 max, float
 		ImGui::GetColorU32(Theme::C().accent), S(2.0f));
 }
 
-bool ListItem(const char* label, bool selected)
+bool ListItem(const char* label, bool selected, bool closePopup, const char* hint)
 {
+	const char* labelEnd = ImGui::FindRenderedTextEnd(label);
+	const float hintWidth = hint && *hint ? ImGui::CalcTextSize(hint).x + S(16.0f) : 0.0f;
+	float width = 0.0f; // the available width
+	if (ImGui::GetCurrentWindow()->Flags & ImGuiWindowFlags_Popup)
+		width = std::max(ImGui::GetContentRegionAvail().x, ImGui::CalcTextSize(label, labelEnd).x + hintWidth + S(16.0f));
 	ImGui::PushID(label);
 	const float height = ImGui::GetTextLineHeight() + S(10.0f);
-	const bool clicked = RoundedSelectable("##item", selected, ImVec2(0.0f, height), S(6.0f));
+	const bool clicked = RoundedSelectable("##item", selected, ImVec2(width, height), S(6.0f));
 	ImGui::PopID();
 	const ImVec2 min = ImGui::GetItemRectMin();
-	ImGui::GetWindowDrawList()->AddText(ImVec2(min.x + S(8.0f), min.y + (height - ImGui::GetTextLineHeight()) * 0.5f),
-		ImGui::GetColorU32(selected ? Theme::C().text : (ImGui::IsItemHovered() ? Theme::C().text : Theme::C().textDim)), label);
+	const ImVec2 max = ImGui::GetItemRectMax();
+	const float textY = min.y + (height - ImGui::GetTextLineHeight()) * 0.5f;
+	ImDrawList* drawList = ImGui::GetWindowDrawList();
+	if (hintWidth > 0.0f)
+		drawList->AddText(ImVec2(max.x - S(8.0f) - (hintWidth - S(16.0f)), textY), ImGui::GetColorU32(Theme::C().textDim), hint);
+	// Long labels end in "..." instead of running past the row.
+	DrawClippedText(drawList, ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(min.x + S(8.0f), textY),
+		max.x - S(8.0f) - hintWidth,
+		ImGui::GetColorU32(selected ? Theme::C().text : (ImGui::IsItemHovered() ? Theme::C().text : Theme::C().textDim)),
+		std::string(label, labelEnd));
 	if (selected && ImGui::IsWindowAppearing())
 		ImGui::SetScrollHereY();
-	if (clicked)
+	if (clicked && closePopup)
 		ImGui::CloseCurrentPopup(); // like ImGui::Selectable in a combo; does nothing outside a popup
 	return clicked;
+}
+
+bool MenuItem(const char* label, const char* shortcut, bool enabled)
+{
+	ImGui::BeginDisabled(!enabled);
+	const bool clicked = ListItem(label, false, true, shortcut);
+	ImGui::EndDisabled();
+	return clicked && enabled;
+}
+
+bool BeginSelect(const char* id, const char* preview, ImGuiComboFlags flags)
+{
+	ImDrawList* drawList = ImGui::GetWindowDrawList();
+	const ImVec2 pos = ImGui::GetCursorScreenPos();
+	const float width = ImGui::CalcItemWidth();
+	const float height = ImGui::GetFrameHeight();
+	const bool open = ImGui::BeginCombo(id, "", flags | ImGuiComboFlags_NoArrowButton);
+	const bool hovered = !open && ImGui::IsItemHovered();
+	// The choice and a chevron, drawn over the frame BeginCombo just drew.
+	const ImVec2 padding = ImGui::GetStyle().FramePadding;
+	const float r = S(4.0f);
+	const ImVec2 center(pos.x + width - padding.x - r, pos.y + height * 0.5f);
+	DrawClippedText(drawList, ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(pos.x + padding.x, pos.y + padding.y),
+		center.x - r - S(8.0f), ImGui::GetColorU32(ImGuiCol_Text), preview ? preview : "");
+	const ImU32 chevron = ImGui::GetColorU32(open ? Theme::C().accent : hovered ? Theme::C().text : Theme::C().textDim);
+	if (open)
+		drawList->AddTriangleFilled(ImVec2(center.x - r, center.y + r * 0.5f), ImVec2(center.x + r, center.y + r * 0.5f),
+			ImVec2(center.x, center.y - r * 0.7f), chevron);
+	else
+		drawList->AddTriangleFilled(ImVec2(center.x - r, center.y - r * 0.5f), ImVec2(center.x + r, center.y - r * 0.5f),
+			ImVec2(center.x, center.y + r * 0.7f), chevron);
+	return open;
+}
+
+void EndSelect()
+{
+	ImGui::EndCombo();
+}
+
+bool Select(const char* id, int* current, const char* const* labels, int count)
+{
+	const bool valid = *current >= 0 && *current < count;
+	bool changed = false;
+	if (BeginSelect(id, valid ? labels[*current] : "")) {
+		for (int i = 0; i < count; ++i) {
+			ImGui::PushID(i);
+			if (ListItem(labels[i], i == *current) && i != *current) {
+				*current = i;
+				changed = true;
+			}
+			ImGui::PopID();
+		}
+		EndSelect();
+	}
+	return changed;
+}
+
+bool PrimaryButton(const char* label, ImVec2 size)
+{
+	const Theme::Palette& p = Theme::C();
+	ImGui::PushStyleColor(ImGuiCol_Button, p.accent);
+	ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Theme::Mix(p.accent, p.text, 0.15f));
+	ImGui::PushStyleColor(ImGuiCol_ButtonActive, Theme::Mix(p.accent, p.windowBg, 0.15f));
+	ImGui::PushStyleColor(ImGuiCol_Text, p.windowBg);
+	const bool clicked = ImGui::Button(label, size);
+	ImGui::PopStyleColor(4);
+	return clicked;
+}
+
+bool DangerButton(const char* label, ImVec2 size)
+{
+	const Theme::Palette& p = Theme::C();
+	ImGui::PushStyleColor(ImGuiCol_Button, Theme::Mix(p.cardBg, p.error, 0.55f));
+	ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Theme::Mix(p.cardBg, p.error, 0.75f));
+	ImGui::PushStyleColor(ImGuiCol_ButtonActive, Theme::Mix(p.cardBg, p.error, 0.9f));
+	const bool clicked = ImGui::Button(label, size);
+	ImGui::PopStyleColor(3);
+	return clicked;
+}
+
+float ButtonWidth(const char* label)
+{
+	return ImGui::CalcTextSize(label, nullptr, true).x + ImGui::GetStyle().FramePadding.x * 2.0f;
 }
 
 void Text(ImFont* font, float size, const ImVec4& color, const char* text)
@@ -260,9 +448,46 @@ void Spinner(const ImVec4& color)
 void Chip(const char* text, const ImVec4& tint)
 {
 	const float fontSize = ImGui::GetFontSize() * (Theme::kFontSmall / Theme::kFontBody);
-	const ImVec2 pos = ImGui::GetCursorScreenPos();
+	const float height = fontSize + S(8.0f);
+	// Centered on the line it shares: next to buttons (or after AlignTextToFramePadding) the
+	// line is a frame tall, and the chip sits in its middle rather than at its top.
+	// After plain text the line is shorter than the chip; the chip still centers on it, spilling
+	// a little into the spacing above and below rather than pushing the next line down.
+	ImVec2 pos = ImGui::GetCursorScreenPos();
+	const float lineHeight = ImGui::GetCurrentWindow()->DC.CurrLineSize.y;
+	if (lineHeight > 0.0f)
+		pos.y += std::floor((lineHeight - height) * 0.5f);
 	DrawChip(ImGui::GetWindowDrawList(), pos, fontSize, text, tint);
-	ImGui::Dummy(ImVec2(ChipWidth(fontSize, text), fontSize + S(8.0f)));
+	ImGui::Dummy(ImVec2(ChipWidth(fontSize, text), lineHeight > 0.0f ? std::min(lineHeight, height) : height));
+}
+
+ImVec4 ModifiedColor()
+{
+	// Amber reads as "changed" on dark and light themes alike, apart from accent and error.
+	return Theme::C().light ? ImVec4(0.72f, 0.45f, 0.05f, 1.0f) : ImVec4(0.95f, 0.70f, 0.28f, 1.0f);
+}
+
+void ModifiedChip(const std::string& changes)
+{
+	Chip("Modified", ModifiedColor());
+	if (!changes.empty())
+		ImGui::SetItemTooltip("You changed this pack: %s", changes.c_str());
+}
+
+bool ToggleRow(const char* label, bool* value)
+{
+	const bool changed = Toggle(label, value);
+	const char* end = ImGui::FindRenderedTextEnd(label);
+	if (end != label) {
+		ImGui::SameLine(0.0f, S(10.0f));
+		ImGui::AlignTextToFramePadding();
+		ImGui::TextUnformatted(label, end);
+		if (ImGui::IsItemClicked()) {
+			*value = !*value;
+			return true;
+		}
+	}
+	return changed;
 }
 
 bool Toggle(const char* id, bool* value)
@@ -558,7 +783,8 @@ void HeroBanner(const Modpack& pack, ImageCache& images, float height, bool show
 	if (!pack.loaders.empty())
 		addChip(pack.loaders, Theme::C().info);
 	if (!pack.version.empty())
-		addChip("v" + pack.version, Theme::C().textDim);
+		addChip(std::isdigit(static_cast<unsigned char>(pack.version[0])) ? "v" + pack.version : pack.version,
+			Theme::C().textDim); // "1.2" reads "v1.2"; "v7.5.1" and "Beta 3" stay as they are
 
 	if (!pack.author.empty()) {
 		y -= bodySize + S(10.0f);
@@ -764,7 +990,7 @@ struct OpenCard {
 std::vector<OpenCard> g_openCards;
 }
 
-void BeginCard(const char* id, ImVec2 padding)
+void BeginCard(const char* id, ImVec2 padding, float width)
 {
 	const ImGuiID key = ImGui::GetID(id);
 	const float remembered = ImGui::GetStateStorage()->GetFloat(key, 0.0f);
@@ -773,7 +999,7 @@ void BeginCard(const char* id, ImVec2 padding)
 	const float height = remembered > 0.0f ? remembered : pad.y * 2.0f + ImGui::GetFrameHeightWithSpacing() * 2.0f;
 	ImGui::PushStyleColor(ImGuiCol_ChildBg, Theme::C().cardBg);
 	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, pad);
-	ImGui::BeginChild(key, ImVec2(0.0f, height), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding,
+	ImGui::BeginChild(key, ImVec2(std::max(0.0f, width), height), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding,
 		ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 	ImGui::PopStyleVar();
 	g_openCards.push_back({ key, pad.y });
@@ -791,6 +1017,100 @@ void EndCard()
 	ImGui::PopStyleColor();
 	if (measured)
 		ImGui::GetStateStorage()->SetFloat(card.id, height);
+}
+
+}
+
+namespace Widgets {
+
+void LogoBlock(float size)
+{
+	static const std::vector<std::uint8_t> pixels = Logo::BlockPixels(Logo::kBaseSize);
+	const ImVec2 pos = ImGui::GetCursorScreenPos();
+	ImGui::Dummy(ImVec2(size, size));
+	if (!ImGui::IsItemVisible())
+		return;
+	ImDrawList* drawList = ImGui::GetWindowDrawList();
+	const float cell = size / Logo::kBaseSize;
+	const float alpha = ImGui::GetStyle().Alpha;
+	for (int y = 0; y < Logo::kBaseSize; ++y) {
+		for (int x = 0; x < Logo::kBaseSize; ++x) {
+			const std::uint8_t* p = &pixels[static_cast<std::size_t>((y * Logo::kBaseSize + x) * 4)];
+			if (p[3] == 0)
+				continue;
+			// Rounded to whole screen pixels so neighbouring cells don't leave seams.
+			const ImVec2 min(std::floor(pos.x + x * cell), std::floor(pos.y + y * cell));
+			const ImVec2 max(std::floor(pos.x + (x + 1) * cell), std::floor(pos.y + (y + 1) * cell));
+			drawList->AddRectFilled(min, max, IM_COL32(p[0], p[1], p[2], static_cast<int>(p[3] * alpha)));
+		}
+	}
+}
+
+void Wordmark(const char* text, float pixel, const ImVec4& face, const ImVec4& depth)
+{
+	const int columns = static_cast<int>(std::strlen(text)) * (Logo::kGlyphWidth + 1) - 1;
+	const ImVec2 pos = ImGui::GetCursorScreenPos();
+	const float depthOffset = std::max(1.0f, std::round(pixel));
+	ImGui::Dummy(ImVec2(columns * pixel + depthOffset, Logo::kGlyphHeight * pixel + depthOffset));
+	if (!ImGui::IsItemVisible())
+		return;
+	ImDrawList* drawList = ImGui::GetWindowDrawList();
+	// The extruded edge first (one copy per screen pixel of depth), then the faces on top.
+	for (float shift = depthOffset; shift >= 0.0f; shift -= 1.0f) {
+		const int pass = shift == 0.0f ? 1 : 0;
+		float x = pos.x;
+		for (const char* c = text; *c; ++c) {
+			const auto rows = Logo::Glyph(static_cast<char>(std::toupper(static_cast<unsigned char>(*c))));
+			for (int row = 0; row < Logo::kGlyphHeight; ++row) {
+				for (int col = 0; col < Logo::kGlyphWidth; ++col) {
+					if ((rows[static_cast<std::size_t>(row)] & (0x10 >> col)) == 0)
+						continue;
+					ImVec4 color = depth;
+					if (pass == 1) {
+						// Lighter at the top like the Minecraft title, with a little stone speckle.
+						const float t = static_cast<float>(row) / (Logo::kGlyphHeight - 1);
+						color = Theme::Mix(face, depth, t * 0.35f);
+						if ((static_cast<unsigned>(row * 7 + col * 13 + (c - text) * 5) % 5) == 0)
+							color = Theme::Mix(color, depth, 0.18f);
+					}
+					const ImVec2 min(std::floor(x + col * pixel + shift), std::floor(pos.y + row * pixel + shift));
+					drawList->AddRectFilled(min, ImVec2(std::floor(x + (col + 1) * pixel + shift),
+						std::floor(pos.y + (row + 1) * pixel + shift)), ImGui::GetColorU32(color));
+				}
+			}
+			x += (Logo::kGlyphWidth + 1) * pixel;
+		}
+	}
+}
+
+}
+
+namespace Widgets {
+
+bool TabStrip(const char* id, const char* const* labels, int count, int* current)
+{
+	bool changed = false;
+	ImGui::PushID(id);
+	ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, S(18.0f));
+	ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(S(18.0f), S(8.0f)));
+	for (int i = 0; i < count; ++i) {
+		const bool selected = *current == i;
+		if (i > 0)
+			ImGui::SameLine();
+		ImGui::PushID(i);
+		ImGui::PushStyleColor(ImGuiCol_Button, selected ? Theme::C().accentDeep : Theme::C().frameBg);
+		ImGui::PushFont(selected ? Theme::GetFonts().bold : Theme::GetFonts().regular, 0.0f);
+		if (ImGui::Button(labels[i]) && !selected) {
+			*current = i;
+			changed = true;
+		}
+		ImGui::PopFont();
+		ImGui::PopStyleColor();
+		ImGui::PopID();
+	}
+	ImGui::PopStyleVar(2);
+	ImGui::PopID();
+	return changed;
 }
 
 }

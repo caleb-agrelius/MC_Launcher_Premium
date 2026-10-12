@@ -2,6 +2,7 @@
 
 #include "Network/HttpClient.h"
 #include "Storage/Installer.h"
+#include "Util/Paths.h"
 #include "Util/Sha1.h"
 
 #include <algorithm>
@@ -77,9 +78,10 @@ static std::string StringOr(const json& object, const char* key, const std::stri
 static bool NeedsDownload(const DownloadJob& job)
 {
 	std::error_code ec;
-	if (!fs::is_regular_file(job.path, ec))
+	const fs::path path = LongPath(job.path);
+	if (!fs::is_regular_file(path, ec))
 		return true;
-	return job.size != 0 && fs::file_size(job.path, ec) != job.size;
+	return job.size != 0 && fs::file_size(path, ec) != job.size;
 }
 
 // A temporary name no other download uses, so two packs (or two launcher
@@ -97,7 +99,7 @@ static fs::path UniquePartPath(const fs::path& path)
 static bool DownloadOne(HttpClient& http, const DownloadJob& job, std::string& error, const std::atomic<bool>* cancel)
 {
 	std::error_code ec;
-	fs::create_directories(job.path.parent_path(), ec);
+	fs::create_directories(LongPath(job.path.parent_path()), ec);
 	const fs::path part = UniquePartPath(job.path);
 	for (int attempt = 1; attempt <= kDownloadAttempts; ++attempt) {
 		if (!NeedsDownload(job))
@@ -109,23 +111,23 @@ static bool DownloadOne(HttpClient& http, const DownloadJob& job, std::string& e
 		}
 		if (!job.sha1.empty() && Sha1File(part.string()) != job.sha1) {
 			error = "Checksum mismatch for " + job.url;
-			fs::remove(part, ec);
+			fs::remove(LongPath(part), ec);
 			continue;
 		}
 		// Replacing an existing file can fail briefly while Windows still has it open (an
 		// antivirus scan, or a Java process that just exited), so retry, then remove it first.
 		std::error_code renameError;
 		for (int tries = 0; tries < 10; ++tries) {
-			fs::rename(part, job.path, renameError);
+			fs::rename(LongPath(part), LongPath(job.path), renameError);
 			if (!renameError)
 				return true;
 			if (tries == 5) {
 				std::error_code removeError;
-				fs::remove(job.path, removeError);
+				fs::remove(LongPath(job.path), removeError);
 			}
 			std::this_thread::sleep_for(std::chrono::milliseconds(200));
 		}
-		fs::remove(part, ec);
+		fs::remove(LongPath(part), ec);
 		if (!NeedsDownload(job))
 			return true; // another downloader put it in place first
 		error = "Couldn't save " + job.path.string() + ": " + renameError.message();

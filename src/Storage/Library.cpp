@@ -67,6 +67,12 @@ static Modpack PackFromJson(const json& item)
 		version.optionalMods = v.value("optionalMods", std::vector<std::string>());
 		version.installDir = v.value("installDir", "");
 		version.gameDir = v.value("gameDir", "");
+		if (v.contains("contentChanges") && v["contentChanges"].is_object()) {
+			for (const auto& [path, change] : v["contentChanges"].items()) {
+				if (change.is_string())
+					version.contentChanges[path] = change.get<std::string>();
+			}
+		}
 		if (!version.key.empty() && !version.installDir.empty() && !version.gameDir.empty())
 			pack.installedVersions.push_back(std::move(version));
 	}
@@ -78,7 +84,7 @@ static json PackToJson(const Modpack& pack)
 {
 	json versions = json::array();
 	for (const InstalledVersion& v : pack.installedVersions) {
-		versions.push_back({
+		json entry = {
 			{ "key", v.key },
 			{ "version", v.version },
 			{ "sourceVersionId", v.sourceVersionId },
@@ -88,7 +94,10 @@ static json PackToJson(const Modpack& pack)
 			{ "optionalMods", v.optionalMods },
 			{ "installDir", v.installDir },
 			{ "gameDir", v.gameDir },
-		});
+		};
+		if (!v.contentChanges.empty())
+			entry["contentChanges"] = v.contentChanges;
+		versions.push_back(std::move(entry));
 	}
 	json out = {
 		{ "id", pack.id },
@@ -266,6 +275,7 @@ InstalledVersion PlanInstalledVersion(const Library& library, const Modpack& pac
 	if (existing) {
 		version.installDir = existing->installDir;
 		version.gameDir = existing->gameDir;
+		version.contentChanges = existing->contentChanges; // reinstalling keeps the player's edits
 	} else {
 		version.installDir = "installs/" + pack.id + "@" + version.key;
 		version.gameDir = wholePack ? version.installDir + "/minecraft" : "instances/" + pack.id + "@" + version.key;
@@ -288,7 +298,10 @@ void AddInstalledVersion(Library& library, const Modpack& pack, const InstalledV
 	bool replaced = false;
 	for (InstalledVersion& v : entry.installedVersions) {
 		if (v.key == version.key) {
+			// The player's edits stay with the version, including any made while it reinstalled.
+			std::map<std::string, std::string> changes = std::move(v.contentChanges);
 			v = version;
+			v.contentChanges = std::move(changes);
 			replaced = true;
 		}
 	}

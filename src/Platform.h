@@ -15,6 +15,11 @@ bool OpenFolder(const std::string& path);
 // file doesn't exist or couldn't be opened.
 bool OpenFile(const std::string& path);
 
+// Shows the system's Open dialog for choosing one or more files, e.g. title "Add mods",
+// filterName "Mods", patterns "*.jar" (several separated by ';'). Returns UTF-8 paths, or
+// nothing when cancelled or unsupported. Blocks until the dialog closes.
+std::vector<std::string> PickFiles(const std::string& title, const std::string& filterName, const std::string& patterns);
+
 // Total physical memory in MB, or 0 if unknown.
 std::uint64_t SystemMemoryMb();
 

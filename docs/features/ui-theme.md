@@ -80,6 +80,14 @@ Color themes, fonts, DPI and UI scaling, shared drawing helpers, and toast notif
 - `LoadSettings` returns the defaults if the file is missing or invalid, and clamps the scale to its range.
 - `SaveSettings` writes the scale rounded to two decimals.
 
+## Logo (`src/UI/Logo.{h,cpp}`)
+- The logo is a pixel-art grass block in isometric view with a dark outline. `Logo::BlockPixels(size)` renders it as RGBA from a 32x32 original: smaller sizes are averaged down, larger ones are scaled up in whole pixels, so it stays crisp.
+- `Logo::Glyph` is a 5x7 blocky pixel font for the wordmark.
+- Where it appears:
+  - The window's title bar and taskbar icon (`glfwSetWindowIcon`, 16 to 64 px).
+  - The executable's icon: `resources/logo.ico`, linked through `resources/app.rc`. `logo_export` (`tools/LogoExport.cpp`, built with the app) rewrites `resources/logo.ico` and `resources/logo.png`. Run it from the repository root after changing the logo.
+  - In the app: `Widgets::LogoBlock(size)` draws the block, and `Widgets::Wordmark(text, pixel, face, depth)` draws pixel-font text with an extruded edge, like the Minecraft title. The sidebar shows the "MC LAUNCHER" wordmark, and Settings > About shows the block and wordmark.
+
 ## Widgets (`src/UI/Widgets.{h,cpp}`)
 
 | Widget | What it draws |
@@ -88,13 +96,21 @@ Color themes, fonts, DPI and UI scaling, shared drawing helpers, and toast notif
 | `Text(font, size, color, text)` | Text in a given font, size, and color |
 | `SectionLabel` | Small bold dimmed heading, e.g. "PACK FILES (1)" |
 | `Spinner` | A rotating arc the height of a text line |
-| `Chip` | A rounded pill tag tinted with a color |
+| `ModifiedChip` | The amber "Modified" chip for a pack version the player changed, with the changes ("1 added, 1 turned off") in its tooltip. Used everywhere an installed version shows (see [manage.md](manage.md#your-changes)). `ModifiedColor()` is its color, for related text |
+| `Chip` | A rounded pill tag tinted with a color. It centers on the line it shares: in the middle of a button-height line (after `AlignTextToFramePadding` or next to buttons), or on a line of plain text without pushing the next line down |
 | `ThinProgressBar` | An 8px accent progress bar with no text |
 | `Toggle` | An on/off switch in the theme's colors |
+| `ToggleRow` | A `Toggle` with its label after it (clicking the label toggles too), used instead of checkboxes |
+| `PrimaryButton` / `DangerButton` | The main action button (accent fill, e.g. PLAY, Start server) and the destructive one (red tint, e.g. Stop game, Uninstall, Delete) |
+| `ButtonWidth` | The width `ImGui::Button` gives a label, for right-aligning button rows |
+| `BeginSelect` / `EndSelect` | A dropdown drawn as one rounded frame with the choice (shortened with "..." when long) and a chevron that points up while open, instead of ImGui's square arrow box. Filled with `ListItem` rows |
+| `Select` | A whole `BeginSelect` dropdown over fixed labels (game mode, difficulty, Settings choices) |
+| `MenuItem` | A popup menu entry built on `ListItem`, with an optional shortcut hint and a disabled state (log view context menu, Add account) |
+| `PaneSplitter` | A draggable gap between two side-by-side panes; shows a grip and a resize cursor on hover and changes the left pane's width |
 | `NavItem` | A sidebar entry with an accent bar when selected, and an optional count badge |
 | `NavGroupItem` | A `NavItem` heading a collapsible group, with a chevron (down when expanded, right when collapsed) |
 | `SubNavItem` | A smaller, indented sidebar entry with a dot (accent-colored when selected), used for Discover's source sub-pages |
-| `ListItem` | A text row for lists and combo popups (Discover's loader and sort filters); closes its popup when clicked |
+| `ListItem` | A text row for lists and dropdowns; closes its popup when clicked (unless asked not to, like the version list's Retry). An optional hint is drawn dimmed on the right (a version's Minecraft version, an account's type), and in a popup the row asks for room for both so the popup widens to fit |
 | `WrappedText` | Colored text that wraps at the window edge (Discover's error statuses) |
 | `EmptyState` | A centered block illustration, title, hint, and optional button for empty pages |
 | `ThemeCard` | A theme swatch: a miniature launcher drawn in the theme's colors, its name, and a check mark when selected |
@@ -104,9 +120,22 @@ Color themes, fonts, DPI and UI scaling, shared drawing helpers, and toast notif
 
 Images fade in over 0.25 s (`FadeAlpha`), unless **Reduce motion** is on (`Widgets::SetReduceMotion`).
 
+Every button, dropdown, list row, switch and menu entry comes from these widgets, so they share the theme's rounding and colors. No page uses `ImGui::Combo`, `ImGui::Selectable`, `ImGui::Checkbox` or `ImGui::MenuItem` directly, or pushes its own button colors.
+
+**Resizable panes:** Discover's pack list, the Servers list and the Manage page's log list have a `PaneSplitter` on their right edge. Discover and Servers keep their widths in `settings.json` (`paneWidths`, see [settings.md](settings.md)), and the Manage log list keeps its width while the launcher runs. Each width is kept between a minimum and what leaves the pane beside it usable.
+
+**Scrollbars:** the grab floats inside its track (`ScrollbarPadding`, 3 px scaled), and `BeginScrollArea` ends content 6 px (scaled) before a visible vertical scrollbar, so rows, cards and highlights never touch it.
+
 Library and Downloads share card padding, 56px icons and heading-size pack names. Long text wraps, and action buttons move below it when there is insufficient room on the same row. Settings uses the same card measurement with its own padding.
 
 The sidebar mascot uses `MobModel` and `Mobs`: a bundled fox model or box-built pig, creeper, cow, chicken, sheep, slime or bee, chosen randomly at startup. Clicking makes it hop; right-clicking chooses another. Reduced motion disables hopping and idle bobbing.
+
+## Log view (`src/UI/LogView.{h,cpp}`)
+- `LogView::Draw(id, lines, size, firstLine)` shows read-only text lines in a bordered, smooth-scrolling area with a horizontal scrollbar. Only visible lines are drawn, so long logs stay fast.
+- Click and drag selects text (by character, across lines); dragging past the top or bottom edge scrolls. A double-click selects a line. Ctrl+C copies the selection, Ctrl+A selects everything, and the right-click menu has **Copy**, **Select all** and **Copy everything**. The scrollbars don't start a selection.
+- Lines with `ERROR`, `FATAL` or `Exception` are tinted with the error color; `WARN` lines with a softer shade.
+- While the view is scrolled to the bottom it follows new lines. `firstLine` is the number of `lines[0]`, so a console that drops old lines keeps a selection on the same text. `ScrollToBottom()` and `ClearSelection()` reset the view, e.g. when another file is shown.
+- Used by the Manage page's Logs tab.
 
 ## Motion
 All of this is off when **Reduce motion** is on.
@@ -116,7 +145,10 @@ All of this is off when **Reduce motion** is on.
   - Discover's details pane, when another pack is selected
   - My Library and Downloads cards
   - Settings cards, when the page opens or the tab changes (`SettingsPageContext::shownAt`)
-- **Smooth scrolling** (`Widgets::SmoothScroll()`, called before `EndChild()` of a child created with `ImGuiWindowFlags_NoScrollWithMouse`): each wheel notch moves a target 120 px (scaled) and the view eases toward it (about 70 ms time constant). The target is kept in the window's `ImGuiStorage`. Children end before their parents, so the innermost scrollable window under the mouse takes the wheel. Scrollbar drags, keyboard navigation and `SetScrollHereY` reset the target. Ctrl+wheel is ignored. Used by the main content, Discover's pack list and details pane, and the Settings page. With reduce motion on, the wheel jumps straight to the target.
+- **Smooth scrolling** (`Widgets::SmoothScroll()`, called before `EndChild()` of a child created with `ImGuiWindowFlags_NoScrollWithMouse`): each wheel notch moves a target 120 px (scaled) and the view eases toward it (about 70 ms time constant). The target is kept in the window's `ImGuiStorage`. Scrollbar drags, keyboard navigation and `SetScrollHereY` reset the target. Ctrl+wheel is ignored. With reduce motion on, the wheel jumps straight to the target.
+  - **Which window scrolls** (`WheelTarget`, worked out once per frame): starting from the window under the mouse, the first window that has something to scroll and takes the wheel, walking up through parent child windows. Cards (no wheel of their own) hand it to the page around them, so the wheel works the same over text, cards, sliders and empty space. The walk stops at a popup or top-level window, so the wheel over an open combo list (such as a version picker) scrolls only that list, never the page behind it.
+  - `Widgets::BeginScrollArea(id, size, childFlags, windowFlags)` / `EndScrollArea()` make a child window that scrolls this way. Every scrolling panel uses it or `SmoothScroll` directly: the main content, Discover's pack list and details pane, the Servers list, details, mod list and console, Settings, and the launch-settings and optional-mods dialogs.
+- **Tabs** (`Widgets::TabStrip(id, labels, count, &current)`): a row of rounded pill buttons, the selected one filled with `accentDeep` in the bold font. Used by Settings and Discover's details pane.
 
 **Selection highlights:** `NavItem`, `SubNavItem`, `PackRow` and `ListItem` share `RoundedSelectable`, an `InvisibleButton` with its own highlight instead of `ImGui::Selectable`. The highlight is a rounded rectangle (`ImGuiCol_Header` when selected, `HeaderHovered` on hover, `HeaderActive` while pressed). It is drawn inside the content region, so it never reaches the panel's padding or border. The accent selection bar sits just inside the highlight's left edge.
 

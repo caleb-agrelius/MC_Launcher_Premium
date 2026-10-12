@@ -69,6 +69,16 @@ bool FindModrinthClientOnly(HttpClient& http,
 							const std::atomic<bool>* cancel = nullptr);
 
 // The project's full description (its "body", in Markdown).
+// A version's changelog (Markdown). With an empty versionId, the version whose version
+// number is versionNumber (packs installed before versions had ids).
+bool FetchModrinthChangelog(HttpClient& http,
+							const std::string& projectIdOrSlug,
+							const std::string& versionId,
+							const std::string& versionNumber,
+							std::string& out,
+							std::string* err = nullptr,
+							const std::atomic<bool>* cancel = nullptr);
+
 bool FetchModrinthDescription(HttpClient& http,
 							  const std::string& projectIdOrSlug,
 							  std::string& out,

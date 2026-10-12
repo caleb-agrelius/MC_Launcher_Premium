@@ -13,13 +13,18 @@ public static class LauncherWindowCheck {
     [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr window, uint message, IntPtr wp, IntPtr lp);
     [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr window, out Rect rect);
     [DllImport("user32.dll")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr window, System.Text.StringBuilder name, int size);
     public struct Rect { public int Left, Top, Right, Bottom; }
+    // The launcher's GLFW window, not one of the hidden OpenGL, IME or GLFW helper windows
+    // the process also owns.
     public static IntPtr Find(int id) {
         IntPtr found = IntPtr.Zero;
         EnumWindows((window, data) => {
             uint processId;
             GetWindowThreadProcessId(window, out processId);
-            if (processId == id) { found = window; return false; }
+            var name = new System.Text.StringBuilder(64);
+            GetClassName(window, name, name.Capacity);
+            if (processId == id && name.ToString() == "GLFW30") { found = window; return false; }
             return true;
         }, IntPtr.Zero);
         return found;

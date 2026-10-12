@@ -2,13 +2,16 @@
 // doesn't run them: build the live_checks target and run it from the repository root.
 // CurseForge is checked only when an API key is set (MCLP_CURSEFORGE_API_KEY).
 
+#include "Game/PackCreator.h"
 #include "Network/CurseForge.h"
 #include "Network/HttpClient.h"
+#include "Network/ModSearch.h"
 #include "Network/Modrinth.h"
 #include "Network/PackSources.h"
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <filesystem>
 #include <iostream>
 #include <set>
@@ -56,6 +59,12 @@ static void CheckSource(HttpClient& http, PackSource source, const std::string& 
 		Report(name + " description", described && !description.empty() && description.find('<') == std::string::npos &&
 			description.find("](") == std::string::npos,
 			described ? std::to_string(description.size()) + " characters: " + description.substr(0, 60) : error);
+		if (GetSourceCapabilities(source).changelogs) {
+			std::string changelog;
+			const bool logged = FetchPackChangelog(http, pack, changelog, &error);
+			Report(name + " changelog", logged && changelog.find('<') == std::string::npos,
+				logged ? std::to_string(changelog.size()) + " characters: " + changelog.substr(0, 60) : error);
+		}
 		return;
 	}
 	Report(name + " mod list", false, "no pack in the first results had a usable version");
@@ -86,6 +95,64 @@ static void CheckClientOnlyLookup(HttpClient& http)
 		ok ? std::to_string(clientOnly.size()) + " of 2 flagged" : error);
 }
 
+// New packs: Minecraft and loader versions, then Modrinth content with its dependencies.
+static void CheckPackCreation(HttpClient& http, const fs::path& workRoot)
+{
+	std::string error;
+	std::vector<std::string> releases;
+	const bool releasesOk = FetchMinecraftReleases(http, releases, &error);
+	Report("Minecraft releases", releasesOk && !releases.empty() &&
+		std::find(releases.begin(), releases.end(), "1.20.1") != releases.end(),
+		releasesOk ? std::to_string(releases.size()) + " releases, newest " + (releases.empty() ? "" : releases.front()) : error);
+	for (const auto& [loader, minecraft] : std::vector<std::pair<std::string, std::string>>{
+			{ "fabric", "1.20.1" }, { "quilt", "1.20.1" }, { "forge", "1.20.1" }, { "neoforge", "1.21.1" } }) {
+		std::vector<std::string> versions;
+		const bool ok = FetchLoaderVersions(http, loader, minecraft, versions, &error);
+		Report(loader + " versions for " + minecraft, ok && !versions.empty(),
+			ok ? std::to_string(versions.size()) + " versions, first " + (versions.empty() ? "" : versions.front()) : error);
+	}
+	std::vector<std::string> none;
+	Report("fabric versions for an unknown Minecraft", FetchLoaderVersions(http, "fabric", "0.0.1", none, &error) && none.empty(),
+		error);
+
+	ContentSearch search;
+	search.kind = ContentKind::Mods;
+	search.query = "sodium extra";
+	search.gameVersion = "1.20.1";
+	search.loader = "fabric";
+	std::vector<ContentProject> projects;
+	const bool searched = SearchContent(http, search, 10, projects, &error);
+	Report("Modrinth mod search", searched && !projects.empty(),
+		searched ? std::to_string(projects.size()) + " results, first " + (projects.empty() ? "" : projects.front().name) : error);
+	search.kind = ContentKind::ShaderPacks;
+	search.query.clear();
+	std::vector<ContentProject> shaders;
+	Report("Modrinth shader search", SearchContent(http, search, 5, shaders, &error) && !shaders.empty(), error);
+
+	// Sodium Extra needs Sodium: installing it into an empty pack adds both.
+	const fs::path game = workRoot / "custom-pack" / "minecraft";
+	fs::remove_all(game.parent_path());
+	search.kind = ContentKind::Mods;
+	std::vector<AddedContent> added;
+	std::vector<std::string> notes;
+	const bool installed = InstallContent(http, search, "sodium-extra", game, added, notes, &error);
+	std::string names;
+	for (const AddedContent& file : added)
+		names += file.fileName + " ";
+	Report("Install Sodium Extra with its dependencies", installed && added.size() >= 2 &&
+		names.find("sodium-fabric") != std::string::npos, installed ? names : error);
+	std::set<std::string> projectIds;
+	const bool found = FindInstalledProjects(http, game / "mods", projectIds, &error);
+	Report("Installed projects by hash", found && projectIds.size() == 3,
+		found ? std::to_string(projectIds.size()) + " projects" : error);
+	// Again: everything is there already, so nothing is downloaded.
+	const bool again = InstallContent(http, search, "sodium-extra", game, added, notes, &error);
+	Report("Installing it again adds nothing", again && added.empty(), again ? std::to_string(added.size()) + " added" : error);
+	ContentDownload download;
+	Report("A mod with no build for the pack is refused",
+		!FindContentDownload(http, { ContentKind::Mods, "", "1.20.1", "forge" }, "sodium", download, &error), error);
+}
+
 int main()
 {
 	HttpClient http;
@@ -96,6 +163,7 @@ int main()
 	CheckSource(http, PackSource::ATLauncher, "", workRoot);
 	CheckSource(http, PackSource::Technic, "tekkit", workRoot);
 	CheckClientOnlyLookup(http);
+	CheckPackCreation(http, workRoot);
 	if (!CurseForgeApiKey().empty())
 		CheckSource(http, PackSource::CurseForge, "", workRoot);
 	else
