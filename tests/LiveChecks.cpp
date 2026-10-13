@@ -158,6 +158,64 @@ static void CheckPackCreation(IHttpClient& http, const fs::path& workRoot)
 		!FindContentDownload(http, { ContentKind::Mods, "", "1.20.1", "forge" }, "sodium", download, &error), error);
 }
 
+// CurseForge as a source in Manage > Content > Browse (needs an API key): mod, resource pack and shader
+// search, installing a mod with what it requires, finding it again by fingerprint, and a mod with no
+// build for the pack. Project ids come from the search, so nothing here depends on a particular mod.
+static void CheckCurseForgeContent(IHttpClient& http, const fs::path& workRoot)
+{
+	std::string error;
+	ContentSearch search;
+	search.kind = ContentKind::Mods;
+	search.query = "sodium";
+	search.gameVersion = "1.20.1";
+	search.loader = "fabric";
+	search.source = ContentSource::CurseForge;
+	std::vector<ContentProject> projects;
+	const bool searched = SearchContent(http, search, 10, projects, &error);
+	Report("CurseForge mod search", searched && !projects.empty() && projects.front().id.rfind("cf-", 0) == 0,
+		searched ? std::to_string(projects.size()) + " results, first " + (projects.empty() ? "" : projects.front().name) : error);
+	search.query.clear();
+	const bool popular = SearchContent(http, search, 10, projects, &error);
+	Report("CurseForge most downloaded mods", popular && projects.size() >= 5, popular ? std::to_string(projects.size()) + " results" : error);
+	for (const ContentKind kind : { ContentKind::ResourcePacks, ContentKind::ShaderPacks }) {
+		ContentSearch other = search;
+		other.kind = kind;
+		std::vector<ContentProject> found;
+		const bool ok = SearchContent(http, other, 5, found, &error);
+		Report(std::string("CurseForge ") + GetContentKind(kind).label + " search", ok && !found.empty(),
+			ok ? std::to_string(found.size()) + " results" : error);
+	}
+	if (projects.empty())
+		return;
+
+	// Install the first result into an empty pack, with whatever it requires. A mod whose author blocks
+	// downloads can't be added, so the first few results are tried.
+	const fs::path game = workRoot / "curseforge-content" / "minecraft";
+	fs::remove_all(game.parent_path());
+	std::vector<AddedContent> added;
+	std::vector<std::string> notes;
+	std::string installedId;
+	for (std::size_t i = 0; i < std::min<std::size_t>(projects.size(), 5) && installedId.empty(); ++i) {
+		if (InstallContent(http, search, projects[i].id, game, added, notes, &error))
+			installedId = projects[i].id;
+	}
+	std::string names;
+	for (const AddedContent& file : added)
+		names += file.fileName + " ";
+	Report("CurseForge install with its dependencies", !installedId.empty() && !added.empty(), installedId.empty() ? error : names);
+	if (installedId.empty())
+		return;
+	std::set<std::string> projectIds;
+	const bool found = FindInstalledProjects(http, game / "mods", projectIds, &error, nullptr, ContentSource::CurseForge);
+	Report("CurseForge installed projects by fingerprint", found && projectIds.count(installedId) == 1,
+		found ? std::to_string(projectIds.size()) + " projects" : error);
+	const bool again = InstallContent(http, search, installedId, game, added, notes, &error);
+	Report("Installing it again adds nothing", again && added.empty(), again ? std::to_string(added.size()) + " added" : error);
+	ContentDownload download;
+	search.gameVersion = "1.0";
+	Report("A mod with no build for the pack is refused", !FindContentDownload(http, search, installedId, download, &error), error);
+}
+
 // Modrinth categories: the list loads, and a category narrows a search.
 static void CheckCategories(HttpClient& http)
 {
@@ -291,9 +349,10 @@ int main()
 	CheckPackCreation(http, workRoot);
 	CheckLegacyForgeServer(http, workRoot, "1.7.10", "1.7.10-10.13.4.1614-1.7.10", "technic", "bin/modpack.jar");
 	CheckLegacyForgeServer(http, workRoot, "1.6.4", "1.6.4-9.11.1.965", "atlauncher", "jarmods/minecraftforge.zip");
-	if (!CurseForgeApiKey().empty())
+	if (!CurseForgeApiKey().empty()) {
 		CheckSource(http, PackSource::CurseForge, "", workRoot);
-	else
+		CheckCurseForgeContent(http, workRoot);
+	} else
 		std::cout << "SKIP  CurseForge: no API key\n";
 	std::cout << (g_failures == 0 ? "All live checks passed\n" : std::to_string(g_failures) + " live check(s) failed\n");
 	return g_failures == 0 ? 0 : 1;

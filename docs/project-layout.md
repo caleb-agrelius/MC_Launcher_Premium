@@ -10,7 +10,7 @@
 | `src/App/GlfwWindow.*` | The window: GLFW, the OpenGL context, the ImGui backends, dropped files, placement |
 | `src/App/ThemeController.*` | Applies the theme, UI scale and monitor DPI at startup and when they change |
 | `src/Core/` | Framework-free infrastructure and interfaces: `ITaskRunner`/`WorkerPool`, `IUiPoster`/`UiQueue`, `TaskScope`, `INotifier`, `Runtime`, `IWindowControl`, `IDisplayMetrics`, `AppInfo` |
-| `src/Platform/Platform.h` | Everything the launcher needs from the OS: opening folders and files, the Open dialog, memory, network addresses, the executable's folder, the title bar |
+| `src/Platform/Platform.h` | Everything the launcher needs from the OS: opening folders, files and web addresses, the Open dialog, memory, network addresses, random bytes, protecting saved secrets, the sign-in redirect listener (`LoopbackListener`), the executable's and the per-user data folder, the title bar |
 | `src/Platform/Platform_win32.cpp`, `src/Platform/Platform_posix.cpp` | The definitions for each OS; CMake builds the one that matches |
 | `src/Services/AppPaths.h` | File and folder names under the data folder |
 | `src/Services/Settings/` | `SettingsStore`, `JavaScanService`, `SharedFilesService` |
@@ -28,8 +28,8 @@
 | `src/Network/HttpClient.*` | The libcurl implementation: downloads, GET/POST, headers, cancellation |
 | `src/Network/PackSources.*` | Single entry point for search, versions, and installs across sources |
 | `src/Network/Modrinth.*` | Modrinth API client |
-| `src/Network/CurseForge.*` | CurseForge API client and API key handling |
-| `src/Network/ModSearch.*` | Modrinth mods, resource packs and shader packs for Manage > Content > Browse: search, fitting versions, installing with dependencies |
+| `src/Network/CurseForge.*` | CurseForge API client and API key handling, including its mods, resource packs and shaders for Browse |
+| `src/Network/ModSearch.*` | Mods, resource packs and shader packs for Manage > Content > Browse from Modrinth or CurseForge (`ContentSource`): search, fitting versions, installing with dependencies |
 | `src/Network/Ftb.*` | FTB API client |
 | `src/Network/Technic.*` | Technic Platform and Solder client |
 | `src/Network/AtLauncher.*` | ATLauncher CDN client |
@@ -66,9 +66,10 @@
 | `src/UI/MobModel.*`, `src/UI/Mobs.*` | Sidebar mob rendering and randomly selected box-built mobs |
 | `src/Util/DebugTrace.*` | The debug harness: channels, trace lines, secret hiding and the `app.log` tee (see [debug-harness.md](features/debug-harness.md)) |
 | `src/Util/TracedFs.*` | File operations that change the disk, each traced on the harness's file channel |
-| `src/Util/Hash.*`, `src/Util/Sha1.*` | SHA-1 and MD5 |
+| `src/Util/Hash.*`, `src/Util/Sha1.*`, `src/Util/Sha256.*` | SHA-1, MD5, SHA-256 and CurseForge's file fingerprint (MurmurHash2) |
 | `src/Util/Paths.*` | Long (260+ character) Windows paths |
-| `src/Util/Process.*` | Process launching and interactive server console |
+| `src/Util/PosixFd.h` | An owned POSIX file descriptor, for `Process.cpp` and `Platform_posix.cpp` |
+| `src/Util/Process.*` | Process launching and interactive server console, for Windows and POSIX |
 | `src/Util/Text.*` | Markdown/HTML descriptions to plain text, shortening, compact counts (`FormatCount`), file sizes (`FormatFileSize`), `ToLower` |
 | `src/Util/ZipArchive.h` | `ZipReader` and `ZipWriter`: RAII wrappers over miniz so a zip handle is always closed |
 | `src/Util/PathSafety.h` | Checks that a path from an archive stays inside the folder it is extracted to |
@@ -80,11 +81,13 @@
 | `docs/architecture.md` | Layers, interfaces, threads and lifetimes |
 | `docs/features/` | Feature documentation, indexed in `CLAUDE.md` |
 | `tests/` | Regression checks, opt-in live API checks (`LiveChecks.cpp`), and Windows window smoke test |
+| `CMakePresets.json` | The `windows-x64` and `linux-x64` configure, build and test presets (see [features/platforms.md](features/platforms.md#building)) |
+| `.github/workflows/` | `ci.yml` (every pull request), `build.yml` (Windows) and `build-linux.yml` (Linux), and `release.yml` |
 | `mcdebug.cmd` | Build and run helper (see the [README](../README.md#mcdebug)) |
 
 ## Data folder
 
-The app runs from the repository root (the folder containing `resources\index.json`) and creates the following there. All are gitignored.
+The app runs from the repository root (the folder containing `resources\index.json`) and creates the following there. All are gitignored. On Linux, when that folder cannot be written to (an AppImage, an install under `/usr`), the data goes to `$XDG_DATA_HOME/mc-launcher-premium` (else `~/.local/share/mc-launcher-premium`) with `resources` linked into it; see [features/platforms.md](features/platforms.md#data-folder).
 
 | Path | Contents |
 | --- | --- |
@@ -93,7 +96,7 @@ The app runs from the repository root (the folder containing `resources\index.js
 | `settings.json` | Settings (see [features/settings.md](features/settings.md)) |
 | `library.json` | Packs listed in My Library |
 | `downloads.json` | Finished downloads, restored on startup |
-| `account.dat` | Signed-in account, encrypted with Windows DPAPI |
+| `account.dat` | Signed-in account, encrypted with Windows DPAPI (on Linux plain JSON, readable only by its owner) |
 | `downloads\<pack>\` | Downloaded `.mrpack` files and pack archives |
 | `installs\<pack>\` | Extracted pack files; whole-pack installs use `minecraft\` and `pack.json` |
 | `minecraft\` | Shared Minecraft versions, libraries, assets, and Java runtimes |

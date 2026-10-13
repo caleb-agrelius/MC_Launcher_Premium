@@ -1033,8 +1033,8 @@ static void JavaChecks(const fs::path& dir)
 
 	const fs::path javas = dir / "javas";
 	auto fakeJava = [&](const std::string& folder, const std::string& release) {
-		Write(javas / folder / "bin" / "java.exe", "stub");
-		Write(javas / folder / "bin" / "javaw.exe", "stub");
+		Write(javas / folder / "bin" / JavaExecutableName(false), "stub");
+		Write(javas / folder / "bin" / JavaExecutableName(true), "stub");
 		if (!release.empty())
 			Write(javas / folder / "release", release);
 	};
@@ -1048,7 +1048,7 @@ static void JavaChecks(const fs::path& dir)
 	const std::vector<JavaInstall> found = ScanJavaFolders({ javas });
 	Check(found.size() == 4, "Expected 4 Java homes, found " + std::to_string(found.size()));
 	const JavaInstall* java17 = PickJava(found, 17);
-	Check(java17 && java17->version == "17.0.10" && java17->javaw.filename() == "javaw.exe",
+	Check(java17 && java17->version == "17.0.10" && java17->javaw.filename() == JavaExecutableName(true),
 		"Automatic Java didn't pick the newest Java 17");
 	const JavaInstall* java8 = PickJava(found, 8);
 	Check(java8 && java8->home.filename() == "jre1.8.0_381", "Automatic Java didn't find Java 8 by folder name");

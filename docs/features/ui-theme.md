@@ -25,7 +25,8 @@ Color themes, fonts, DPI and UI scaling, shared drawing helpers, and toast notif
   - Segoe UI Symbol
   - Segoe UI Emoji (in one color)
 - Glyphs are rasterized on demand, so the fallback fonts cost nothing until they're used.
-- On other systems, or if Segoe UI is missing, ImGui's scalable default font (`AddFontDefaultVector`) is used.
+- On Linux the regular and bold fonts are the first that exists of Noto Sans (`/usr/share/fonts/truetype/noto/`, `/usr/share/fonts/noto/`, `/usr/share/fonts/google-noto/`) and DejaVu Sans (the Debian, Arch and Fedora folders). Noto Sans CJK is merged in when it is installed. There is no emoji or symbol font.
+- If none of those exists, ImGui's scalable default font (`AddFontDefaultVector`) is used.
 - Unscaled sizes for `ImGui::PushFont(font, size)`:
 
   | Constant | Size |
