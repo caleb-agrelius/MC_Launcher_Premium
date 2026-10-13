@@ -1,11 +1,9 @@
-# Makes sure every pull request (and main) configures, builds and passes the offline checks.
-# Pull requests build Release only; pushes to main also build Debug.
+# Makes sure every pull request configures, builds and passes the offline checks.
+# Release only: it is the configuration that ships, and merging to main does not rebuild.
 name: CI
 
 on:
   pull_request:
-  push:
-    branches: [main]
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -16,10 +14,6 @@ permissions:
 
 jobs:
   build:
-    strategy:
-      fail-fast: false
-      matrix:
-        configuration: ${{ github.event_name == 'pull_request' && fromJSON('["Release"]') || fromJSON('["Debug","Release"]') }}
     uses: ./.github/workflows/build.yml
     with:
-      configuration: ${{ matrix.configuration }}
+      configuration: Release
