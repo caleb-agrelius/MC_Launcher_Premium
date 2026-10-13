@@ -34,13 +34,13 @@ jobs:
             libxmu-dev libxi-dev libgl-dev libxinerama-dev libxcursor-dev xorg-dev libglu1-mesa-dev \
             libwayland-dev libxkbcommon-dev wayland-protocols extra-cmake-modules
 
-      # vcpkg.json pins a builtin-baseline, so the checkout has to reach that commit: clone the full history.
+      # vcpkg.json pins a builtin-baseline. The full clone has that commit in its history, and vcpkg reads
+      # the port versions from it, so the clone itself stays on master (checking the baseline out would
+      # pair its scripts with a vcpkg tool that can be older than they expect).
       - name: Set up vcpkg
         run: |
           mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
-          baseline=$(grep -o '"builtin-baseline": *"[0-9a-f]*"' vcpkg.json | grep -o '[0-9a-f]\{40\}')
           git clone https://github.com/microsoft/vcpkg.git "$VCPKG_ROOT"
-          git -C "$VCPKG_ROOT" checkout "$baseline"
           "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
 
       - name: Cache vcpkg packages
