@@ -7,9 +7,11 @@
 #include "Game/PackInstance.h"
 #include "Game/ServerSetup.h"
 #include "Network/CachingHttpClient.h"
+#include "Network/CurseForge.h"
 #include "Network/HttpClient.h"
 #include "Network/Modrinth.h"
 #include "Network/MicrosoftAuth.h"
+#include "Network/ModSearch.h"
 #include "Network/OfflineHttpClient.h"
 #include "Network/TracingHttpClient.h"
 #include "Platform/Platform.h"
@@ -19,6 +21,7 @@
 #include "UI/Theme.h"
 #include "UI/Widgets.h"
 #include "Util/DebugTrace.h"
+#include "Util/Hash.h"
 #include "Util/Paths.h"
 #include "Util/Process.h"
 #include "Util/Sha1.h"
@@ -481,6 +484,216 @@ static void CardChecks()
 		ImGui::Render();
 	}
 	ImGui::DestroyContext();
+}
+
+// An HTTP client that answers from a list of rules (the first whose method and URL part match) and
+// remembers every request it was asked for.
+class ScriptedHttp final : public IHttpClient {
+public:
+	std::vector<std::string> requests; // "GET url", "POST url body" and "DOWNLOAD url"
+	std::vector<std::string> headers;  // every header sent
+	std::string downloadText = "hello";
+
+	void On(const std::string& method, const std::string& urlPart, const std::string& reply)
+	{
+		m_rules.push_back({ method, urlPart, reply });
+	}
+
+	bool Contains(const std::string& part) const
+	{
+		return std::any_of(requests.begin(), requests.end(), [&](const std::string& request) { return request.find(part) != std::string::npos; });
+	}
+
+	bool DownloadToFile(const std::string& url, const std::string& outPath, std::function<void(double, double)>, std::string*,
+		const std::atomic<bool>*, const std::vector<std::string>&) override
+	{
+		requests.push_back("DOWNLOAD " + url);
+		Write(outPath, downloadText);
+		return true;
+	}
+	bool Get(const std::string& url, std::string& body, std::string* err, const std::atomic<bool>*,
+		const std::vector<std::string>& extra) override
+	{
+		headers.insert(headers.end(), extra.begin(), extra.end());
+		return Answer("GET", url, "", body, err);
+	}
+	bool Post(const std::string& url, const std::string& jsonBody, std::string& body, std::string* err, const std::atomic<bool>*,
+		const std::vector<std::string>& extra) override
+	{
+		headers.insert(headers.end(), extra.begin(), extra.end());
+		return Answer("POST", url, jsonBody, body, err);
+	}
+	bool Request(const std::string&, const std::vector<std::string>&, const std::string&, std::string&, long&, std::string* err,
+		const std::atomic<bool>*) override
+	{
+		if (err) *err = "not scripted";
+		return false;
+	}
+
+private:
+	struct Rule {
+		std::string method, urlPart, reply;
+	};
+
+	bool Answer(const std::string& method, const std::string& url, const std::string& sent, std::string& body, std::string* err)
+	{
+		requests.push_back(method + " " + url + (sent.empty() ? std::string() : " " + sent));
+		for (const Rule& rule : m_rules) {
+			if (rule.method == method && url.find(rule.urlPart) != std::string::npos) {
+				body = rule.reply;
+				return true;
+			}
+		}
+		if (err) *err = "HTTP 404";
+		return false;
+	}
+
+	std::vector<Rule> m_rules;
+};
+
+// CurseForge as a source in Manage > Content > Browse: the file fingerprint, search, picking a file with
+// its dependencies, files whose author blocks downloads, finding installed mods, and installing.
+// The replies follow CurseForge's documented shapes; nothing here has met the live API.
+static void CurseForgeContentChecks(const fs::path& dir)
+{
+	// Fingerprints: MurmurHash2 (seed 1) of the bytes without tab, line feed, carriage return and space.
+	// The expected values come from a separate implementation of the algorithm.
+	Check(CurseForgeFingerprint("") == 1540447798u && CurseForgeFingerprint(" \t\r\n") == 1540447798u, "Empty fingerprint");
+	Check(CurseForgeFingerprint("a") == 626045324u && CurseForgeFingerprint("abc") == 1621425345u &&
+		CurseForgeFingerprint("abcd") == 3376380438u && CurseForgeFingerprint("abcde") == 3469237630u, "Fingerprint tail lengths");
+	Check(CurseForgeFingerprint("The quick brown fox jumps over the lazy dog") == 3751777527u, "Fingerprint of a sentence");
+	Check(CurseForgeFingerprint("a b\tc\r\nd e f g h") == 1080400154u && CurseForgeFingerprint("abcdefgh") == CurseForgeFingerprint("a b\tc\r\nd e f g h"),
+		"Fingerprint ignores whitespace");
+	const fs::path fingerprinted = dir / "cf" / "fingerprint.bin";
+	Write(fingerprinted, "The quick brown fox\r\n jumps over the lazy dog");
+	std::uint32_t fromFile = 0;
+	Check(CurseForgeFingerprintOfFile(fingerprinted.string(), fromFile) && fromFile == 3751777527u, "File fingerprint");
+	Check(!CurseForgeFingerprintOfFile((dir / "cf" / "missing.bin").string(), fromFile), "A missing file has no fingerprint");
+
+	SetCurseForgeApiKey("test-key");
+	ScriptedHttp http;
+	std::string error;
+	ContentSearch search;
+	search.kind = ContentKind::Mods;
+	search.gameVersion = "1.20.1";
+	search.loader = "fabric";
+	search.source = ContentSource::CurseForge;
+
+	// Search: class, version and loader go in the request, the most downloaded come first without a query.
+	http.On("GET", "/mods/search", R"({"data":[
+		{"id":111,"name":"Sodium","summary":"Faster","downloadCount":9000000,"authors":[{"name":"jellysquid3"}],
+		 "logo":{"thumbnailUrl":"https://img/sodium.png"},"links":{"websiteUrl":"https://www.curseforge.com/minecraft/mc-mods/sodium"}},
+		{"id":222,"name":"Lithium","summary":"","downloadCount":5000,"authors":[],"logo":null,"links":{}}]})");
+	std::vector<ContentProject> found;
+	Check(SearchContent(http, search, 30, found, &error), "CurseForge search failed: " + error);
+	Check(found.size() == 2 && found[0].id == "cf-111" && found[0].name == "Sodium" && found[0].author == "jellysquid3" &&
+		found[0].iconUrl == "https://img/sodium.png" && found[0].pageUrl == "https://www.curseforge.com/minecraft/mc-mods/sodium" &&
+		found[0].downloads == 9000000 && found[1].id == "cf-222" && found[1].author.empty() && found[1].iconUrl.empty(),
+		"CurseForge search results were read wrongly");
+	Check(http.Contains("classId=6") && http.Contains("gameId=432") && http.Contains("gameVersion=1.20.1") &&
+		http.Contains("modLoaderType=4") && http.Contains("sortField=6") && !http.Contains("searchFilter"), "Search request: " + http.requests.back());
+	Check(std::find(http.headers.begin(), http.headers.end(), "x-api-key: test-key") != http.headers.end(), "The API key was not sent");
+	search.query = "sodium";
+	Check(SearchContent(http, search, 30, found, &error) && http.requests.back().find("searchFilter=sodium") != std::string::npos &&
+		http.requests.back().find("sortField") == std::string::npos, "A text search should use CurseForge's ranking");
+	search.query.clear();
+	ContentSearch shaders = search;
+	shaders.kind = ContentKind::ShaderPacks;
+	Check(SearchContent(http, shaders, 30, found, &error) && http.requests.back().find("classId=6552") != std::string::npos &&
+		http.requests.back().find("modLoaderType") == std::string::npos, "Shaders have their own class and no loader");
+	shaders.kind = ContentKind::ResourcePacks;
+	Check(SearchContent(http, shaders, 30, found, &error) && http.requests.back().find("classId=12") != std::string::npos, "Resource pack class");
+
+	// Quilt runs Fabric mods: both loaders are searched and the most downloaded come first.
+	{
+		ScriptedHttp quiltHttp;
+		quiltHttp.On("GET", "modLoaderType=5", R"({"data":[{"id":1,"name":"QuiltOnly","downloadCount":10}]})");
+		quiltHttp.On("GET", "modLoaderType=4", R"({"data":[{"id":2,"name":"FabricToo","downloadCount":99},{"id":1,"name":"QuiltOnly","downloadCount":10}]})");
+		ContentSearch quilt = search;
+		quilt.loader = "quilt";
+		Check(SearchContent(quiltHttp, quilt, 30, found, &error) && found.size() == 2 && found[0].id == "cf-2" && found[1].id == "cf-1",
+			"Quilt should list Fabric mods too, once each, most downloaded first");
+	}
+
+	// The file to add: the newest release (not the newest file), its SHA-1, and only its required dependencies.
+	http.On("GET", "/mods/123/files", R"({"data":[
+		{"id":901,"fileName":"main-beta.jar","releaseType":2,"downloadUrl":"https://cdn/beta.jar","fileLength":3,"hashes":[],"dependencies":[]},
+		{"id":903,"fileName":"main-1.jar","releaseType":1,"downloadUrl":"https://cdn/main.jar","fileLength":5,
+		 "hashes":[{"value":"AAF4C61DDCC5E8A2DABEDE0F3B482CD9AEA9434D","algo":1},{"value":"md5","algo":2}],
+		 "dependencies":[{"modId":333,"relationType":3},{"modId":444,"relationType":2},{"modId":555,"relationType":1}]},
+		{"id":902,"fileName":"main-0.jar","releaseType":1,"downloadUrl":"https://cdn/old.jar","fileLength":5,"hashes":[],"dependencies":[]}]})");
+	ContentDownload download;
+	Check(FindContentDownload(http, search, "cf-123", download, &error), "CurseForge file lookup failed: " + error);
+	Check(download.fileName == "main-1.jar" && download.url == "https://cdn/main.jar" && download.size == 5 &&
+		download.sha1 == "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d" && download.requiredProjects == std::vector<std::string>{ "cf-333" },
+		"The CurseForge file was chosen or read wrongly");
+	Check(http.requests.back().find("/mods/123/files") != std::string::npos && http.requests.back().find("gameVersion=1.20.1") != std::string::npos &&
+		http.requests.back().find("modLoaderType=4") != std::string::npos, "File request: " + http.requests.back());
+	Check(!FindContentDownload(http, search, "modrinth-id", download, &error) && !error.empty(), "A Modrinth id is not a CurseForge project");
+	http.On("GET", "/mods/404/files", R"({"data":[]})");
+	Check(!FindContentDownload(http, search, "cf-404", download, &error) && error.find("1.20.1") != std::string::npos &&
+		error.find("fabric") != std::string::npos, "A project with no fitting file should say what it needs: " + error);
+
+	// A file whose author blocks third-party downloads: found on Modrinth by SHA-1, else reported with its page.
+	const std::string blocked = R"({"data":[{"id":950,"fileName":"blocked.jar","releaseType":1,"downloadUrl":null,"fileLength":5,
+		"hashes":[{"value":"aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d","algo":1}],"dependencies":[]}]})";
+	http.On("GET", "/mods/777/files", blocked);
+	http.On("GET", "/mods/777", R"({"data":{"links":{"websiteUrl":"https://www.curseforge.com/minecraft/mc-mods/blocked"}}})");
+	http.On("POST", "version_files", "{}");
+	Check(!FindContentDownload(http, search, "cf-777", download, &error) &&
+		error.find("only allows downloads from the CurseForge website") != std::string::npos &&
+		error.find("https://www.curseforge.com/minecraft/mc-mods/blocked/download/950") != std::string::npos,
+		"A blocked file should point to its download page: " + error);
+	{
+		ScriptedHttp modrinthHttp;
+		modrinthHttp.On("GET", "/mods/777/files", blocked);
+		modrinthHttp.On("POST", "version_files", R"({"aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d":{"files":[
+			{"hashes":{"sha1":"aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d"},"url":"https://cdn.modrinth.com/blocked.jar"}]}})");
+		const bool resolved = FindContentDownload(modrinthHttp, search, "cf-777", download, &error);
+		std::string sent;
+		for (const std::string& request : modrinthHttp.requests)
+			sent += request + " ; ";
+		Check(resolved && download.url == "https://cdn.modrinth.com/blocked.jar",
+			"A blocked file should come from Modrinth when it has the same file: " + error + " " + sent);
+	}
+
+	// Installed mods: every file in the folder, turned off or not, is sent by fingerprint.
+	const fs::path mods = dir / "cf" / "game" / "mods";
+	Write(mods / "a.jar", "hello");
+	Write(mods / "b.jar.disabled", "world");
+	fs::create_directories(mods / "folder");
+	http.On("POST", "/fingerprints/432", R"({"data":{"exactMatches":[{"id":111,"file":{"modId":111}},{"file":{"modId":222}}],"exactFingerprints":[]}})");
+	std::set<std::string> projects;
+	Check(FindInstalledProjects(http, mods, projects, &error, nullptr, ContentSource::CurseForge), "Installed lookup failed: " + error);
+	Check(projects == std::set<std::string>{ "cf-111", "cf-222" }, "Installed CurseForge projects were read wrongly");
+	Check(http.Contains("\"fingerprints\"") && http.Contains(std::to_string(CurseForgeFingerprint("hello"))) &&
+		http.Contains(std::to_string(CurseForgeFingerprint("world"))), "The files' fingerprints were not sent");
+
+	// Installing: the mod and the mod it requires, each checked against its SHA-1, then nothing the second time.
+	http.On("GET", "/mods/333/files", R"({"data":[{"id":31,"fileName":"lib.jar","releaseType":1,"downloadUrl":"https://cdn/lib.jar","fileLength":5,
+		"hashes":[{"value":"aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d","algo":1}],"dependencies":[]}]})");
+	http.requests.clear();
+	const fs::path game = dir / "cf" / "install";
+	std::vector<AddedContent> added;
+	std::vector<std::string> notes;
+	Check(InstallContent(http, search, "cf-123", game, added, notes, &error), "CurseForge install failed: " + error);
+	Check(added.size() == 2 && added[0].fileName == "main-1.jar" && added[0].projectId == "cf-123" &&
+		added[1].fileName == "lib.jar" && added[1].projectId == "cf-333" && notes.empty() &&
+		fs::exists(game / "mods" / "main-1.jar") && fs::exists(game / "mods" / "lib.jar"), "CurseForge install put the wrong files in place");
+	Check(http.Contains("DOWNLOAD https://cdn/main.jar") && http.Contains("DOWNLOAD https://cdn/lib.jar"), "Files were not downloaded from their URLs");
+	Check(InstallContent(http, search, "cf-123", game, added, notes, &error) && added.empty(), "A mod already in the pack should not be added again");
+	http.downloadText = "tampered";
+	fs::remove(game / "mods" / "main-1.jar");
+	Check(!InstallContent(http, search, "cf-123", game, added, notes, &error) && error.find("SHA-1") != std::string::npos &&
+		!fs::exists(game / "mods" / "main-1.jar"), "A download that fails its SHA-1 must not be kept: " + error);
+
+	// Without a key nothing is sent.
+	SetCurseForgeApiKey("");
+	if (CurseForgeEnvApiKey().empty()) {
+		http.requests.clear();
+		Check(!SearchContent(http, search, 30, found, &error) && error.find("API key") != std::string::npos && http.requests.empty(),
+			"CurseForge without a key should refuse before any request: " + error);
+	}
 }
 
 static std::string HexOf(const std::array<unsigned char, 32>& digest)
@@ -1457,6 +1670,7 @@ int main(int argc, char** argv)
 		TextChecks();
 		CardChecks();
 		SignInChecks(dir);
+		CurseForgeContentChecks(dir);
 		ProcessChecks(dir, executable);
 		ContentChecks(dir);
 		PackEditChecks(dir);

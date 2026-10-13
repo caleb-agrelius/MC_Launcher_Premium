@@ -1,5 +1,6 @@
 #include "UI/Pages/Manage/ContentBrowser.h"
 
+#include "Network/PackSources.h"
 #include "UI/Common/Background.h"
 #include "UI/Common/UiHelpers.h"
 #include "UI/ImageCache.h"
@@ -23,6 +24,7 @@ ContentSearch ContentBrowser::BrowseSearch(const ManagePageContext& context) con
 	search.query = m_query;
 	search.query.erase(0, search.query.find_first_not_of(' '));
 	search.query.erase(search.query.find_last_not_of(' ') + 1);
+	search.source = m_source;
 	search.gameVersion = context.pack->gameVersion;
 	// The pack's loader: the first of its loaders ("fabric", "forge, neoforge", ...).
 	const std::string loaders = ToLower(context.pack->loaders);
@@ -30,10 +32,11 @@ ContentSearch ContentBrowser::BrowseSearch(const ManagePageContext& context) con
 	return search;
 }
 
-void ContentBrowser::SearchModrinth(const ManagePageContext& context)
+void ContentBrowser::Search(const ManagePageContext& context)
 {
 	const ContentSearch search = BrowseSearch(context);
-	const std::string key = std::to_string(static_cast<int>(search.kind)) + "|" + search.query + "|" + search.gameVersion + "|" + search.loader;
+	const std::string key = std::to_string(static_cast<int>(search.source)) + "|" + std::to_string(static_cast<int>(search.kind)) +
+		"|" + search.query + "|" + search.gameVersion + "|" + search.loader;
 	if (key == m_searchedFor || !context.http)
 		return;
 	m_searchedFor = key;
@@ -61,16 +64,24 @@ void ContentBrowser::SearchModrinth(const ManagePageContext& context)
 
 void ContentBrowser::LoadInstalledProjects(const ManagePageContext& context)
 {
-	if (m_installedFor == context.gameDir.u8string() || !context.http)
+	if (!context.http)
 		return;
-	m_installedFor = context.gameDir.u8string();
+	if (m_installedFor != context.gameDir.u8string()) { // another pack is shown now
+		m_installedFor = context.gameDir.u8string();
+		m_installedProjects.clear();
+		m_installedLoaded.clear();
+	}
+	// Read once per pack and source, when that source is first shown (CurseForge hashes every file).
+	if (!m_installedLoaded.insert(m_source).second)
+		return;
 	IHttpClient* http = context.http;
 	const fs::path gameDir = context.gameDir;
+	const ContentSource source = m_source;
 	const std::string forDir = m_installedFor;
-	RunInBackground(context.tasks, [http, gameDir]() {
+	RunInBackground(context.tasks, [http, gameDir, source]() {
 		std::set<std::string> projects;
 		for (ContentKind kind : ContentModel::kKinds)
-			FindInstalledProjects(*http, gameDir / GetContentKind(kind).folder, projects);
+			FindInstalledProjects(*http, gameDir / GetContentKind(kind).folder, projects, nullptr, nullptr, source);
 		return projects;
 	}, [this, forDir](std::set<std::string> projects) {
 		if (forDir == m_installedFor)
@@ -126,14 +137,41 @@ void ContentBrowser::InstallProject(const ManagePageContext& context, const Cont
 	});
 }
 
+bool ContentBrowser::DrawSourceChips()
+{
+	std::string reason;
+	const bool curseForgeAvailable = IsSourceAvailable(PackSource::CurseForge, &reason);
+	ContentSource picked = m_source;
+	if (!curseForgeAvailable)
+		picked = ContentSource::Modrinth; // the key was removed while CurseForge was shown
+	ImGui::AlignTextToFramePadding();
+	ImGui::TextDisabled("Source");
+	ImGui::SameLine();
+	if (Widgets::ToggleChip("Modrinth", picked == ContentSource::Modrinth, UiHelpers::SourceColor(PackSource::Modrinth)))
+		picked = ContentSource::Modrinth;
+	ImGui::SameLine();
+	if (Widgets::ToggleChip("CurseForge", picked == ContentSource::CurseForge, UiHelpers::SourceColor(PackSource::CurseForge), curseForgeAvailable))
+		picked = ContentSource::CurseForge;
+	if (!curseForgeAvailable)
+		ImGui::SetItemTooltip("%s", reason.c_str());
+	if (picked == m_source)
+		return false;
+	m_source = picked;
+	m_results.clear();
+	m_searchError.clear();
+	return true;
+}
+
 bool ContentBrowser::Draw(const ManagePageContext& context, int kind)
 {
 	m_kind = kind;
+	DrawSourceChips();
 	const ContentSearch search = BrowseSearch(context);
 	const ContentKindInfo& info = GetContentKind(search.kind);
+	const char* sourceName = ContentSourceName(m_source);
 	const float back = Widgets::ButtonWidth("Back to installed") + ImGui::GetStyle().ItemSpacing.x;
 	ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - back);
-	if (ImGui::InputTextWithHint("##browse_query", ("Search Modrinth for " + ToLower(info.label) + "...").c_str(), &m_query))
+	if (ImGui::InputTextWithHint("##browse_query", (std::string("Search ") + sourceName + " for " + ToLower(info.label) + "...").c_str(), &m_query))
 		m_editedAt = ImGui::GetTime();
 	ImGui::SameLine();
 	if (ImGui::Button("Back to installed")) {
@@ -152,13 +190,13 @@ bool ContentBrowser::Draw(const ManagePageContext& context, int kind)
 
 	// Search a moment after typing stops.
 	if (ImGui::GetTime() - m_editedAt > 0.4)
-		SearchModrinth(context);
+		Search(context);
 	LoadInstalledProjects(context);
 
 	if (m_searching) {
-		UiHelpers::BusyLabel("Searching Modrinth...");
+		UiHelpers::BusyLabel((std::string("Searching ") + sourceName + "...").c_str());
 	} else if (!m_searchError.empty()) {
-		Widgets::WrappedText(Theme::C().error, ("Couldn't search Modrinth: " + m_searchError).c_str());
+		Widgets::WrappedText(Theme::C().error, (std::string("Couldn't search ") + sourceName + ": " + m_searchError).c_str());
 		if (ImGui::Button("Retry"))
 			m_searchedFor.clear();
 		return true;
@@ -219,7 +257,7 @@ bool ContentBrowser::Draw(const ManagePageContext& context, int kind)
 		ImGui::PopID();
 	}
 	if (m_results.empty() && !m_searching)
-		ImGui::TextDisabled("Nothing on Modrinth matches for this pack's Minecraft version%s.",
+		ImGui::TextDisabled("Nothing on %s matches for this pack's Minecraft version%s.", sourceName,
 			search.kind == ContentKind::Mods && !search.loader.empty() ? " and loader" : "");
 	Widgets::EndCard();
 	return true;

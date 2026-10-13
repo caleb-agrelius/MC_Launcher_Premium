@@ -27,6 +27,6 @@ public:
 // The shell tells it which pack the player picked before showing it.
 class IPackPage : public IPage {
 public:
-	// With browse, a Manage page opens on Content > Browse Modrinth; others ignore it.
+	// With browse, a Manage page opens on Content > Browse; others ignore it.
 	virtual void SelectPack(const std::string& packId, bool browse) = 0;
 };

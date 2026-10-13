@@ -1,5 +1,6 @@
 #include "ModSearch.h"
 
+#include "Network/CurseForge.h"
 #include "Network/HttpClient.h"
 #include "Util/Paths.h"
 #include "Util/SharedFiles.h"
@@ -15,6 +16,11 @@ namespace fs = std::filesystem;
 using json = nlohmann::json;
 
 static const char* kApiBase = "https://api.modrinth.com/v2";
+
+const char* ContentSourceName(ContentSource source)
+{
+	return source == ContentSource::CurseForge ? "CurseForge" : "Modrinth";
+}
 
 // Modrinth's project type, and the URL path its pages use.
 static const char* ProjectType(ContentKind kind)
@@ -39,6 +45,8 @@ static std::vector<std::string> ModLoaders(const ContentSearch& search)
 bool SearchContent(IHttpClient& http, const ContentSearch& search, int limit, std::vector<ContentProject>& out,
 				   std::string* err, const std::atomic<bool>* cancel)
 {
+	if (search.source == ContentSource::CurseForge)
+		return SearchCurseForgeContent(http, search, limit, out, err, cancel);
 	out.clear();
 	// Facets are AND-ed groups of OR-ed values.
 	json facets = json::array({ json::array({ std::string("project_type:") + ProjectType(search.kind) }) });
@@ -84,6 +92,8 @@ bool SearchContent(IHttpClient& http, const ContentSearch& search, int limit, st
 bool FindContentDownload(IHttpClient& http, const ContentSearch& search, const std::string& projectId,
 						 ContentDownload& out, std::string* err, const std::atomic<bool>* cancel)
 {
+	if (search.source == ContentSource::CurseForge)
+		return FindCurseForgeContentDownload(http, search, projectId, out, err, cancel);
 	out = ContentDownload{};
 	std::string url = std::string(kApiBase) + "/project/" + IHttpClient::UrlEncode(projectId) + "/version";
 	std::string separator = "?";
@@ -151,8 +161,10 @@ bool FindContentDownload(IHttpClient& http, const ContentSearch& search, const s
 }
 
 bool FindInstalledProjects(IHttpClient& http, const fs::path& folder, std::set<std::string>& projectIds,
-						   std::string* err, const std::atomic<bool>* cancel)
+						   std::string* err, const std::atomic<bool>* cancel, ContentSource source)
 {
+	if (source == ContentSource::CurseForge)
+		return FindCurseForgeInstalledProjects(http, folder, projectIds, err, cancel);
 	std::vector<std::string> sha1s;
 	std::error_code ec;
 	for (const auto& entry : fs::directory_iterator(folder, ec)) {
@@ -192,7 +204,7 @@ bool InstallContent(IHttpClient& http, const ContentSearch& search, const std::s
 	notes.clear();
 	// Mods the pack has, so a dependency it already has (under any file name) isn't added twice.
 	std::set<std::string> installed;
-	FindInstalledProjects(http, gameDir / GetContentKind(ContentKind::Mods).folder, installed, nullptr, cancel);
+	FindInstalledProjects(http, gameDir / GetContentKind(ContentKind::Mods).folder, installed, nullptr, cancel, search.source);
 
 	struct Wanted {
 		std::string id;

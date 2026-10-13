@@ -18,7 +18,7 @@ class INavigator {
 public:
 	virtual ~INavigator() = default;
 	virtual void ShowPage(Page page) = 0;
-	// The Manage page of a library pack; with browse, opened on Content > Browse Modrinth.
+	// The Manage page of a library pack; with browse, opened on Content > Browse.
 	virtual void ShowManage(const std::string& packId, bool browse = false) = 0;
 	// The Servers page with this pack's server selected.
 	virtual void ShowServer(const std::string& packId) = 0;

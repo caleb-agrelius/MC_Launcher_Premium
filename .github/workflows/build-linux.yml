@@ -43,8 +43,10 @@ jobs:
           git clone https://github.com/microsoft/vcpkg.git "$VCPKG_ROOT"
           "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
 
-      - name: Cache vcpkg packages
-        uses: actions/cache@v4
+      # Restore and save are separate steps so the built packages are kept even when a later step fails.
+      - name: Restore vcpkg packages
+        id: vcpkg-cache
+        uses: actions/cache/restore@v4
         with:
           path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
           key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
@@ -78,8 +80,16 @@ jobs:
           -DFETCHCONTENT_SOURCE_DIR_IMGUI_BACKEND_SOURCE="$IMGUI_SRC"
 
       # live_checks needs the internet and logo_export only regenerates the icon, so CI skips both.
+      # -k 0 keeps compiling after an error, so one run reports every file that fails.
       - name: Build
-        run: cmake --build build --parallel --target MC_Launcher_Premium launcher_checks
+        run: cmake --build build --parallel --target MC_Launcher_Premium launcher_checks -- -k 0
+
+      - name: Save vcpkg packages
+        if: always() && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
 
       - name: Run checks
         env:

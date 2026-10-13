@@ -214,3 +214,93 @@ std::string HashFile(const std::string& path)
 
 std::string Sha1HexOfFile(const std::string& path) { return HashFile<Sha1>(path); }
 std::string Md5HexOfFile(const std::string& path) { return HashFile<Md5>(path); }
+
+namespace {
+
+bool IsFingerprintSkipped(std::uint8_t byte)
+{
+	return byte == 9 || byte == 10 || byte == 13 || byte == 32;
+}
+
+// MurmurHash2 with seed 1, fed one byte at a time. The length is part of the starting state, so
+// it has to be known before the first byte.
+class Murmur2 {
+public:
+	explicit Murmur2(std::uint32_t length) : m_hash(1u ^ length) {}
+
+	void Add(std::uint8_t byte)
+	{
+		m_block |= static_cast<std::uint32_t>(byte) << (8 * m_filled);
+		if (++m_filled == 4) {
+			std::uint32_t k = m_block * kMultiplier;
+			k ^= k >> 24;
+			k *= kMultiplier;
+			m_hash = m_hash * kMultiplier ^ k;
+			m_block = 0;
+			m_filled = 0;
+		}
+	}
+
+	std::uint32_t Finish()
+	{
+		if (m_filled > 0)
+			m_hash = (m_hash ^ m_block) * kMultiplier;
+		m_hash ^= m_hash >> 13;
+		m_hash *= kMultiplier;
+		m_hash ^= m_hash >> 15;
+		return m_hash;
+	}
+
+private:
+	static constexpr std::uint32_t kMultiplier = 0x5bd1e995;
+	std::uint32_t m_hash;
+	std::uint32_t m_block = 0;
+	int m_filled = 0;
+};
+
+}
+
+std::uint32_t CurseForgeFingerprint(const std::string& bytes)
+{
+	std::uint32_t length = 0;
+	for (char c : bytes)
+		length += IsFingerprintSkipped(static_cast<std::uint8_t>(c)) ? 0 : 1;
+	Murmur2 murmur(length);
+	for (char c : bytes) {
+		if (!IsFingerprintSkipped(static_cast<std::uint8_t>(c)))
+			murmur.Add(static_cast<std::uint8_t>(c));
+	}
+	return murmur.Finish();
+}
+
+bool CurseForgeFingerprintOfFile(const std::string& path, std::uint32_t& fingerprint)
+{
+	const std::filesystem::path file = LongPath(std::filesystem::path(path));
+	std::vector<char> buffer(1 << 16);
+	// Two passes over the file: the first counts the bytes that are hashed, the second hashes them.
+	std::uint32_t length = 0;
+	for (int pass = 0; pass < 2; ++pass) {
+		std::ifstream in(file, std::ios::binary);
+		if (!in.is_open())
+			return false;
+		Murmur2 murmur(length);
+		while (in) {
+			in.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+			const std::streamsize got = in.gcount();
+			for (std::streamsize i = 0; i < got; ++i) {
+				const auto byte = static_cast<std::uint8_t>(buffer[static_cast<std::size_t>(i)]);
+				if (IsFingerprintSkipped(byte))
+					continue;
+				if (pass == 0)
+					++length;
+				else
+					murmur.Add(byte);
+			}
+		}
+		if (in.bad())
+			return false;
+		if (pass == 1)
+			fingerprint = murmur.Finish();
+	}
+	return true;
+}

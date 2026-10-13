@@ -13,6 +13,11 @@ double SteadySeconds()
 
 }
 
+CachingHttpClient::CachingHttpClient(IHttpClient& inner)
+	: CachingHttpClient(inner, Limits{})
+{
+}
+
 CachingHttpClient::CachingHttpClient(IHttpClient& inner, Limits limits, Clock clock)
 	: m_inner(inner), m_limits(limits), m_clock(clock ? std::move(clock) : Clock(SteadySeconds))
 {

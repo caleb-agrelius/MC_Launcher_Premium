@@ -41,7 +41,10 @@ public:
 		std::size_t requests = 0; // sent to the wrapped client
 	};
 
-	explicit CachingHttpClient(IHttpClient& inner, Limits limits = {}, Clock clock = nullptr);
+	// Two constructors, not a default Limits: its member initializers can't be used inside the class
+	// that declares it, which GCC and Clang enforce for default arguments.
+	explicit CachingHttpClient(IHttpClient& inner);
+	CachingHttpClient(IHttpClient& inner, Limits limits, Clock clock = nullptr);
 
 	bool DownloadToFile(const std::string& url,
 						const std::string& outPath,

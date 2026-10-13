@@ -51,17 +51,17 @@ void ContentTab::Draw(const ManagePageContext& context, ManageFrame& frame)
 		m_browsing = m_browser.Draw(context, m_kind);
 		return;
 	}
-	const float buttons = Widgets::ButtonWidth("Browse Modrinth") + Widgets::ButtonWidth("Add files...") +
+	const float buttons = Widgets::ButtonWidth("Browse") + Widgets::ButtonWidth("Add files...") +
 		Widgets::ButtonWidth("Open folder") + Widgets::ButtonWidth("Refresh") + ImGui::GetStyle().ItemSpacing.x * 4.0f;
 	ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - buttons);
 	ImGui::InputTextWithHint("##content_filter", ("Filter " + ToLower(info.label) + "...").c_str(), &m_filter);
 	ImGui::SameLine();
-	if (Widgets::PrimaryButton("Browse Modrinth")) {
+	if (Widgets::PrimaryButton("Browse")) {
 		m_browsing = true;
 		m_model.notice.clear();
 		m_model.error.clear();
 	}
-	ImGui::SetItemTooltip("Find %s on Modrinth for Minecraft %s and add them with what they need", ToLower(info.label).c_str(),
+	ImGui::SetItemTooltip("Find %s on Modrinth or CurseForge for Minecraft %s and add them with what they need", ToLower(info.label).c_str(),
 		context.pack->gameVersion.c_str());
 	ImGui::SameLine();
 	ImGui::BeginDisabled(context.playBusy);
