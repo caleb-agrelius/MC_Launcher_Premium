@@ -1,6 +1,6 @@
 # MC_Launcher_Premium
 
-A C++ Dear ImGui desktop app (GLFW + OpenGL3) for browsing, downloading, and extracting Minecraft Java modpacks. Dependencies come from vcpkg: glfw3, glad, imgui, nlohmann-json, curl, miniz, libwebp, and stb. Build with CMake (see README.md).
+A C++ Dear ImGui desktop app (GLFW + OpenGL3) for browsing, downloading, and extracting Minecraft Java modpacks, on Windows and Linux. Dependencies come from vcpkg: glfw3, glad, imgui, nlohmann-json, curl, miniz, libwebp, and stb. Build with CMake (see README.md).
 
 Other docs: [docs/development.md](docs/development.md) (debugging, logs, troubleshooting) and [docs/project-layout.md](docs/project-layout.md) (source files, data folder).
 
@@ -18,7 +18,7 @@ Other docs: [docs/development.md](docs/development.md) (debugging, logs, trouble
 | [images.md](docs/features/images.md) | Pack icons and banners: `ImageCache` (download, decode, GL textures) |
 | [modpack-index.md](docs/features/modpack-index.md) | `resources/index.json` (offline fallback), `LoadIndex`, `Modpack`/`PackFile` structs |
 | [pack-sources.md](docs/features/pack-sources.md) | Source dispatcher (`PackSources`), search filters, Discover sub-pages, install plans (`InstallPlan`, `RunInstallPlan`) |
-| [curseforge.md](docs/features/curseforge.md) | CurseForge client, API key setup (Settings `curseForgeApiKey`, `MCLP_CURSEFORGE_API_KEY`), blocked files, Modrinth hash fallback |
+| [curseforge.md](docs/features/curseforge.md) | CurseForge client, API key setup (Settings `curseForgeApiKey`, `MCLP_CURSEFORGE_API_KEY`), blocked files, Modrinth hash fallback, mods/resource packs/shaders in Manage > Content > Browse |
 | [ftb.md](docs/features/ftb.md) | FTB client: in-memory search over all packs, version manifests, one-at-a-time downloads |
 | [technic.md](docs/features/technic.md) | Technic client: `build` parameter, Solder vs single-zip packs, local filters |
 | [atlauncher.md](docs/features/atlauncher.md) | ATLauncher client: CDN pack list, `Configs.json`, mod types and folders |
@@ -31,6 +31,7 @@ Other docs: [docs/development.md](docs/development.md) (debugging, logs, trouble
 | [library.md](docs/features/library.md) | My Library page |
 | [manage.md](docs/features/manage.md) | A pack's Manage page: overview, content (mods, resource and shader packs), changelog, logs, screenshots (`src/UI/Pages/Manage`, `src/Game/InstanceContent`) |
 | [servers.md](docs/features/servers.md) | Dedicated server setup, settings, EULA, process lifecycle and console |
+| [platforms.md](docs/features/platforms.md) | What differs between Windows and Linux (process layer, sign-in storage, Java search, fonts, data folder), `CMakePresets.json`, the Linux build and CI |
 | [launching.md](docs/features/launching.md) | PLAY: `.mrpack` instances, Minecraft/Java/loader install, version JSON, launch command |
 | [accounts.md](docs/features/accounts.md) | Microsoft sign-in, the account check before Play, `account.dat` |
 | [planned.md](docs/features/planned.md) | Features that aren't implemented yet |

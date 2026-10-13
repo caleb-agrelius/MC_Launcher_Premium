@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -21,10 +22,54 @@ bool OpenFolder(const std::string& path);
 // file doesn't exist or couldn't be opened.
 bool OpenFile(const std::string& path);
 
+// Opens a web address in the default browser. Returns false if it couldn't be opened.
+bool OpenUrl(const std::string& url);
+
 // Shows the system's Open dialog for choosing one or more files, e.g. title "Add mods",
 // filterName "Mods", patterns "*.jar" (several separated by ';'). Returns UTF-8 paths, or
 // nothing when cancelled or unsupported. Blocks until the dialog closes.
 std::vector<std::string> PickFiles(const std::string& title, const std::string& filterName, const std::string& patterns);
+
+// Fills a buffer with cryptographically secure random bytes (OAuth state and PKCE verifiers).
+// Returns false if the system couldn't provide them.
+bool RandomBytes(unsigned char* out, std::size_t count);
+
+// Encrypts text so only the signed-in OS user can read it back, for the saved sign-in tokens
+// (DPAPI on Windows). Where the OS has no per-user store, the text comes back unchanged and
+// the file is protected with RestrictToOwner instead.
+bool ProtectSecret(const std::string& plain, std::string& protectedText);
+bool UnprotectSecret(const std::string& protectedText, std::string& plain);
+
+// Limits a file to its owner (mode 0600). Does nothing on Windows, where DPAPI protects the
+// contents and the user's profile folder limits who can open the file.
+void RestrictToOwner(const std::filesystem::path& file);
+
+// A TCP listener on 127.0.0.1 and a free port, for the redirect at the end of a browser
+// sign-in: the browser is sent back to http://localhost:<port>/?code=... and the launcher
+// reads that one request.
+class LoopbackListener {
+public:
+	LoopbackListener();
+	~LoopbackListener();
+	LoopbackListener(const LoopbackListener&) = delete;
+	LoopbackListener& operator=(const LoopbackListener&) = delete;
+
+	// Starts listening and reports the port. Returns false with err set if it couldn't.
+	bool Start(unsigned short& port, std::string* err);
+
+	enum class Result { Request, Timeout, Failed };
+	// Waits up to timeoutMs for a browser to connect and send its request. On Request, head is
+	// everything it sent up to the blank line after the headers (empty if it sent nothing), and
+	// Reply must follow. Timeout means nothing connected yet; Failed means the listener broke.
+	Result WaitForRequest(int timeoutMs, std::string& head);
+
+	// Answers the request WaitForRequest returned with an HTML page, then closes the connection.
+	void Reply(const std::string& html);
+
+private:
+	struct Impl;
+	std::unique_ptr<Impl> m_impl;
+};
 
 // Total physical memory in MB, or 0 if unknown.
 std::uint64_t SystemMemoryMb();
@@ -63,6 +108,12 @@ void AttachParentConsole();
 
 // The folder holding the running executable, or empty if the OS can't say.
 std::filesystem::path ExecutableDir();
+
+// The per-user folder for the launcher's data, used when the folder holding resources/ can't be written
+// to (an AppImage, a system-wide install): $XDG_DATA_HOME/mc-launcher-premium, else
+// ~/.local/share/mc-launcher-premium. Empty where the launcher keeps its data beside the executable
+// (Windows) or the OS has no such folder. The folder is not created.
+std::filesystem::path UserDataDir();
 
 // RGB, 0-255.
 struct Rgb {

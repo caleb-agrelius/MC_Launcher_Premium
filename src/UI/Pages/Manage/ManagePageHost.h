@@ -24,7 +24,7 @@ public:
 		ServerService& servers, PackContentService& content, SettingsStore& settings, ImageCache& images,
 		INavigator& navigator, IDialogs& dialogs);
 
-	// Shows this pack; with browse, opened on Content > Browse Modrinth.
+	// Shows this pack; with browse, opened on Content > Browse.
 	void SelectPack(const std::string& packId, bool browse) override;
 
 	void DrawHeader() override;

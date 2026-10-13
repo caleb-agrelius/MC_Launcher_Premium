@@ -1,5 +1,6 @@
 #include "CurseForge.h"
 #include "HttpClient.h"
+#include "Network/ModSearch.h"
 #include "Util/Json.h"
 #include "Util/Text.h"
 
@@ -17,6 +18,7 @@
 #include <map>
 #include <mutex>
 #include <set>
+#include <vector>
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
@@ -666,5 +668,252 @@ bool FetchCurseForgeChangelog(IHttpClient& http,
 			"/changelog", response, err, cancel))
 		return false;
 	out = StringOrEmpty(response, "data");
+	return true;
+}
+
+// ---- Mods, resource packs and shaders for Manage > Content > Browse ----
+
+namespace {
+
+constexpr int kModClassId = 6;
+constexpr int kResourcePackClassId = 12;
+constexpr int kShaderClassId = 6552;
+constexpr int kRequiredDependency = 3; // File.dependencies[].relationType
+constexpr const char* kProjectPrefix = "cf-"; // keeps CurseForge ids apart from Modrinth's in the browser
+
+int ClassIdFor(ContentKind kind)
+{
+	switch (kind) {
+	case ContentKind::ResourcePacks: return kResourcePackClassId;
+	case ContentKind::ShaderPacks: return kShaderClassId;
+	default: return kModClassId;
+	}
+}
+
+// The loaders a pack's mods may use, as CurseForge numbers them, best first. Quilt runs Fabric mods
+// too. Resource packs and shaders have no loader: a single 0 means "don't filter".
+std::vector<int> LoaderTypesFor(const ContentSearch& search)
+{
+	if (search.kind != ContentKind::Mods)
+		return { 0 };
+	if (search.loader == "quilt")
+		return { LoaderType("quilt"), LoaderType("fabric") };
+	return { LoaderType(search.loader) };
+}
+
+std::string ProjectId(std::int64_t id)
+{
+	return kProjectPrefix + std::to_string(id);
+}
+
+// The number in a project id the browser holds ("cf-238222"); empty if it isn't one of ours.
+std::string NumberOf(const std::string& projectId)
+{
+	const std::string prefix = kProjectPrefix;
+	if (projectId.compare(0, prefix.size(), prefix) != 0 || projectId.size() == prefix.size())
+		return {};
+	const std::string number = projectId.substr(prefix.size());
+	return std::all_of(number.begin(), number.end(), [](unsigned char c) { return std::isdigit(c) != 0; }) ? number : std::string();
+}
+
+bool RequireKey(std::string* err)
+{
+	if (!CurseForgeApiKey().empty())
+		return true;
+	if (err)
+		*err = "CurseForge needs an API key. Add one in Settings > Downloads, or set the MCLP_CURSEFORGE_API_KEY environment variable.";
+	return false;
+}
+
+ContentProject ProjectFrom(const json& item)
+{
+	ContentProject project;
+	project.id = ProjectId(item.value("id", std::int64_t{ 0 }));
+	project.name = StringOrEmpty(item, "name");
+	project.summary = StringOrEmpty(item, "summary");
+	project.downloads = item.value("downloadCount", 0ULL);
+	const json authors = item.value("authors", json::array());
+	if (!authors.empty() && authors.front().is_object())
+		project.author = StringOrEmpty(authors.front(), "name");
+	if (item.contains("logo") && item["logo"].is_object())
+		project.iconUrl = StringOrEmpty(item["logo"], "thumbnailUrl");
+	if (item.contains("links") && item["links"].is_object())
+		project.pageUrl = StringOrEmpty(item["links"], "websiteUrl");
+	return project;
+}
+
+// A file that came back without a download URL because its author turned off third-party downloads:
+// the same file on Modrinth, found by its SHA-1, or an error that says where to get it by hand.
+bool ResolveBlockedFile(IHttpClient& http, const json& project, const json& file, ContentDownload& out, std::string* err,
+	const std::atomic<bool>* cancel)
+{
+	if (!out.sha1.empty()) {
+		std::vector<PlannedFile> files(1);
+		files[0].sha1 = out.sha1;
+		if (FillFromModrinthByHash(http, files, cancel) > 0 && !files[0].url.empty()) {
+			out.url = files[0].url;
+			return true;
+		}
+	}
+	std::string page = project.is_object() && project.contains("links") && project["links"].is_object()
+		? StringOrEmpty(project["links"], "websiteUrl") : std::string();
+	if (!page.empty())
+		page += "/download/" + std::to_string(file.value("id", std::int64_t{ 0 }));
+	if (err) {
+		*err = "The author of " + out.fileName + " only allows downloads from the CurseForge website" +
+			(page.empty() ? std::string(".") : ": " + page);
+	}
+	return false;
+}
+
+}
+
+bool SearchCurseForgeContent(IHttpClient& http, const ContentSearch& search, int limit, std::vector<ContentProject>& out,
+	std::string* err, const std::atomic<bool>* cancel)
+{
+	out.clear();
+	if (!RequireKey(err))
+		return false;
+	// With no text, the most downloaded; with text, CurseForge's own ranking.
+	const std::string sort = search.query.empty() ? "&sortField=6&sortOrder=desc" : std::string();
+	const std::vector<int> loaders = LoaderTypesFor(search);
+	std::set<std::string> seen;
+	for (const int loader : loaders) {
+		std::string path = "/mods/search?gameId=" + std::to_string(kMinecraftGameId) + "&classId=" + std::to_string(ClassIdFor(search.kind)) +
+			"&pageSize=" + std::to_string(std::clamp(limit, 1, 50)) + sort;
+		if (!search.query.empty())
+			path += "&searchFilter=" + IHttpClient::UrlEncode(search.query);
+		if (!search.gameVersion.empty())
+			path += "&gameVersion=" + IHttpClient::UrlEncode(search.gameVersion);
+		if (loader != 0)
+			path += "&modLoaderType=" + std::to_string(loader);
+		json response;
+		if (!ApiGet(http, path, response, err, cancel))
+			return false;
+		try {
+			for (const auto& item : response.at("data")) {
+				ContentProject project = ProjectFrom(item);
+				if (project.id != ProjectId(0) && seen.insert(project.id).second)
+					out.push_back(std::move(project));
+			}
+		}
+		catch (const std::exception& ex) {
+			if (err) *err = std::string("Unexpected CurseForge search response: ") + ex.what();
+			return false;
+		}
+	}
+	// Results for more than one loader come in separate lists; put the most downloaded first.
+	if (loaders.size() > 1) {
+		std::stable_sort(out.begin(), out.end(), [](const ContentProject& a, const ContentProject& b) { return a.downloads > b.downloads; });
+		if (out.size() > static_cast<std::size_t>(limit))
+			out.resize(static_cast<std::size_t>(limit));
+	}
+	return true;
+}
+
+bool FindCurseForgeContentDownload(IHttpClient& http, const ContentSearch& search, const std::string& projectId,
+	ContentDownload& out, std::string* err, const std::atomic<bool>* cancel)
+{
+	out = ContentDownload{};
+	if (!RequireKey(err))
+		return false;
+	const std::string number = NumberOf(projectId);
+	if (number.empty()) {
+		if (err) *err = "That isn't a CurseForge project.";
+		return false;
+	}
+	for (const int loader : LoaderTypesFor(search)) {
+		std::string path = "/mods/" + number + "/files?pageSize=50";
+		if (!search.gameVersion.empty())
+			path += "&gameVersion=" + IHttpClient::UrlEncode(search.gameVersion);
+		if (loader != 0)
+			path += "&modLoaderType=" + std::to_string(loader);
+		json response;
+		if (!ApiGet(http, path, response, err, cancel))
+			return false;
+		try {
+			// The newest release (file ids grow over time), else the newest file of any kind.
+			const json* chosen = nullptr;
+			for (const bool releasesOnly : { true, false }) {
+				for (const auto& file : response.at("data")) {
+					if (releasesOnly && file.value("releaseType", 0) != 1)
+						continue;
+					if (!chosen || file.value("id", std::int64_t{ 0 }) > chosen->value("id", std::int64_t{ 0 }))
+						chosen = &file;
+				}
+				if (chosen)
+					break;
+			}
+			if (!chosen)
+				continue; // no file for this loader; the next one may have one
+			out.projectId = projectId;
+			out.fileName = StringOrEmpty(*chosen, "fileName");
+			out.url = StringOrEmpty(*chosen, "downloadUrl");
+			out.size = chosen->value("fileLength", 0ULL);
+			out.sha1 = Sha1Of(*chosen);
+			for (const auto& dependency : chosen->value("dependencies", json::array())) {
+				const std::int64_t modId = dependency.value("modId", std::int64_t{ 0 });
+				if (dependency.value("relationType", 0) == kRequiredDependency && modId != 0)
+					out.requiredProjects.push_back(ProjectId(modId));
+			}
+			if (out.fileName.empty()) {
+				if (err) *err = "That version's file has no name.";
+				return false;
+			}
+			if (!out.url.empty())
+				return true;
+			json project; // for the page to send the player to; the file may still be found elsewhere without it
+			const bool havePage = ApiGet(http, "/mods/" + number, project, nullptr, cancel) && project.is_object();
+			return ResolveBlockedFile(http, havePage ? project.value("data", json::object()) : json::object(), *chosen, out, err, cancel);
+		}
+		catch (const std::exception& ex) {
+			if (err) *err = std::string("Unexpected CurseForge files response: ") + ex.what();
+			return false;
+		}
+	}
+	std::string what = search.gameVersion.empty() ? std::string() : "Minecraft " + search.gameVersion;
+	if (!search.loader.empty() && search.kind == ContentKind::Mods)
+		what += (what.empty() ? "" : " with ") + search.loader;
+	if (err) *err = "No version for " + (what.empty() ? std::string("this pack") : what) + ".";
+	return false;
+}
+
+bool FindCurseForgeInstalledProjects(IHttpClient& http, const fs::path& folder, std::set<std::string>& projectIds,
+	std::string* err, const std::atomic<bool>* cancel)
+{
+	if (!RequireKey(err))
+		return false;
+	// Turned-off copies count too: the project is still in the pack.
+	std::vector<std::uint32_t> fingerprints;
+	std::error_code ec;
+	for (const auto& entry : fs::directory_iterator(folder, ec)) {
+		std::uint32_t fingerprint = 0;
+		if (entry.is_regular_file(ec) && CurseForgeFingerprintOfFile(entry.path().string(), fingerprint))
+			fingerprints.push_back(fingerprint);
+		if (cancel && cancel->load())
+			return false;
+	}
+	constexpr std::size_t kBatch = 500;
+	for (std::size_t start = 0; start < fingerprints.size(); start += kBatch) {
+		const std::size_t end = std::min(fingerprints.size(), start + kBatch);
+		const json request = { { "fingerprints", std::vector<std::uint32_t>(fingerprints.begin() + static_cast<std::ptrdiff_t>(start),
+			fingerprints.begin() + static_cast<std::ptrdiff_t>(end)) } };
+		json response;
+		if (!ApiPost(http, "/fingerprints/" + std::to_string(kMinecraftGameId), request, response, err, cancel))
+			return false;
+		try {
+			for (const auto& match : response.at("data").value("exactMatches", json::array())) {
+				std::int64_t id = match.value("id", std::int64_t{ 0 });
+				if (id == 0 && match.contains("file") && match["file"].is_object())
+					id = match["file"].value("modId", std::int64_t{ 0 });
+				if (id != 0)
+					projectIds.insert(ProjectId(id));
+			}
+		}
+		catch (const std::exception& ex) {
+			if (err) *err = std::string("Unexpected CurseForge fingerprints response: ") + ex.what();
+			return false;
+		}
+	}
 	return true;
 }

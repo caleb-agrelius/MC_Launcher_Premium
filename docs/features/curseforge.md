@@ -1,6 +1,6 @@
 # CurseForge
 
-The CurseForge Discover sub-page: search, version lookup, and whole-pack installs through the CurseForge API (`https://api.curseforge.com/v1`). Code: `src/Network/CurseForge.{h,cpp}`, called through [pack-sources.md](pack-sources.md).
+The CurseForge Discover sub-page (search, version lookup, and whole-pack installs) and a second source for Manage > Content > Browse, through the CurseForge API (`https://api.curseforge.com/v1`). Code: `src/Network/CurseForge.{h,cpp}`, called through [pack-sources.md](pack-sources.md) and `src/Network/ModSearch.cpp`.
 
 ## API key
 - Every request sends `x-api-key`. `CurseForgeApiKey()` returns the key from Settings > Downloads (`curseForgeApiKey` in `settings.json`) if it's set, otherwise the `MCLP_CURSEFORGE_API_KEY` environment variable. It is safe to call from any thread.
@@ -65,5 +65,25 @@ The CurseForge Discover sub-page: search, version lookup, and whole-pack install
    - The launcher never builds CDN URLs for them itself.
 5. **Overrides.** The zip's `<overrides>/` folder is merged into the game folder last. Downloads run 6 at a time.
 
+## Browse (mods, resource packs and shaders)
+Manage > Content > Browse can search CurseForge instead of Modrinth (see [manage.md](manage.md#browse)). `ModSearch.cpp` sends a search whose `ContentSearch::source` is `CurseForge` to these functions in `CurseForge.cpp`. Without a key they fail with the same "CurseForge needs an API key" message as Discover, before any request.
+- **Project ids** are `cf-` and the CurseForge id (`cf-394468`), so they never collide with Modrinth's in the browser's installed set.
+- **Search** (`SearchCurseForgeContent`): `GET /mods/search` with `gameId=432`, `classId` 6 (mods), 12 (resource packs) or 6552 (shaders), `pageSize`, the pack's `gameVersion`, and for mods `modLoaderType` (Forge 1, Fabric 4, Quilt 5, NeoForge 6). With no text it sorts by total downloads (`sortField=6`); with text it leaves CurseForge's own ranking. A Quilt pack searches Quilt and then Fabric, merges the lists without duplicates and puts the most downloaded first.
+
+  | `ContentProject` field | CurseForge field |
+  |---|---|
+  | `id` | `"cf-" + id` |
+  | `name`, `summary` | `name`, `summary` |
+  | `author` | `authors[0].name` |
+  | `iconUrl` | `logo.thumbnailUrl` |
+  | `pageUrl` | `links.websiteUrl` |
+  | `downloads` | `downloadCount` |
+- **File** (`FindCurseForgeContentDownload`): `GET /mods/{id}/files?pageSize=50` with `gameVersion` and `modLoaderType` (a Quilt pack tries Quilt, then Fabric). It takes the newest release (`releaseType == 1`, highest file id), else the newest file of any kind. The file's name, `downloadUrl`, size (`fileLength`) and SHA-1 (`hashes[].algo == 1`) fill a `ContentDownload`, and its `dependencies` with `relationType` 3 (required) become required projects. No fitting file gives "No version for Minecraft 1.20.1 with fabric."
+- **Blocked files:** when an author turns off third-party downloads the file has no `downloadUrl`. The SHA-1 is looked up on Modrinth (`FillFromModrinthByHash`) and that copy is used if it exists. Otherwise the error says "The author of <file> only allows downloads from the CurseForge website" with a link to `<project page>/download/<fileId>` (the page comes from `GET /mods/{id}`). The launcher never builds CDN URLs itself.
+- **Installed projects** (`FindCurseForgeInstalledProjects`): CurseForge identifies a file by its fingerprint, the MurmurHash2 (seed 1) of its bytes with tabs, line feeds, carriage returns and spaces left out (`CurseForgeFingerprint` in `Util/Hash`; the empty file's is 1540447798). Every regular file in the folder, turned off or not, is hashed in two passes (the first counts the bytes that are hashed, because the length is part of the hash's start) and sent in batches of 500 to `POST /fingerprints/432`. Each entry of `data.exactMatches` gives a project (`id`, else `file.modId`).
+- **Install** is `InstallContent` in `ModSearch.cpp`, shared with Modrinth: the mod, then the required mods it names, each checked against its SHA-1 before it is renamed into place and shared between packs (see [shared-files.md](shared-files.md)).
+
 ## Verification
-Checked without a key: manifest parsing (valid, wrong type, and broken JSON), the Modrinth fallback (one real Sodium jar found by SHA-1, and one unknown hash left blocked), and the request path (CurseForge answers a placeholder key with HTTP 403). Live search, version lookup, and installs haven't been run, because no API key was available. They follow CurseForge's documented response shapes.
+The Browse functions are checked in `launcher_checks` against scripted replies in CurseForge's documented shapes (search with class, version and loader in the request, the newest release chosen over a newer beta, dependencies, a blocked file with and without a Modrinth match, fingerprints sent and matched, a full install with its dependency, a failed SHA-1 refused, no request without a key), and the fingerprint against values from a separate implementation of MurmurHash2. None of it has met the live API: the fingerprint endpoint's request and response shape, `modLoaderType` and `gameVersion` filters on `/files`, and the `relationType` numbers are from the documentation. `live_checks` has Browse checks (search, install with dependencies, installed by fingerprint) that run when `MCLP_CURSEFORGE_API_KEY` is set.
+
+Discover, checked without a key: manifest parsing (valid, wrong type, and broken JSON), the Modrinth fallback (one real Sodium jar found by SHA-1, and one unknown hash left blocked), and the request path (CurseForge answers a placeholder key with HTTP 403). Live search, version lookup, and installs haven't been run, because no API key was available. They follow CurseForge's documented response shapes.

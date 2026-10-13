@@ -47,7 +47,7 @@ A pack can have several versions installed at once, each with its own folders, m
   - The id is `custom-<name>`, from `CustomPackId`, with `-2`, `-3` and so on when the library, `installs/`, `instances/` or `servers/` already use it.
   - It has version 1.0, and the signed-in player is its author.
   - `WriteCustomPack` writes `installs/<id>@1.0/pack.json` (source, version, Minecraft version, loader, loader version) and empty `minecraft/mods`, `resourcepacks` and `shaderpacks` folders.
-  - The pack is added to `library.json`, and its Manage page opens on Content > Mods with **Browse Modrinth** (see [manage.md](manage.md#browse-modrinth)).
+  - The pack is added to `library.json`, and its Manage page opens on Content > Mods with **Browse** (see [manage.md](manage.md#browse)).
 - **Playing and hosting:** PLAY installs Minecraft and the loader like any whole-pack install (see [launching.md](launching.md)), and **Server** hosts it.
 - **Differences from other packs:** a pack the player made has no **Repair files** (there's nothing to download again) and never shows as modified. Its Changelog tab says it has no changelog.
 

@@ -23,7 +23,7 @@ bool DownloadsTab::Draw(Settings& settings, const SettingsPageContext& context, 
 		settings.searchLimit = std::clamp(settings.searchLimit, kMinSearchLimit, kMaxSearchLimit);
 	});
 
-	ui.RowsCard("curseforge_card", "CurseForge", "Browsing and installing CurseForge packs needs your own API key from "
+	ui.RowsCard("curseforge_card", "CurseForge", "Browsing and installing CurseForge packs, mods, resource packs and shaders needs your own API key from "
 		"console.curseforge.com. It's saved in settings.json in the data folder.", [&] {
 		ui.Row("API key", context.curseForgeEnvKeySet
 			? "Leave empty to use the MCLP_CURSEFORGE_API_KEY environment variable, which is set."

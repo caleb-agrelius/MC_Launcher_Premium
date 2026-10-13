@@ -9,12 +9,12 @@
 #include <vector>
 
 // Content: the pack's mods, resource packs and shader packs, switched on and off natively,
-// removed, added from disk, or found on Modrinth (ContentBrowser).
+// removed, added from disk, or found on Modrinth or CurseForge (ContentBrowser).
 class ContentTab final : public IManageTab {
 public:
 	explicit ContentTab(ContentModel& model) : m_model(model), m_browser(model) {}
 
-	// Opens Mods with the Modrinth browser, e.g. for a pack that was just created.
+	// Opens Mods with the content browser, e.g. for a pack that was just created.
 	void ShowBrowse() { m_kind = 0; m_browsing = true; }
 	// Adds dropped or picked files, then shows where they went. True when any were added.
 	bool AddFiles(const ManagePageContext& context, const std::vector<std::filesystem::path>& paths);

@@ -1,10 +1,13 @@
 #pragma once
 
+#include "Network/ModSearch.h"
 #include "Network/PackSources.h"
 
 #include <atomic>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -117,3 +120,23 @@ bool ResolveCurseForgeFiles(IHttpClient& http,
 // Fills in URLs for blocked files (url empty, sha1 set) from Modrinth's hash lookup.
 // Returns how many were found. Failures leave the files blocked.
 int FillFromModrinthByHash(IHttpClient& http, std::vector<PlannedFile>& files, const std::atomic<bool>* cancel = nullptr);
+
+// Mods, resource packs and shaders for Manage > Content > Browse (see Network/ModSearch.h, which
+// calls these when a search's source is CurseForge). Project ids are "cf-" and the CurseForge id,
+// so they never collide with Modrinth's. All of them need an API key.
+
+// /mods/search for the search's kind (class 6, 12 or 6552), Minecraft version and loader. With no
+// text the most downloaded come first.
+bool SearchCurseForgeContent(IHttpClient& http, const ContentSearch& search, int limit, std::vector<ContentProject>& out,
+							 std::string* err = nullptr, const std::atomic<bool>* cancel = nullptr);
+
+// The newest release (else the newest file) of projectId that fits search, from /mods/{id}/files, with the
+// projects it requires (relationType 3). A file whose author blocks third-party downloads is looked up on
+// Modrinth by SHA-1; if that fails the error says where to download it by hand.
+bool FindCurseForgeContentDownload(IHttpClient& http, const ContentSearch& search, const std::string& projectId,
+								   ContentDownload& out, std::string* err = nullptr, const std::atomic<bool>* cancel = nullptr);
+
+// The projects the files in folder belong to, found by their CurseForge fingerprints
+// (POST /fingerprints/432). Files CurseForge doesn't know are left out.
+bool FindCurseForgeInstalledProjects(IHttpClient& http, const std::filesystem::path& folder, std::set<std::string>& projectIds,
+									 std::string* err = nullptr, const std::atomic<bool>* cancel = nullptr);

@@ -1,6 +1,6 @@
 # MC_Launcher_Premium
 
-A Minecraft: Java Edition modpack launcher for Windows, written in C++ with Dear ImGui (GLFW + OpenGL 3).
+A Minecraft: Java Edition modpack launcher for Windows and Linux, written in C++ with Dear ImGui (GLFW + OpenGL 3). The Linux build compiles and passes the offline checks in CI; it has not been used on a Linux desktop yet (see [docs/features/platforms.md](docs/features/platforms.md)).
 
 ## Contributors
 
@@ -16,6 +16,7 @@ A Minecraft: Java Edition modpack launcher for Windows, written in C++ with Dear
 - Install complete packs from CurseForge, FTB, Technic, and ATLauncher, with hash-checked mod downloads.
 - Play Modrinth packs: installs Minecraft, a Mojang Java runtime, and the mod loader (Fabric, Quilt, Forge, or NeoForge), then launches the game. Packs from other sources cannot be played yet.
 - Microsoft account sign-in, checked before every launch; there is no offline play. Microsoft sign-in requires an Entra app client ID approved for the Minecraft API; see [docs/features/account-sign-in.md](docs/features/account-sign-in.md).
+- Add mods, resource packs and shader packs to a pack from Modrinth or CurseForge (Manage > Content > Browse), with the mods they require. CurseForge needs an API key.
 - Color themes, UI scaling, launch and game-option defaults on the Settings page.
 - Host installed Modrinth packs from **Servers** or My Library's **Server** button, with setup, settings and a built-in console. See [server controls](docs/features/servers.md).
 - Consistent Library and Downloads cards, plus window size, position and maximized state remembered across closes.
@@ -54,13 +55,31 @@ cmake --build build --config Release    # build\Release\MC_Launcher_Premium.exe
 
 Re-run the configure command after adding source files or editing `CMakeLists.txt`.
 
+`CMakePresets.json` has the same configuration as presets: with `VCPKG_ROOT` set, `cmake --preset windows-x64` configures `build/` with the newest installed Visual Studio, and `cmake --build --preset windows-x64-debug` builds it.
+
+### Linux
+
+Needs a C++17 compiler (GCC 13 or Clang 17), CMake, Ninja, git, vcpkg and these packages (Debian and Ubuntu names; GLFW needs the X11 and Wayland development files):
+
+```sh
+sudo apt-get install build-essential ninja-build pkg-config autoconf automake libtool \
+  libxmu-dev libxi-dev libgl-dev libxinerama-dev libxcursor-dev xorg-dev libglu1-mesa-dev \
+  libwayland-dev libxkbcommon-dev wayland-protocols extra-cmake-modules
+git clone https://github.com/microsoft/vcpkg ~/vcpkg && ~/vcpkg/bootstrap-vcpkg.sh
+export VCPKG_ROOT=~/vcpkg
+cmake --preset linux-x64
+cmake --build --preset linux-x64        # build/linux-x64/MC_Launcher_Premium
+ctest --preset linux-x64
+```
+
+Run `build/linux-x64/MC_Launcher_Premium` from anywhere; it finds `resources/` the way the Windows build does. `zenity` or `kdialog` give **Add files...** a file picker, and `xdg-utils` opens folders and the sign-in page. See [docs/features/platforms.md](docs/features/platforms.md) for everything that differs from Windows.
 ## CI and releases
 
 GitHub Actions (`.github/workflows/`):
 
-- **CI** (`ci.yml`) runs on every pull request: it configures with vcpkg, builds the app and `launcher_checks` (not `live_checks` or `logo_export`), and runs the checks through CTest (offline). It builds Debug only (about four times faster than Release on the runner), and merging to `main` does not trigger another build.
+- **CI** (`ci.yml`) runs on every pull request, on Windows and on Linux (ubuntu-24.04): it configures with vcpkg, builds the app and `launcher_checks` (not `live_checks` or `logo_export`), and runs the checks through CTest (offline). It builds Debug only (about four times faster than Release on the runner), and merging to `main` does not trigger another build.
 - **Release** (`release.yml`) is manual: Actions > Release > Run workflow, enter a version such as `1.2.0`. It builds Release from the selected ref, runs the checks, and publishes `MC_Launcher_Premium-v<version>-win64.zip` (exe, DLLs, `resources/`) as GitHub release `v<version>`.
-- Both call the reusable `build.yml`.
+- CI calls the reusable `build.yml` (Windows) and `build-linux.yml` (Linux); Release calls `build.yml` only, so releases are Windows-only for now.
 
 ## CurseForge API key
 

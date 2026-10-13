@@ -35,6 +35,41 @@ fs::path FindDataRoot()
 	return {};
 }
 
+// True if a file can be created in dir.
+bool IsWritable(const fs::path& dir)
+{
+	const fs::path probe = dir / ".mclp-write-test";
+	{
+		std::ofstream file(probe);
+		if (!file.is_open())
+			return false;
+	}
+	std::error_code ec;
+	fs::remove(probe, ec);
+	return true;
+}
+
+// Where the launcher keeps its data. Normally that is the folder holding resources/. When that folder
+// can't be written to (an AppImage, a system-wide install), it is the per-user data folder instead, with
+// resources/ linked into it, so the relative paths the rest of the app uses keep working.
+fs::path WritableDataRoot(const fs::path& resourcesRoot)
+{
+	if (resourcesRoot.empty() || IsWritable(resourcesRoot))
+		return resourcesRoot;
+	const fs::path userRoot = Platform::UserDataDir();
+	if (userRoot.empty())
+		return resourcesRoot;
+	std::error_code ec;
+	fs::create_directories(userRoot, ec);
+	// The link is made again every run: an AppImage mounts itself somewhere new each time.
+	const fs::path link = userRoot / "resources";
+	if (fs::is_symlink(link, ec))
+		fs::remove(link, ec);
+	if (!fs::exists(link, ec))
+		fs::create_directory_symlink(resourcesRoot / "resources", link, ec);
+	return fs::exists(link / "index.json", ec) && IsWritable(userRoot) ? userRoot : resourcesRoot;
+}
+
 }
 
 int main(int argc, char** argv)
@@ -50,7 +85,7 @@ int main(int argc, char** argv)
 	const bool offline = Debug::OfflineRequested(argc, argv);
 	// Run from the folder that holds resources/, so the index, app.log, downloads/ and installs/
 	// all resolve the same way however the app is launched.
-	const fs::path dataRoot = FindDataRoot();
+	const fs::path dataRoot = WritableDataRoot(FindDataRoot());
 	std::error_code chdirError;
 	if (!dataRoot.empty())
 		fs::current_path(dataRoot, chdirError);

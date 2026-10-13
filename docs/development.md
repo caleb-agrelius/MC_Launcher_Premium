@@ -15,6 +15,8 @@ ctest --test-dir build -C Debug --output-on-failure
 powershell -NoProfile -ExecutionPolicy Bypass -File tests/WindowSmoke.ps1
 ```
 
+On Linux the same checks run with `ctest --preset linux-x64` (see [platforms.md](features/platforms.md#building)); `WindowSmoke.ps1` and `UiDriver.ps1` are Windows-only.
+
 The CTest checks cover window settings, server file filtering and setup, preserved configuration, server mods, host IP validation, server deletion, the player data a pack update carries over, card heights, and console commands using local fixtures. The Windows smoke test launches the app with isolated data and checks window resize, close, reopen, maximization and minimization. Fixtures are kept under gitignored `tests/out/` folders.
 
 ## CPU use
@@ -35,13 +37,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tests/UiSmoke.ps1
 
 It needs a visible desktop, Windows display scaling at 100%, and no mouse use while it runs (the window is placed at 100,100 at 1800x1100 and made topmost, and screenshots copy that screen area). Screenshots and the data folder are kept under `tests/out/ui-*`. For a one-off check of something new (a modal, a dropdown), write a small script with the helpers, look at the screenshots, and add an assertion to `UiSmoke.ps1` when it's worth keeping. Pages that need the network (Discover) work too, but the results change from day to day, so assert on layout rather than content.
 
-`live_checks` is built with the tests but isn't a CTest test, because it calls the real pack APIs. Run it from the repository root after a change to a source client:
+`live_checks` is built with the tests but isn't a CTest test, because it calls the real pack APIs. `live_checks --tls` makes one HTTPS request and stops (Linux CI uses it to check certificates). Run the full set from the repository root after a change to a source client:
 
 ```powershell
 build\Debug\live_checks.exe
 ```
 
-It prints PASS or FAIL per source and skips CurseForge unless `MCLP_CURSEFORGE_API_KEY` is set. It also builds old Forge servers (1.7.10 from a Technic-style `bin/modpack.jar`, 1.6.4 from an ATLauncher-style jar mod) from Forge's maven, and starts each until it prints "Done". That takes a few minutes and downloads Java 8 the first time if none is installed. The servers are kept under `tests/out/live/` for inspection.
+It prints PASS or FAIL per source and skips CurseForge (Discover and Manage > Content > Browse) unless `MCLP_CURSEFORGE_API_KEY` is set. It also builds old Forge servers (1.7.10 from a Technic-style `bin/modpack.jar`, 1.6.4 from an ATLauncher-style jar mod) from Forge's maven, and starts each until it prints "Done". That takes a few minutes and downloads Java 8 the first time if none is installed. The servers are kept under `tests/out/live/` for inspection.
 
 ## Visual Studio
 

@@ -1,5 +1,7 @@
 #include "MicrosoftAuth.h"
 #include "HttpClient.h"
+#include "Platform/Platform.h"
+#include "Util/Sha256.h"
 
 #include <nlohmann/json.hpp>
 
@@ -12,16 +14,6 @@
 #include <utility>
 #include <vector>
 
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include <windows.h>
-#include <bcrypt.h>
-#include <shellapi.h>
-#endif
-
 using json = nlohmann::json;
 
 static const char* kTokenUrl = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token";
@@ -31,56 +23,7 @@ static const char* kScope = "XboxLive.signin offline_access";
 static const std::vector<std::string> kFormHeaders = { "Content-Type: application/x-www-form-urlencoded" };
 static const std::vector<std::string> kJsonHeaders = { "Content-Type: application/json", "Accept: application/json" };
 
-#ifdef _WIN32
 namespace {
-
-class WinsockSession {
-public:
-	WinsockSession()
-	{
-		WSADATA data{};
-		m_started = WSAStartup(MAKEWORD(2, 2), &data) == 0;
-	}
-
-	~WinsockSession()
-	{
-		if (m_started)
-			WSACleanup();
-	}
-
-	bool Started() const { return m_started; }
-
-private:
-	bool m_started = false;
-};
-
-class SocketHandle {
-public:
-	explicit SocketHandle(SOCKET socket = INVALID_SOCKET) : m_socket(socket) {}
-	~SocketHandle() { Close(); }
-
-	SocketHandle(const SocketHandle&) = delete;
-	SocketHandle& operator=(const SocketHandle&) = delete;
-
-	SOCKET Get() const { return m_socket; }
-	bool Valid() const { return m_socket != INVALID_SOCKET; }
-	void Set(SOCKET socket)
-	{
-		Close();
-		m_socket = socket;
-	}
-
-	void Close()
-	{
-		if (Valid()) {
-			closesocket(m_socket);
-			m_socket = INVALID_SOCKET;
-		}
-	}
-
-private:
-	SOCKET m_socket;
-};
 
 std::string Base64Url(const unsigned char* bytes, std::size_t length)
 {
@@ -106,33 +49,11 @@ std::string Base64Url(const unsigned char* bytes, std::size_t length)
 bool CreateRandomToken(std::size_t byteCount, std::string& token, std::string* err)
 {
 	std::vector<unsigned char> bytes(byteCount);
-	if (!bytes.empty() && BCryptGenRandom(nullptr, bytes.data(), static_cast<ULONG>(bytes.size()),
-			BCRYPT_USE_SYSTEM_PREFERRED_RNG) < 0) {
-		if (err) *err = "Windows could not generate secure random data for OAuth.";
+	if (!Platform::RandomBytes(bytes.data(), bytes.size())) {
+		if (err) *err = "The system could not generate secure random data for OAuth.";
 		return false;
 	}
 	token = Base64Url(bytes.data(), bytes.size());
-	return true;
-}
-
-bool CreateCodeChallenge(const std::string& verifier, std::string& challenge, std::string* err)
-{
-	BCRYPT_ALG_HANDLE algorithm = nullptr;
-	if (BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) < 0) {
-		if (err) *err = "Could not initialize SHA-256 for OAuth PKCE.";
-		return false;
-	}
-
-	std::array<unsigned char, 32> digest{};
-	const NTSTATUS result = BCryptHash(algorithm, nullptr, 0,
-		reinterpret_cast<PUCHAR>(const_cast<char*>(verifier.data())),
-		static_cast<ULONG>(verifier.size()), digest.data(), static_cast<ULONG>(digest.size()));
-	BCryptCloseAlgorithmProvider(algorithm, 0);
-	if (result < 0) {
-		if (err) *err = "Could not calculate the OAuth PKCE challenge.";
-		return false;
-	}
-	challenge = Base64Url(digest.data(), digest.size());
 	return true;
 }
 
@@ -186,153 +107,89 @@ bool ParseQuery(const std::string& query, std::map<std::string, std::string>& va
 	return true;
 }
 
-void SendBrowserResponse(SOCKET socket, bool success)
+const char* kSuccessPage =
+	"<!doctype html><html><body><h2>Sign-in complete</h2><p>You can return to the Minecraft launcher.</p></body></html>";
+const char* kFailurePage =
+	"<!doctype html><html><body><h2>Sign-in could not be completed</h2><p>Return to the Minecraft launcher for details.</p></body></html>";
+
+// Waits for the browser to come back to the local address, up to five minutes, and reads the
+// authorization code from that request.
+bool WaitForAuthorizationCode(Platform::LoopbackListener& listener, const std::string& expectedState,
+	const std::atomic<bool>* cancel, std::string& code, std::string* err)
 {
-	const char* body = success
-		? "<!doctype html><html><body><h2>Sign-in complete</h2><p>You can return to the Minecraft launcher.</p></body></html>"
-		: "<!doctype html><html><body><h2>Sign-in could not be completed</h2><p>Return to the Minecraft launcher for details.</p></body></html>";
-	const std::string response = std::string("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\nContent-Length: ") +
-		std::to_string(std::char_traits<char>::length(body)) + "\r\n\r\n" + body;
-	std::size_t sent = 0;
-	while (sent < response.size()) {
-		const int count = send(socket, response.data() + sent,
-			static_cast<int>(response.size() - sent), 0);
-		if (count <= 0)
-			break;
-		sent += static_cast<std::size_t>(count);
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::minutes(5);
+	while (std::chrono::steady_clock::now() < deadline) {
+		if (cancel && cancel->load()) {
+			if (err) *err = "Sign-in was cancelled.";
+			return false;
+		}
+		std::string head;
+		const Platform::LoopbackListener::Result result = listener.WaitForRequest(250, head);
+		if (result == Platform::LoopbackListener::Result::Timeout)
+			continue;
+		if (result == Platform::LoopbackListener::Result::Failed) {
+			if (err) *err = "The local OAuth callback listener failed.";
+			return false;
+		}
+		if (head.empty()) {
+			listener.Reply(kFailurePage);
+			if (err) *err = "Could not read Microsoft's sign-in response.";
+			return false;
+		}
+		const bool ok = ParseAuthorizationRedirect(head, expectedState, code, err);
+		listener.Reply(ok ? kSuccessPage : kFailurePage);
+		return ok;
 	}
+	if (err) *err = "Timed out waiting for Microsoft sign-in.";
+	return false;
 }
 
-class LoopbackListener {
-public:
-	bool Start(unsigned short& port, std::string* err)
-	{
-		m_listener.Set(socket(AF_INET, SOCK_STREAM, IPPROTO_TCP));
-		if (!m_listener.Valid()) {
-			if (err) *err = "Could not create the local OAuth callback listener.";
-			return false;
-		}
+} // namespace
 
-		sockaddr_in address{};
-		address.sin_family = AF_INET;
-		address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-		address.sin_port = 0;
-		if (bind(m_listener.Get(), reinterpret_cast<sockaddr*>(&address), sizeof(address)) == SOCKET_ERROR ||
-			listen(m_listener.Get(), 1) == SOCKET_ERROR) {
-			if (err) *err = "Could not bind the local OAuth callback listener. Check whether local connections are blocked.";
-			return false;
-		}
-		int addressLength = sizeof(address);
-		if (getsockname(m_listener.Get(), reinterpret_cast<sockaddr*>(&address), &addressLength) == SOCKET_ERROR) {
-			if (err) *err = "Could not determine the local OAuth callback port.";
-			return false;
-		}
-		port = ntohs(address.sin_port);
-		return true;
-	}
+std::string PkceChallenge(const std::string& verifier)
+{
+	const std::array<unsigned char, 32> digest = Sha256(verifier);
+	return Base64Url(digest.data(), digest.size());
+}
 
-	bool WaitForAuthorizationCode(const std::string& expectedState, const std::atomic<bool>* cancel,
-		std::string& code, std::string* err)
-	{
-		const auto deadline = std::chrono::steady_clock::now() + std::chrono::minutes(5);
-		while (std::chrono::steady_clock::now() < deadline) {
-			if (cancel && cancel->load()) {
-				if (err) *err = "Sign-in was cancelled.";
-				return false;
-			}
-			fd_set readers;
-			FD_ZERO(&readers);
-			FD_SET(m_listener.Get(), &readers);
-			timeval timeout{ 0, 250000 };
-			const int ready = select(0, &readers, nullptr, nullptr, &timeout);
-			if (ready == SOCKET_ERROR) {
-				if (err) *err = "The local OAuth callback listener failed.";
-				return false;
-			}
-			if (ready == 0)
-				continue;
+bool ParseAuthorizationRedirect(const std::string& requestHead, const std::string& expectedState,
+	std::string& code, std::string* err)
+{
+	auto fail = [err](const char* message) {
+		if (err) *err = message;
+		return false;
+	};
+	const std::size_t lineEnd = requestHead.find("\r\n");
+	if (lineEnd == std::string::npos || requestHead.compare(0, 5, "GET /") != 0)
+		return fail("Microsoft returned an invalid sign-in response.");
+	const std::size_t targetStart = 5;
+	const std::size_t targetEnd = requestHead.find(' ', targetStart);
+	if (targetEnd == std::string::npos || targetEnd > lineEnd)
+		return fail("Microsoft returned an invalid sign-in response.");
+	const std::string target = requestHead.substr(targetStart, targetEnd - targetStart);
+	if (target.empty() || target[0] != '?')
+		return fail("Microsoft did not return OAuth sign-in parameters.");
 
-			SocketHandle connection(accept(m_listener.Get(), nullptr, nullptr));
-			if (!connection.Valid())
-				continue;
-			std::array<char, 16384> buffer{};
-			std::size_t received = 0;
-			while (received < buffer.size() - 1) {
-				const int count = recv(connection.Get(), buffer.data() + received,
-					static_cast<int>(buffer.size() - 1 - received), 0);
-				if (count <= 0)
-					break;
-				received += static_cast<std::size_t>(count);
-				if (std::string(buffer.data(), received).find("\r\n\r\n") != std::string::npos)
-					break;
-			}
-			if (received == 0) {
-				SendBrowserResponse(connection.Get(), false);
-				if (err) *err = "Could not read Microsoft's sign-in response.";
-				return false;
-			}
-			const std::string request(buffer.data(), received);
-			const std::size_t lineEnd = request.find("\r\n");
-			if (lineEnd == std::string::npos || request.compare(0, 5, "GET /") != 0) {
-				SendBrowserResponse(connection.Get(), false);
-				if (err) *err = "Microsoft returned an invalid sign-in response.";
-				return false;
-			}
-			const std::size_t targetStart = 5;
-			const std::size_t targetEnd = request.find(' ', targetStart);
-			if (targetEnd == std::string::npos || targetEnd > lineEnd) {
-				SendBrowserResponse(connection.Get(), false);
-				if (err) *err = "Microsoft returned an invalid sign-in response.";
-				return false;
-			}
-			const std::string target = request.substr(targetStart, targetEnd - targetStart);
-			if (target.empty() || target[0] != '?') {
-				SendBrowserResponse(connection.Get(), false);
-				if (err) *err = "Microsoft did not return OAuth sign-in parameters.";
-				return false;
-			}
-
-			std::map<std::string, std::string> parameters;
-			if (!ParseQuery(target.substr(1), parameters)) {
-				SendBrowserResponse(connection.Get(), false);
-				if (err) *err = "Microsoft returned malformed sign-in parameters.";
-				return false;
-			}
-			const auto state = parameters.find("state");
-			if (state == parameters.end() || state->second != expectedState) {
-				SendBrowserResponse(connection.Get(), false);
-				if (err) *err = "Microsoft sign-in state did not match. Please try again.";
-				return false;
-			}
-			const auto oauthError = parameters.find("error");
-			if (oauthError != parameters.end()) {
-				const auto description = parameters.find("error_description");
-				SendBrowserResponse(connection.Get(), false);
-				if (err) *err = description != parameters.end()
-					? "Microsoft sign-in failed: " + description->second
-					: "Microsoft sign-in failed: " + oauthError->second;
-				return false;
-			}
-			const auto authorizationCode = parameters.find("code");
-			if (authorizationCode == parameters.end() || authorizationCode->second.empty()) {
-				SendBrowserResponse(connection.Get(), false);
-				if (err) *err = "Microsoft did not return an authorization code.";
-				return false;
-			}
-			SendBrowserResponse(connection.Get(), true);
-			code = authorizationCode->second;
-			return true;
-		}
-		if (err) *err = "Timed out waiting for Microsoft sign-in.";
+	std::map<std::string, std::string> parameters;
+	if (!ParseQuery(target.substr(1), parameters))
+		return fail("Microsoft returned malformed sign-in parameters.");
+	const auto state = parameters.find("state");
+	if (state == parameters.end() || state->second != expectedState)
+		return fail("Microsoft sign-in state did not match. Please try again.");
+	const auto oauthError = parameters.find("error");
+	if (oauthError != parameters.end()) {
+		const auto description = parameters.find("error_description");
+		if (err) *err = description != parameters.end()
+			? "Microsoft sign-in failed: " + description->second
+			: "Microsoft sign-in failed: " + oauthError->second;
 		return false;
 	}
-
-private:
-	SocketHandle m_listener;
-};
-
-} // namespace
-#endif
+	const auto authorizationCode = parameters.find("code");
+	if (authorizationCode == parameters.end() || authorizationCode->second.empty())
+		return fail("Microsoft did not return an authorization code.");
+	code = authorizationCode->second;
+	return true;
+}
 
 static std::string Form(std::initializer_list<std::pair<const char*, std::string>> fields)
 {
@@ -497,22 +354,14 @@ bool SignInWithMicrosoft(IHttpClient& http, const std::string& clientId, Account
 		if (err) *err = "Sign-in was cancelled.";
 		return false;
 	}
-#ifdef _WIN32
-	WinsockSession winsock;
-	if (!winsock.Started()) {
-		if (err) *err = "Could not initialize Windows networking for Microsoft sign-in.";
-		return false;
-	}
 
 	std::string state;
 	std::string verifier;
 	if (!CreateRandomToken(32, state, err) || !CreateRandomToken(32, verifier, err))
 		return false;
-	std::string challenge;
-	if (!CreateCodeChallenge(verifier, challenge, err))
-		return false;
+	const std::string challenge = PkceChallenge(verifier);
 
-	LoopbackListener listener;
+	Platform::LoopbackListener listener;
 	unsigned short port = 0;
 	if (!listener.Start(port, err))
 		return false;
@@ -525,14 +374,13 @@ bool SignInWithMicrosoft(IHttpClient& http, const std::string& clientId, Account
 		"&state=" + IHttpClient::UrlEncode(state) +
 		"&code_challenge=" + IHttpClient::UrlEncode(challenge) +
 		"&code_challenge_method=S256&prompt=select_account";
-	if (reinterpret_cast<INT_PTR>(ShellExecuteA(nullptr, "open", authorizationUrl.c_str(),
-			nullptr, nullptr, SW_SHOWNORMAL)) <= 32) {
+	if (!Platform::OpenUrl(authorizationUrl)) {
 		if (err) *err = "Could not open the browser for Microsoft sign-in.";
 		return false;
 	}
 
 	std::string authorizationCode;
-	if (!listener.WaitForAuthorizationCode(state, cancel, authorizationCode, err))
+	if (!WaitForAuthorizationCode(listener, state, cancel, authorizationCode, err))
 		return false;
 	if (cancel && cancel->load()) {
 		if (err) *err = "Sign-in was cancelled.";
@@ -563,12 +411,6 @@ bool SignInWithMicrosoft(IHttpClient& http, const std::string& clientId, Account
 		return false;
 	account = std::move(signedIn);
 	return true;
-#else
-	(void)http;
-	(void)cancel;
-	if (err) *err = "Microsoft sign-in is currently supported only on Windows.";
-	return false;
-#endif
 }
 
 bool RefreshMicrosoftAccount(IHttpClient& http, const std::string& clientId, Account& account,

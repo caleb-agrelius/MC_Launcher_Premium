@@ -11,7 +11,7 @@ Mods and resource and shader packs that several packs use are kept once on disk.
 - **Installing:** every path that downloads a pack's files tries the store first.
   - `DownloadAll` jobs with `share` set: `.mrpack` files from `ReadMrpackIndex`, used both for Play and for server setup.
   - Install plans (`RunInstallPlan`) for CurseForge, FTB, Technic and ATLauncher.
-  - Manage > Content > **Browse Modrinth** installs (`ModSearch`).
+  - Manage > Content > **Browse** installs (`ModSearch`).
 - **Linking from the store (`LinkTo`):** the stored copy must have the expected size, and its contents are hash-checked before linking.
   - A copy whose contents don't match its hash is deleted from the store and the file is downloaded instead. A damaged copy is never handed to another pack.
   - A size that differs from what the caller expects just means "download it". The stored copy is kept for others.

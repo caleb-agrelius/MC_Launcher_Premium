@@ -1,0 +1,111 @@
+# Reusable Linux build: the counterpart of build.yml on ubuntu-24.04. Configure with vcpkg, build the
+# app and its checks with Ninja, run the offline checks.
+# Called by ci.yml (pull requests).
+name: Build (Linux)
+
+on:
+  workflow_call:
+    inputs:
+      configuration:
+        description: CMake build type to build (Debug or Release)
+        type: string
+        default: Release
+      artifact-name:
+        description: Upload the executable under this artifact name (empty to skip)
+        type: string
+        default: ''
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-cache
+      IMGUI_SRC: ${{ github.workspace }}/imgui-src
+    steps:
+      - uses: actions/checkout@v4
+
+      # GLFW (X11 and Wayland), OpenGL and the build tools vcpkg's ports need.
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build pkg-config autoconf automake libtool \
+            libxmu-dev libxi-dev libgl-dev libxinerama-dev libxcursor-dev xorg-dev libglu1-mesa-dev \
+            libwayland-dev libxkbcommon-dev wayland-protocols extra-cmake-modules
+
+      # vcpkg.json pins a builtin-baseline. The full clone has that commit in its history, and vcpkg reads
+      # the port versions from it, so the clone itself stays on master (checking the baseline out would
+      # pair its scripts with a vcpkg tool that can be older than they expect).
+      - name: Set up vcpkg
+        run: |
+          mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
+          git clone https://github.com/microsoft/vcpkg.git "$VCPKG_ROOT"
+          "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
+
+      # Restore and save are separate steps so the built packages are kept even when a later step fails.
+      - name: Restore vcpkg packages
+        id: vcpkg-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-${{ runner.os }}-
+
+      # CMakeLists.txt fetches the ImGui backends from git on every configure. Fetch the same tag
+      # once, cache it, and point FetchContent at the checkout.
+      - name: Read ImGui tag
+        id: imgui
+        run: |
+          tag=$(grep -m1 -o 'GIT_TAG *v[0-9A-Za-z.]*' CMakeLists.txt | awk '{print $2}')
+          test -n "$tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Cache ImGui source
+        id: imgui-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.IMGUI_SRC }}
+          key: imgui-${{ steps.imgui.outputs.tag }}
+
+      - name: Fetch ImGui source
+        if: steps.imgui-cache.outputs.cache-hit != 'true'
+        run: git clone --depth 1 --branch ${{ steps.imgui.outputs.tag }} https://github.com/ocornut/imgui.git "$IMGUI_SRC"
+
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=${{ inputs.configuration }}
+          -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+          -DFETCHCONTENT_SOURCE_DIR_IMGUI_BACKEND_SOURCE="$IMGUI_SRC"
+
+      # live_checks is built only for its --tls check; its full run needs minutes of internet and
+      # logo_export only regenerates the icon. -k 0 keeps compiling after an error, so one run
+      # reports every file that fails.
+      - name: Build
+        run: cmake --build build --parallel --target MC_Launcher_Premium launcher_checks live_checks -- -k 0
+
+      - name: Save vcpkg packages
+        if: always() && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+
+      - name: Run checks
+        env:
+          MCLP_OFFLINE: '1'
+        run: ctest --test-dir build --output-on-failure
+
+      # libcurl was built against OpenSSL: this proves it finds this system's CA certificates.
+      - name: Check HTTPS
+        run: build/live_checks --tls
+
+      - name: Upload build
+        if: inputs.artifact-name != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: build/MC_Launcher_Premium
+          if-no-files-found: error
+          retention-days: 1

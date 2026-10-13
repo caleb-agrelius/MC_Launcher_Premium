@@ -7,7 +7,7 @@
 class CustomPackService;
 
 // My Library > New pack...: shows the dialog and, when the player presses Create, makes the
-// pack and opens its Manage page on Content > Browse Modrinth.
+// pack and opens its Manage page on Content > Browse.
 class NewPackDialogHost {
 public:
 	NewPackDialogHost(const Runtime& runtime, CustomPackService& packs, INavigator& navigator)

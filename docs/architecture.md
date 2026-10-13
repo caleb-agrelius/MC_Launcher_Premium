@@ -20,7 +20,7 @@ Each layer uses the ones below it and never the ones above.
 
 - **Services have no Dear ImGui.** A service holds state, runs work and reports through interfaces. A test can build one with fakes.
 - **Pages have no threads and no I/O.** They read a service, draw it, and call a service when a button is pressed. Slow work is always a service's.
-- **Only `App/` and `Platform/` include GLFW or OpenGL, and only `Platform/` includes OS headers in new code.** `App/`, `Core/`, `Services/`, `UI/Shell`, `UI/Pages` and `UI/Dialogs` have no `#ifdef _WIN32`. Older files that still do (`Game/`, `Network/`, `Storage/Account`, `Util/Paths`, `Util/Process`, `Theme`, `ManagePage`) are the Linux work listed in [planned.md](features/planned.md).
+- **Only `App/` and `Platform/` include GLFW or OpenGL, and only `Platform/` includes OS headers in new code.** `App/`, `Core/`, `Services/`, `UI/Shell`, `UI/Pages` and `UI/Dialogs` have no `#ifdef _WIN32`. A few older files still have one where the standard library has no portable form: `Util/Process` (a Windows and a POSIX implementation), `Game/JavaFinder` (the registry), `Game/GameFiles` and `Game/Launcher` (the OS name and classpath separator), `Util/Paths` (long paths), `Util/DebugTrace`, `Util/Text` and `Network/Ftb` (`localtime_s` and `gmtime_s`), `Game/InstanceContent` (a wide `fopen`) and `UI/Theme` (font files). Microsoft sign-in and the saved account, which had OS code of their own, now use `Platform` only. See [platforms.md](features/platforms.md).
 
 ## Interfaces (dependency inversion)
 

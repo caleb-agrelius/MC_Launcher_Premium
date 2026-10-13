@@ -98,14 +98,14 @@ std::vector<std::string> SplitArguments(const std::string& text)
 }
 
 // The Java to run the game with: the user's choice from Settings, or Mojang's
-// runtime. A console java.exe is swapped for its javaw.exe sibling so no
+// runtime. On Windows a console java.exe is swapped for its javaw.exe sibling so no
 // console window opens.
 static bool CustomJava(const std::string& setting, fs::path& javaw, fs::path& javaConsole, std::string* err)
 {
 	std::error_code ec;
 	fs::path chosen = fs::path(setting);
 	if (fs::is_directory(chosen, ec)) // a JDK/JRE folder or its bin/
-		chosen = fs::is_directory(chosen / "bin", ec) ? chosen / "bin" / "javaw.exe" : chosen / "javaw.exe";
+		chosen = fs::is_directory(chosen / "bin", ec) ? chosen / "bin" / JavaExecutableName(true) : chosen / JavaExecutableName(true);
 	if (!fs::is_regular_file(chosen, ec)) {
 		if (err) *err = "The Java chosen in the launch settings wasn't found: " + setting;
 		return false;
@@ -335,7 +335,7 @@ static bool InstallAndLaunch(IHttpClient& http, const PlayRequest& request, cons
 		// None installed: Mojang's runtime for this version, downloaded once.
 		if (!InstallJavaRuntime(http, root, vanilla.javaComponent, true, javaw, progress, err, cancel))
 			return false;
-		javaConsole = javaw.parent_path() / (javaw.extension() == ".exe" ? "java.exe" : "java");
+		javaConsole = javaw.parent_path() / JavaExecutableName(false);
 	}
 
 	if (!InstallGameFiles(http, root, vanilla, progress, err, cancel))

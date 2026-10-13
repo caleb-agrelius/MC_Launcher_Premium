@@ -45,6 +45,10 @@ struct ServerInfo {
 	int javaMajor = 0;                   // the Java version Minecraft asks for; 0 if unknown (older setups)
 };
 
+// The argument file newer Forge and NeoForge installers write for this OS (win_args.txt on
+// Windows, unix_args.txt elsewhere), which the server is started with as @file.
+const char* ForgeArgsFileName();
+
 // True for packs that can be turned into a server: an extracted .mrpack (modrinth.index.json)
 // or a whole-pack install (pack.json and a minecraft/ folder).
 bool CanCreateServer(const std::filesystem::path& extractedDir);

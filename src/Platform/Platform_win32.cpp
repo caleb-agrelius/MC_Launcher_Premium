@@ -4,6 +4,7 @@
 #include <GLFW/glfw3.h>
 
 #include <cstdio>
+#include <array>
 #include <filesystem>
 #include <io.h>
 #include <iostream>
@@ -14,16 +15,20 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
+#include <bcrypt.h>
+#include <dpapi.h>
 #include <dwmapi.h>
 #include <iphlpapi.h>
 #include <shellapi.h>
 #include <shobjidl.h>
 #include <timeapi.h>
+#include <wincrypt.h>
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3native.h>
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "iphlpapi.lib")
 #pragma comment(lib, "dwmapi.lib")
+#pragma comment(lib, "crypt32.lib")
 
 namespace Platform {
 
@@ -44,6 +49,157 @@ bool OpenFile(const std::string& path)
 	const std::filesystem::path absolute = std::filesystem::absolute(path, ec);
 	const HINSTANCE result = ShellExecuteW(nullptr, L"open", absolute.wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 	return reinterpret_cast<INT_PTR>(result) > 32;
+}
+
+bool OpenUrl(const std::string& url)
+{
+	const HINSTANCE result = ShellExecuteA(nullptr, "open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+	return reinterpret_cast<INT_PTR>(result) > 32;
+}
+
+bool RandomBytes(unsigned char* out, std::size_t count)
+{
+	return count == 0 || BCryptGenRandom(nullptr, out, static_cast<ULONG>(count), BCRYPT_USE_SYSTEM_PREFERRED_RNG) >= 0;
+}
+
+static bool Dpapi(const std::string& in, std::string& out, bool encrypt)
+{
+	DATA_BLOB input{ static_cast<DWORD>(in.size()), reinterpret_cast<BYTE*>(const_cast<char*>(in.data())) };
+	DATA_BLOB result{};
+	const BOOL ok = encrypt
+		? CryptProtectData(&input, L"MC Launcher Premium account", nullptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &result)
+		: CryptUnprotectData(&input, nullptr, nullptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &result);
+	if (!ok)
+		return false;
+	out.assign(reinterpret_cast<const char*>(result.pbData), result.cbData);
+	LocalFree(result.pbData);
+	return true;
+}
+
+bool ProtectSecret(const std::string& plain, std::string& protectedText)
+{
+	return Dpapi(plain, protectedText, true);
+}
+
+bool UnprotectSecret(const std::string& protectedText, std::string& plain)
+{
+	return Dpapi(protectedText, plain, false);
+}
+
+void RestrictToOwner(const std::filesystem::path&)
+{
+}
+
+struct LoopbackListener::Impl {
+	Impl()
+	{
+		WSADATA data{};
+		started = WSAStartup(MAKEWORD(2, 2), &data) == 0;
+	}
+
+	~Impl()
+	{
+		CloseConnection();
+		if (listener != INVALID_SOCKET)
+			closesocket(listener);
+		if (started)
+			WSACleanup();
+	}
+
+	void CloseConnection()
+	{
+		if (connection != INVALID_SOCKET) {
+			closesocket(connection);
+			connection = INVALID_SOCKET;
+		}
+	}
+
+	bool started = false;
+	SOCKET listener = INVALID_SOCKET;
+	SOCKET connection = INVALID_SOCKET;
+};
+
+LoopbackListener::LoopbackListener() : m_impl(std::make_unique<Impl>())
+{
+}
+
+LoopbackListener::~LoopbackListener() = default;
+
+bool LoopbackListener::Start(unsigned short& port, std::string* err)
+{
+	if (!m_impl->started) {
+		if (err) *err = "Could not initialize Windows networking for Microsoft sign-in.";
+		return false;
+	}
+	m_impl->listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	if (m_impl->listener == INVALID_SOCKET) {
+		if (err) *err = "Could not create the local OAuth callback listener.";
+		return false;
+	}
+	sockaddr_in address{};
+	address.sin_family = AF_INET;
+	address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+	address.sin_port = 0;
+	if (bind(m_impl->listener, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == SOCKET_ERROR ||
+		listen(m_impl->listener, 1) == SOCKET_ERROR) {
+		if (err) *err = "Could not bind the local OAuth callback listener. Check whether local connections are blocked.";
+		return false;
+	}
+	int addressLength = sizeof(address);
+	if (getsockname(m_impl->listener, reinterpret_cast<sockaddr*>(&address), &addressLength) == SOCKET_ERROR) {
+		if (err) *err = "Could not determine the local OAuth callback port.";
+		return false;
+	}
+	port = ntohs(address.sin_port);
+	return true;
+}
+
+LoopbackListener::Result LoopbackListener::WaitForRequest(int timeoutMs, std::string& head)
+{
+	head.clear();
+	m_impl->CloseConnection();
+	fd_set readers;
+	FD_ZERO(&readers);
+	FD_SET(m_impl->listener, &readers);
+	timeval timeout{ timeoutMs / 1000, (timeoutMs % 1000) * 1000 };
+	const int ready = select(0, &readers, nullptr, nullptr, &timeout);
+	if (ready == SOCKET_ERROR)
+		return Result::Failed;
+	if (ready == 0)
+		return Result::Timeout;
+
+	m_impl->connection = accept(m_impl->listener, nullptr, nullptr);
+	if (m_impl->connection == INVALID_SOCKET)
+		return Result::Timeout;
+	std::array<char, 16384> buffer{};
+	std::size_t received = 0;
+	while (received < buffer.size() - 1) {
+		const int count = recv(m_impl->connection, buffer.data() + received,
+			static_cast<int>(buffer.size() - 1 - received), 0);
+		if (count <= 0)
+			break;
+		received += static_cast<std::size_t>(count);
+		if (std::string(buffer.data(), received).find("\r\n\r\n") != std::string::npos)
+			break;
+	}
+	head.assign(buffer.data(), received);
+	return Result::Request;
+}
+
+void LoopbackListener::Reply(const std::string& html)
+{
+	if (m_impl->connection == INVALID_SOCKET)
+		return;
+	const std::string response = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\nContent-Length: " +
+		std::to_string(html.size()) + "\r\n\r\n" + html;
+	std::size_t sent = 0;
+	while (sent < response.size()) {
+		const int count = send(m_impl->connection, response.data() + sent, static_cast<int>(response.size() - sent), 0);
+		if (count <= 0)
+			break;
+		sent += static_cast<std::size_t>(count);
+	}
+	m_impl->CloseConnection();
 }
 
 std::vector<std::string> PickFiles(const std::string& title, const std::string& filterName, const std::string& patterns)
@@ -205,6 +361,11 @@ std::filesystem::path ExecutableDir()
 	const DWORD length = GetModuleFileNameW(nullptr, buffer, static_cast<DWORD>(std::size(buffer)));
 	if (length > 0 && length < std::size(buffer))
 		return std::filesystem::path(buffer, buffer + length).parent_path();
+	return {};
+}
+
+std::filesystem::path UserDataDir()
+{
 	return {};
 }
 
