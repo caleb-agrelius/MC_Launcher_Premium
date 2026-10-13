@@ -32,7 +32,7 @@ Other docs: [docs/development.md](docs/development.md) (debugging, logs, trouble
 | [manage.md](docs/features/manage.md) | A pack's Manage page: overview, content (mods, resource and shader packs), changelog, logs, screenshots (`src/UI/Pages/Manage`, `src/Game/InstanceContent`) |
 | [servers.md](docs/features/servers.md) | Dedicated server setup, settings, EULA, process lifecycle and console |
 | [launching.md](docs/features/launching.md) | PLAY: `.mrpack` instances, Minecraft/Java/loader install, version JSON, launch command |
-| [accounts.md](docs/features/accounts.md) | Microsoft sign-in, offline mode, `account.dat` |
+| [accounts.md](docs/features/accounts.md) | Microsoft sign-in, the account check before Play, `account.dat` |
 | [planned.md](docs/features/planned.md) | Features that aren't implemented yet |
 
 ## Offline launches

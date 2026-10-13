@@ -10,11 +10,6 @@ using Theme::S;
 
 namespace {
 
-const char* AccountKind(const Account& account)
-{
-	return account.type == Account::Type::Microsoft ? "Microsoft account" : "Offline (singleplayer)";
-}
-
 void ShowError(const std::string& error)
 {
 	if (error.empty())
@@ -42,8 +37,7 @@ void AccountPanel::Draw()
 				for (std::size_t i = 0; i < list.accounts.size(); ++i) {
 					const Account& item = list.accounts[i];
 					ImGui::PushID(static_cast<int>(i));
-					if (Widgets::ListItem(item.name.c_str(), i == list.active, true,
-							item.type == Account::Type::Microsoft ? "Microsoft" : "Offline"))
+					if (Widgets::ListItem(item.name.c_str(), i == list.active, true, "Microsoft"))
 						m_accounts.Select(i);
 					ImGui::PopID();
 				}
@@ -54,21 +48,18 @@ void AccountPanel::Draw()
 			ImGui::TextUnformatted(account.name.c_str());
 			ImGui::PopFont();
 		}
-		ImGui::TextDisabled("%s", AccountKind(account));
+		ImGui::TextDisabled("Microsoft account");
 		const float half = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+		ImGui::BeginDisabled(!hasClientId);
 		if (ImGui::Button("Add account", ImVec2(half, 0.0f)))
-			ImGui::OpenPopup("add_account");
+			m_accounts.StartMicrosoftSignIn();
+		ImGui::EndDisabled();
+		ImGui::SetItemTooltip("%s", hasClientId ? "Sign in with another Microsoft account"
+			: "Needs an Azure client ID approved for Minecraft. Set it in Settings > Account.");
 		ImGui::SameLine();
 		if (ImGui::Button("Sign out", ImVec2(-1.0f, 0.0f)))
 			m_accounts.RemoveActive();
 		ImGui::SetItemTooltip("Remove %s from this launcher", account.name.c_str());
-		if (ImGui::BeginPopup("add_account")) {
-			if (Widgets::MenuItem("Sign in with Microsoft", nullptr, hasClientId))
-				m_accounts.StartMicrosoftSignIn();
-			if (Widgets::MenuItem("Play offline..."))
-				m_openOfflinePopup = true;
-			ImGui::EndPopup();
-		}
 		ShowError(m_accounts.SignInError());
 	} else if (signingIn) {
 		Widgets::Spinner(Theme::C().accent);
@@ -86,41 +77,6 @@ void AccountPanel::Draw()
 		ImGui::EndDisabled();
 		if (!hasClientId)
 			ImGui::SetItemTooltip("Needs an Azure client ID approved for Minecraft. Set it in Settings > Account.");
-		if (ImGui::Button("Play offline...", ImVec2(-1.0f, 0.0f)))
-			m_openOfflinePopup = true;
-		ImGui::SetItemTooltip("Singleplayer and offline-mode servers only. For players who own Minecraft.");
 		ShowError(m_accounts.SignInError());
 	}
-}
-
-void AccountPanel::DrawOfflinePopup()
-{
-	if (m_openOfflinePopup) {
-		ImGui::OpenPopup("Play offline");
-		m_openOfflinePopup = false;
-	}
-	ImGui::SetNextWindowSize(ImVec2(S(420.0f), 0.0f));
-	if (!ImGui::BeginPopupModal("Play offline", nullptr, ImGuiWindowFlags_NoResize))
-		return;
-	ImGui::TextWrapped("Offline mode skips Microsoft sign-in. You can play singleplayer and join "
-		"servers that don't check accounts. Use it only if you own Minecraft: Java Edition.");
-	ImGui::Spacing();
-	ImGui::SetNextItemWidth(-1.0f);
-	if (ImGui::IsWindowAppearing())
-		ImGui::SetKeyboardFocusHere();
-	const bool entered = ImGui::InputTextWithHint("##offline_name", "Username", m_offlineName, sizeof(m_offlineName),
-		ImGuiInputTextFlags_EnterReturnsTrue);
-	const bool valid = IsValidPlayerName(m_offlineName);
-	if (!valid && m_offlineName[0] != '\0')
-		ImGui::TextColored(Theme::C().error, "3-16 letters, numbers or underscores.");
-	ImGui::BeginDisabled(!valid);
-	if (ImGui::Button("Use this name") || (entered && valid)) {
-		m_accounts.Add(MakeOfflineAccount(m_offlineName));
-		ImGui::CloseCurrentPopup();
-	}
-	ImGui::EndDisabled();
-	ImGui::SameLine();
-	if (ImGui::Button("Cancel##offline"))
-		ImGui::CloseCurrentPopup();
-	ImGui::EndPopup();
 }

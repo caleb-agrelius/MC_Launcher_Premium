@@ -2,7 +2,7 @@
 
 Features that don't exist yet:
 
-- **Microsoft sign-in approval:** the sign-in flow is built (see [accounts.md](accounts.md)), but it needs an Azure app client ID that Mojang has approved for the Minecraft API. Until one is set (Settings > Account, saved as `microsoftClientId`), only offline mode works.
+- **Microsoft sign-in approval:** the sign-in flow is built (see [accounts.md](accounts.md)), but it needs an Azure app client ID that Mojang has approved for the Minecraft API. Until one is set (Settings > Account, saved as `microsoftClientId`), nobody can sign in, and since there is no offline play, Minecraft can't be played from the launcher.
 - **Other platforms:** launching is Windows x64 only. See [Linux and Windows builds](#linux-and-windows-builds) below.
 - **CurseForge in Browse:** Manage > Content > **Browse Modrinth** searches Modrinth only. CurseForge mods, resource packs and shaders (`/v1/mods/search` with class ids 6, 12 and 6552, files from `/v1/mods/{id}/files`, dependencies with `relationType` 3, installed mods found by CurseForge fingerprint) could be a second source when an API key is set. It needs a key to build and check against the real API.
 - **Request cache on disk and in Manage:** the response cache ([request-caching.md](request-caching.md)) is in memory and starts empty on each launch, so the first Discover load of a session still asks every source (FTB, Technic and ATLauncher download their whole pack lists). Saving entries under the data folder with their age would carry them across launches. Manage > Content > Browse (`ModSearch`) is not on the cache yet and has no refresh button.
@@ -89,7 +89,7 @@ This is a plan only; none of it is implemented. The goal is one source tree that
    - **Linux:** an AppImage (exe, `resources/`, desktop file and the 256 px logo), plus a plain `.tar.gz`. A Flatpak needs the portal file picker and the XDG data folder first.
    - Both have the version from `AppInfo::kVersion` in the file name.
 6. **Check in the app on Linux:**
-   - Sign in offline and with Microsoft.
+   - Sign in with Microsoft and play.
    - Install one pack from each source, play it, and cancel a play.
    - Run a server and use its console, and try the Docker switch.
    - Add files with the picker and by drag and drop.

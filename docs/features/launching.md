@@ -5,7 +5,7 @@ Turning an installed modpack into a running Minecraft. Entry point: `PlayModpack
 ## Where to click
 - **My Library:** each pack card has a **PLAY** button, for packs from every source. While the pack is being prepared, the card shows the current step, a spinner, a progress bar when the size is known, and a **Cancel** button. Pressing Cancel immediately shows a disabled **Cancelling...** button and the step "Cancelling..." until the worker stops (downloads stop between chunks; a running loader installer is terminated). While the game runs it shows "Minecraft is running" and a **Stop game** button, which asks for confirmation and then force-closes Minecraft (unsaved progress since the last autosave is lost). Errors appear in red on the card.
 - **Discover:** the big **PLAY** button works once the selected pack is in My Library. It starts the same play flow and switches to My Library. Otherwise it's disabled, with a hint to install the pack's files.
-- An account is required (see [accounts.md](accounts.md)). Pressing Play without one shows an error on the card.
+- A Microsoft account that owns Minecraft: Java Edition is required, and it's checked online before every launch (see [accounts.md](accounts.md#account-check-before-play)). There is no offline play. Pressing Play without an account, or when the check fails, shows an error on the card.
 
 ## Steps (`PlayModpack`)
 `PlayModpack` has two front ends that share the remaining steps (`InstallAndLaunch`):

@@ -374,7 +374,7 @@ static std::string OAuthError(const json& j, long status)
 	return text.empty() ? "HTTP " + std::to_string(status) : text;
 }
 
-// Xbox Live -> XSTS -> Minecraft login -> profile. msAccessToken is a Microsoft
+// Xbox Live -> XSTS -> Minecraft login -> entitlements -> profile. msAccessToken is a Microsoft
 // OAuth access token with the XboxLive.signin scope.
 static bool LoginWithMicrosoftToken(IHttpClient& http, const std::string& msAccessToken, Account& account,
 	std::string* err, const std::atomic<bool>* cancel)
@@ -441,6 +441,26 @@ static bool LoginWithMicrosoftToken(IHttpClient& http, const std::string& msAcce
 	}
 	const std::string mcToken = j["access_token"].get<std::string>();
 	const std::int64_t expiresIn = j.value("expires_in", std::int64_t{ 86400 });
+
+	// Ownership: the store entitlements must include the game (Game Pass counts too).
+	if (!RequestJson(http, "https://api.minecraftservices.com/entitlements/mcstore",
+			{ "Authorization: Bearer " + mcToken, "Accept: application/json" }, "", j, status, err, cancel))
+		return false;
+	if (status != 200) {
+		if (err) *err = "Couldn't check Minecraft ownership (HTTP " + std::to_string(status) + ")";
+		return false;
+	}
+	bool ownsGame = false;
+	if (j.contains("items") && j["items"].is_array()) {
+		for (const auto& item : j["items"]) {
+			const std::string name = item.is_object() ? item.value("name", std::string()) : std::string();
+			ownsGame = ownsGame || name == "game_minecraft" || name == "product_minecraft";
+		}
+	}
+	if (!ownsGame) {
+		if (err) *err = "This Microsoft account doesn't own Minecraft: Java Edition.";
+		return false;
+	}
 
 	if (!RequestJson(http, "https://api.minecraftservices.com/minecraft/profile",
 			{ "Authorization: Bearer " + mcToken, "Accept: application/json" }, "", j, status, err, cancel))
