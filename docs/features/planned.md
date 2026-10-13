@@ -10,6 +10,7 @@ Features that don't exist yet:
 - **Modpack source follow-ups:** a live CurseForge test with a real API key. The original spec is [plans/modpack-sources.md](../plans/modpack-sources.md).
 - **Lower memory use:** the launcher sits at about 200 MB on launch and while browsing menus. See [Memory use](#memory-use) below.
 - **Memory / network trade-off setting:** a Settings option to use less RAM or to cache more and call the network less. See [Memory use](#memory-use) below.
+- **Skip PR builds for non-code changes:** `.github/workflows/ci.yml` runs the full Debug build and offline checks on every pull request, including docs-only ones. Add a `paths-ignore` filter to its `pull_request` trigger for files that can't affect the build (`**.md`, `docs/**`, `LICENSE`, `.gitignore`, `.gitattributes`), and keep `CMakeLists.txt`, `vcpkg.json`, `src/**`, `tests/**`, `resources/**` (the app reads `resources/index.json` at startup) and `.github/workflows/**` running it. If CI is a required status check, a workflow skipped by `paths-ignore` never reports and docs-only PRs can't merge; in that case make the check not required, or use an always-running job that detects changed paths and have the build job depend on it. `release.yml` still builds and checks Release before publishing, so no release coverage is lost.
 
 When one of these features is built, move it into the matching feature doc (or add a new one) and remove it here.
 
