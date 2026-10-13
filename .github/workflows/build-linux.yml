@@ -79,10 +79,11 @@ jobs:
           -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
           -DFETCHCONTENT_SOURCE_DIR_IMGUI_BACKEND_SOURCE="$IMGUI_SRC"
 
-      # live_checks needs the internet and logo_export only regenerates the icon, so CI skips both.
-      # -k 0 keeps compiling after an error, so one run reports every file that fails.
+      # live_checks is built only for its --tls check; its full run needs minutes of internet and
+      # logo_export only regenerates the icon. -k 0 keeps compiling after an error, so one run
+      # reports every file that fails.
       - name: Build
-        run: cmake --build build --parallel --target MC_Launcher_Premium launcher_checks -- -k 0
+        run: cmake --build build --parallel --target MC_Launcher_Premium launcher_checks live_checks -- -k 0
 
       - name: Save vcpkg packages
         if: always() && steps.vcpkg-cache.outputs.cache-hit != 'true'
@@ -95,6 +96,10 @@ jobs:
         env:
           MCLP_OFFLINE: '1'
         run: ctest --test-dir build --output-on-failure
+
+      # libcurl was built against OpenSSL: this proves it finds this system's CA certificates.
+      - name: Check HTTPS
+        run: build/live_checks --tls
 
       - name: Upload build
         if: inputs.artifact-name != ''

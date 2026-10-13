@@ -1,6 +1,7 @@
 // Opt-in checks against the real pack source APIs. They need the internet, so CTest
 // doesn't run them: build the live_checks target and run it from the repository root.
 // CurseForge is checked only when an API key is set (MCLP_CURSEFORGE_API_KEY).
+// "live_checks --tls" makes one HTTPS request and stops.
 
 #include "Game/PackCreator.h"
 #include "Game/ServerSetup.h"
@@ -329,9 +330,22 @@ static void CheckLegacyForgeServer(IHttpClient& http, const fs::path& workRoot, 
 		" started and stopped (" + info.launchArgs[info.launchArgs.size() - 2] + ")" : "the server didn't finish starting:" + last);
 }
 
-int main()
+// The quick check CI runs on each platform: one HTTPS request, which proves libcurl finds the system's
+// certificates and can reach a real server. (Everything else here takes minutes.)
+static int CheckTls(HttpClient& http)
+{
+	std::string body, error;
+	const bool ok = http.Get("https://api.modrinth.com/", body, &error);
+	Report("HTTPS request to api.modrinth.com", ok && body.find("modrinth") != std::string::npos,
+		ok ? std::to_string(body.size()) + " bytes" : error);
+	return g_failures == 0 ? 0 : 1;
+}
+
+int main(int argc, char** argv)
 {
 	HttpClient http;
+	if (argc > 1 && std::string(argv[1]) == "--tls")
+		return CheckTls(http);
 	const fs::path workRoot = fs::absolute("tests/out/live");
 	fs::create_directories(workRoot);
 	CheckSource(http, PackSource::Modrinth, "fabulously optimized", workRoot);

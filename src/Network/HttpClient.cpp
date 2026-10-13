@@ -2,6 +2,7 @@
 #include "Util/Paths.h"
 #include <curl/curl.h>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <memory>
 #include <utility>
@@ -106,6 +107,34 @@ static std::string EscapeUnsafeUrlChars(const std::string& url)
 	return out;
 }
 
+#ifndef _WIN32
+// The file of trusted certificates to check servers against. libcurl is built against OpenSSL, which
+// looks where the machine that built it kept them, and distributions keep them in different places.
+// CURL_CA_BUNDLE and SSL_CERT_FILE win, as they do for curl itself; empty if none of these exists.
+static const std::string& SystemCaBundle()
+{
+	static const std::string bundle = [] {
+		std::error_code ec;
+		for (const char* variable : { "CURL_CA_BUNDLE", "SSL_CERT_FILE" }) {
+			if (const char* value = std::getenv(variable); value && *value && std::filesystem::is_regular_file(value, ec))
+				return std::string(value);
+		}
+		for (const char* path : {
+				"/etc/ssl/certs/ca-certificates.crt", // Debian, Ubuntu, Arch, Gentoo
+				"/etc/pki/tls/certs/ca-bundle.crt",   // Fedora, RHEL
+				"/etc/ssl/ca-bundle.pem",             // openSUSE
+				"/etc/pki/tls/cacert.pem",
+				"/etc/ssl/cert.pem",                  // Alpine
+				"/usr/local/share/certs/ca-root-nss.crt" }) { // FreeBSD
+			if (std::filesystem::is_regular_file(path, ec))
+				return std::string(path);
+		}
+		return std::string();
+	}();
+	return bundle;
+}
+#endif
+
 // Options shared by every request: redirects, HTTP errors as failures,
 // user agent, extra headers, and the progress/cancel callback. curl copies the URL string.
 static void ApplyCommonOptions(CURL* curl, const std::string& url, ProgressData* pd, HeaderList& headers)
@@ -115,6 +144,12 @@ static void ApplyCommonOptions(CURL* curl, const std::string& url, ProgressData*
 	curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
 	curl_easy_setopt(curl, CURLOPT_USERAGENT, HttpClient::kUserAgent);
 	curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 20L);
+	// Requests run on several threads; curl must not use signals for timeouts.
+	curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+#ifndef _WIN32
+	if (!SystemCaBundle().empty())
+		curl_easy_setopt(curl, CURLOPT_CAINFO, SystemCaBundle().c_str());
+#endif
 	// Give up on a transfer that stalls (under 1 byte/s for 60 s) instead of waiting forever.
 	curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1L);
 	curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 60L);
