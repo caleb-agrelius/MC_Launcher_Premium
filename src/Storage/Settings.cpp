@@ -67,6 +67,10 @@ Settings LoadSettings(const std::string& path)
 		settings.theme = j.value("theme", settings.theme);
 		settings.reduceMotion = j.value("reduceMotion", settings.reduceMotion);
 		settings.animationSpeed = std::clamp(j.value("animationSpeed", settings.animationSpeed), kMinAnimationSpeed, kMaxAnimationSpeed);
+		settings.maxFps = j.value("maxFps", settings.maxFps);
+		if (settings.maxFps != 0)
+			settings.maxFps = std::clamp(settings.maxFps, kMinMaxFps, kMaxMaxFps);
+		settings.lowerIdleFrameRate = j.value("lowerIdleFrameRate", settings.lowerIdleFrameRate);
 		settings.showGalleryBanners = j.value("showGalleryBanners", settings.showGalleryBanners);
 		settings.dismissedNotices = j.value("dismissedNotices", settings.dismissedNotices);
 		settings.searchLimit = std::clamp(j.value("searchLimit", settings.searchLimit), kMinSearchLimit, kMaxSearchLimit);
@@ -138,6 +142,8 @@ bool SaveSettings(const std::string& path, const Settings& settings)
 	j["theme"] = settings.theme;
 	j["reduceMotion"] = settings.reduceMotion;
 	j["animationSpeed"] = std::round(settings.animationSpeed * 100.0) / 100.0;
+	j["maxFps"] = settings.maxFps;
+	j["lowerIdleFrameRate"] = settings.lowerIdleFrameRate;
 	j["showGalleryBanners"] = settings.showGalleryBanners;
 	j["dismissedNotices"] = settings.dismissedNotices;
 	j["searchLimit"] = settings.searchLimit;

@@ -17,6 +17,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tests/WindowSmoke.ps1
 
 The CTest checks cover window settings, server file filtering and setup, preserved configuration, server mods, host IP validation, server deletion, the player data a pack update carries over, card heights, and console commands using local fixtures. The Windows smoke test launches the app with isolated data and checks window resize, close, reopen, maximization and minimization. Fixtures are kept under gitignored `tests/out/` folders.
 
+## CPU use
+
+`MCLP_DEBUG=perf` prints the frame rate and where each frame's time goes every 5 seconds (see [debug-harness.md](features/debug-harness.md)); to see what a page costs, start the app with it, open the page and leave the mouse still. `tests/CpuProbe.ps1 -Exe build-release\Release\MC_Launcher_Premium.exe -Label name` starts the exe offline, waits through a warm-up, then reports the CPU used by the idle window (median of several runs) and the frame rate; keep the mouse away from the window while it runs, because mouse movement counts as use and raises the frame rate. Measure a Release build: Debug costs differ.
+
 ## Driving the real window
 
 `tests/UiDriver.ps1` is a set of PowerShell helpers for testing the launcher the way a person uses it: `Start-App` runs the exe in a throwaway data folder (`New-Fixture`), `Click-At`, `Wheel-At` and `Move-Mouse` send real mouse input, `Shot` saves a screenshot of the window, and `Get-Shift` measures how far a strip of the window moved between two screenshots (a card that jumps while scrolling shows up as a column that moved by a different amount). Dot-source it from a script or a PowerShell session.

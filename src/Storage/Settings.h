@@ -60,6 +60,10 @@ struct Settings {
 	std::string theme = "grass"; // Theme::ThemeInfo::id
 	bool reduceMotion = false;   // no image fade-ins or toast slide-ins
 	float animationSpeed = 1.0f; // multiplies how fast animations play (2 = twice as fast); unused while reduceMotion is on
+	// Most frames per second the launcher draws while it is in use. 0 = as fast as the display refreshes.
+	int maxFps = 0;
+	// Draw only kIdleFps frames per second (see App/FramePacing.h) once nothing has happened for a second.
+	bool lowerIdleFrameRate = true;
 	bool showGalleryBanners = true;
 	// Ids of the Settings page tips the player closed with "Don't show again".
 	std::vector<std::string> dismissedNotices;
@@ -95,6 +99,9 @@ static constexpr int kMaxGridScale = 160;
 static constexpr int kGridScaleStep = 10; // what the - and + buttons change it by
 static constexpr float kMinAnimationSpeed = 0.25f;
 static constexpr float kMaxAnimationSpeed = 3.0f;
+static constexpr int kMinMaxFps = 15;
+static constexpr int kMaxMaxFps = 1000;
+static constexpr int kFrameRateChoices[] = { 0, 30, 60, 120, 144, 240 }; // the Maximum frame rate choices; 0 = match display
 static constexpr int kMinSearchLimit = 10;
 static constexpr int kMaxSearchLimit = 100; // Modrinth's maximum
 static constexpr int kMinMemoryMb = 1024;   // smallest -Xmx

@@ -37,6 +37,7 @@ In the app, `OfflineHttpClient` (`src/Network/OfflineHttpClient.*`) stands in fo
 | `file` | `mkdir`, `copy`, `copy-tree`, `rename`, `remove`, `remove-all` (with the item count), `hard-link`, `write` (the files the launcher writes itself, such as `settings.json`, `library.json`, markers and pack files) and `extract` / `extracted` for a zip. A failed operation ends in `FAILED: reason`. `mkdir` shows only when a folder was created and `remove` only when something was removed |
 | `process` | `start` with the command line and working folder, then `exit <code>` (or `killed` / `left running` after a stop or cancel), for Java, installers and servers |
 | `log` | Every line the launcher writes to `app.log`, as it is written. `app.log` itself is unchanged |
+| `perf` | Not part of `all`. Every 5 seconds: the frame rate and the average milliseconds per frame spent polling events, building the UI (with the mascot's share), rendering and swapping buffers, e.g. `240.1 fps \| ms per frame: poll 0.006, ui 0.082 (mascot 0.027), render 0.088, swap 0.026, total 4.165`. The timers (`src/Util/FramePerf.*`) cost one atomic load when the channel is off. `tests/CpuProbe.ps1` runs it while measuring the process's CPU time |
 
 ## Output format
 

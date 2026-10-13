@@ -1,3 +1,4 @@
+#include "App/FramePacing.h"
 #include "Game/InstanceContent.h"
 #include "Game/JarMods.h"
 #include "Game/JavaFinder.h"
@@ -77,6 +78,20 @@ static void SettingsChecks(const fs::path& dir)
 	Check(SaveSettings(path.string(), settings) && LoadSettings(path.string()).animationSpeed == 1.5f, "Animation speed did not round-trip");
 	settings.animationSpeed = 99.0f;
 	Check(SaveSettings(path.string(), settings) && LoadSettings(path.string()).animationSpeed == kMaxAnimationSpeed, "Animation speed was not clamped");
+	Check(restored.maxFps == 0 && restored.lowerIdleFrameRate, "The frame rate defaults changed");
+	settings.maxFps = 120;
+	settings.lowerIdleFrameRate = false;
+	{
+		const Settings fps = (SaveSettings(path.string(), settings), LoadSettings(path.string()));
+		Check(fps.maxFps == 120 && !fps.lowerIdleFrameRate, "Frame rate settings did not round-trip");
+	}
+	settings.maxFps = 5;
+	Check(SaveSettings(path.string(), settings) && LoadSettings(path.string()).maxFps == kMinMaxFps, "A tiny frame rate cap was not raised to the minimum");
+	settings.maxFps = 5000;
+	Check(SaveSettings(path.string(), settings) && LoadSettings(path.string()).maxFps == kMaxMaxFps, "A huge frame rate cap was not clamped");
+	settings.maxFps = 0;
+	settings.lowerIdleFrameRate = true;
+	Check(SaveSettings(path.string(), settings) && LoadSettings(path.string()).maxFps == 0, "Match display (0) must stay 0, not be raised to the minimum");
 	Check(restored.discoverGridScale == 100, "The grid scale default changed");
 	settings.discoverGridScale = 130;
 	Check(SaveSettings(path.string(), settings) && LoadSettings(path.string()).discoverGridScale == 130, "Grid scale did not round-trip");
@@ -1155,6 +1170,40 @@ static bool Contains(const std::string& text, const std::string& part)
 	return text.find(part) != std::string::npos;
 }
 
+static void FramePacingChecks()
+{
+	using FramePacing::Choose;
+	using FramePacing::Input;
+	Input input;
+	// In use, no cap: no sleeping, vsync paces the loop.
+	Check(Choose(input).interval == 0.0 && !Choose(input).idle, "An active window with no cap should not be paced");
+	input.maxFps = 60;
+	Check(std::abs(Choose(input).interval - 1.0 / 60.0) < 1e-9, "An active window should follow the cap");
+	// Idle for a second: drop to the idle rate, and wake on any event.
+	input.idleSeconds = FramePacing::kActiveSeconds - 0.01;
+	Check(!Choose(input).idle, "Just under the active time should still count as active");
+	input.idleSeconds = FramePacing::kActiveSeconds;
+	Check(Choose(input).idle && std::abs(Choose(input).interval - 1.0 / FramePacing::kIdleFps) < 1e-9, "An idle window should draw at the idle rate");
+	input.maxFps = 15;
+	Check(std::abs(Choose(input).interval - 1.0 / 15.0) < 1e-9, "The idle rate must never exceed the cap");
+	input.maxFps = 0;
+	// Background and minimized.
+	input.focused = false;
+	input.idleSeconds = 0.0;
+	Check(std::abs(Choose(input).interval - 1.0 / FramePacing::kBackgroundFps) < 1e-9, "An unfocused window should draw at the background rate even right after input");
+	input.focused = true;
+	input.minimized = true;
+	Check(std::abs(Choose(input).interval - 1.0 / FramePacing::kBackgroundFps) < 1e-9, "A minimized window should draw at the background rate");
+	// With the idle option off, only minimized windows are slowed down.
+	input = Input();
+	input.lowerWhenIdle = false;
+	input.idleSeconds = 60.0;
+	input.focused = false;
+	Check(Choose(input).interval == 0.0 && !Choose(input).idle, "With the idle option off an idle, unfocused window should keep the cap");
+	input.minimized = true;
+	Check(std::abs(Choose(input).interval - 1.0 / FramePacing::kBackgroundFps) < 1e-9, "A minimized window should be slowed even with the idle option off");
+}
+
 static void DebugTraceChecks(const fs::path& dir, const fs::path& executable)
 {
 	// Channel lists.
@@ -1170,6 +1219,9 @@ static void DebugTraceChecks(const fs::path& dir, const fs::path& executable)
 	Check(!Debug::ParseChannels("bogus,process", mask, &unknown) && unknown == "bogus" && mask == Debug::kProcess,
 		"An unknown channel should be reported and the known ones kept");
 	Check(Debug::ChannelNames(Debug::kHttp | Debug::kLog) == "http,log", "Channel names should list the channels in order");
+	mask = 0;
+	Check(Debug::ParseChannels("perf", mask) && mask == Debug::kPerf && !(Debug::kAll & Debug::kPerf),
+		"The perf channel should be selectable and not part of \"all\"");
 
 	// What never reaches the console.
 	Check(Debug::RedactUrl("https://x.test/a?key=abc&q=1&access_token=zz") == "https://x.test/a?key=***&q=1&access_token=***",
@@ -1332,6 +1384,7 @@ int main(int argc, char** argv)
 		LegacyForgeServerChecks(dir);
 		SharedFileChecks(dir);
 		DebugTraceChecks(dir, executable);
+		FramePacingChecks();
 		CachingChecks();
 		PackSizeChecks();
 		std::cout << "Window settings, server setup, cards and console checks passed\n";

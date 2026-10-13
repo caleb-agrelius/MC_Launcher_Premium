@@ -43,6 +43,19 @@ struct NetworkAddress {
 // Lets the player pick which address a server binds to (Servers > Host IP).
 std::vector<NetworkAddress> LocalNetworkAddresses();
 
+// Asks the OS for 1 ms timer resolution so that sleeping between frames (a few ms at a time)
+// is accurate; Windows otherwise rounds a sleep up to its 15.6 ms tick. Call once at startup.
+void UsePreciseTimer();
+
+// Blocks until the desktop compositor shows its next frame, sleeping in the kernel. With the graphics
+// driver's own vsync wait, a thread spins a CPU core for the whole wait (a full core at 240 fps on one
+// test PC); this wait cost about a tenth of that. Returns false if it can't wait on this system.
+bool WaitForDisplayRefresh();
+
+// How fast the desktop compositor refreshes, in Hz, or 0 if unknown. The compositor can run at a
+// different rate from the monitor a window is on (mixed-refresh multi-monitor setups).
+double CompositorRefreshRate();
+
 // The folder holding the running executable, or empty if the OS can't say.
 std::filesystem::path ExecutableDir();
 
