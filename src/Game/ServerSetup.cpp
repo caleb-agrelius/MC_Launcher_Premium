@@ -377,15 +377,24 @@ static bool InstallLegacyForgeServer(IHttpClient& http, const fs::path& gameRoot
 	return true;
 }
 
-// Finds Forge/NeoForge's Windows argument file (newer versions), relative to the server folder.
-static std::string FindWindowsArgsFile(const fs::path& serverDir, const MrpackIndex& index)
+const char* ForgeArgsFileName()
+{
+#ifdef _WIN32
+	return "win_args.txt";
+#else
+	return "unix_args.txt";
+#endif
+}
+
+// Finds Forge/NeoForge's argument file for this OS (newer versions), relative to the server folder.
+static std::string FindForgeArgsFile(const fs::path& serverDir, const MrpackIndex& index)
 {
 	std::error_code ec;
 	const bool modernNeoForge = index.loader == LoaderKind::NeoForge && index.minecraftVersion != "1.20.1";
 	const fs::path base = index.loader == LoaderKind::Forge ? "libraries/net/minecraftforge/forge"
 		: modernNeoForge ? "libraries/net/neoforged/neoforge" : "libraries/net/neoforged/forge";
 	const std::string version = modernNeoForge ? index.loaderVersion : index.minecraftVersion + "-" + index.loaderVersion;
-	const fs::path relative = base / version / "win_args.txt";
+	const fs::path relative = base / version / ForgeArgsFileName();
 	return fs::is_regular_file(serverDir / relative, ec) ? relative.generic_string() : std::string();
 }
 
@@ -546,7 +555,7 @@ bool SetupServer(IHttpClient& http, const ServerSetupRequest& request, ServerInf
 	if (!request.javaPath.empty()) {
 		java = fs::path(request.javaPath);
 		if (fs::is_directory(java, ec))
-			java = fs::is_directory(java / "bin", ec) ? java / "bin" / "java.exe" : java / "java.exe";
+			java = fs::is_directory(java / "bin", ec) ? java / "bin" / JavaExecutableName(false) : java / JavaExecutableName(false);
 		if (java.filename() == "javaw.exe" && fs::is_regular_file(java.parent_path() / "java.exe", ec))
 			java = java.parent_path() / "java.exe";
 		if (!fs::is_regular_file(java, ec)) {
@@ -657,7 +666,7 @@ bool SetupServer(IHttpClient& http, const ServerSetupRequest& request, ServerInf
 		if (!RunInstaller({ { out.java, "-jar", installer.string(), "--installServer", target },
 				{ out.java, "-jar", installer.string(), "--install-server", target } }, dir, log, err, cancel))
 			return false;
-		const std::string argsFile = FindWindowsArgsFile(dir, index);
+		const std::string argsFile = FindForgeArgsFile(dir, index);
 		if (!argsFile.empty()) {
 			out.launchArgs = { "@" + argsFile, "nogui" };
 		} else {

@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <deque>
 #include <filesystem>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -16,7 +17,8 @@
 // RunProcess returns false with err = "Cancelled". When kill becomes true while
 // waiting, the program is always killed and RunProcess returns false with
 // err = "Stopped".
-// Windows only; elsewhere it fails with an error.
+// Windows uses CreateProcessW; elsewhere the program is started with posix_spawn and
+// "killed" means SIGTERM, then SIGKILL if it hasn't gone after a few seconds.
 bool RunProcess(const std::vector<std::string>& args,
 				const std::filesystem::path& workDir,
 				const std::filesystem::path& logFile,
@@ -29,10 +31,10 @@ bool RunProcess(const std::vector<std::string>& args,
 
 // A long-running program with a console we drive ourselves, used for Minecraft servers:
 // its output is collected line by line (and appended to a log file), and lines can be
-// written to its input. Windows only; Start fails elsewhere.
+// written to its input.
 class ServerProcess {
 public:
-	ServerProcess() = default;
+	ServerProcess();
 	~ServerProcess(); // kills the program if it's still running
 
 	ServerProcess(const ServerProcess&) = delete;
@@ -58,11 +60,12 @@ public:
 	static constexpr std::size_t kMaxLines = 2000;
 
 private:
-	void ReadOutput();
+	struct Native; // the OS's handles for the program and its pipes (defined in Process.cpp)
 
-	void* m_process = nullptr;   // HANDLE
-	void* m_input = nullptr;     // HANDLE, write end of the program's stdin
-	void* m_output = nullptr;    // HANDLE, read end of the program's stdout/stderr
+	void ReadOutput();
+	void AddLine(std::string line);
+
+	std::unique_ptr<Native> m_native;
 	std::filesystem::path m_logFile;
 	std::thread m_reader;
 	std::atomic<bool> m_readerDone{ false };

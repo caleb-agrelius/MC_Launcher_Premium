@@ -7,6 +7,19 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#else
+#include <cerrno>
+#include <csignal>
+#include <cstring>
+#include <fcntl.h>
+#include <poll.h>
+#include <spawn.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+#include "Util/PosixFd.h"
+
+extern char** environ;
 #endif
 
 #include <chrono>
@@ -15,7 +28,23 @@
 
 namespace fs = std::filesystem;
 
+// Traces a child process being started, or failing to.
+static void TraceStart(const std::vector<std::string>& args, const fs::path& workDir, const std::string& startError)
+{
+	if (!Debug::Enabled(Debug::kProcess))
+		return;
+	Debug::Write(Debug::kProcess, (startError.empty() ? "start  " : "FAILED to start: " + startError + "  ") +
+		Debug::DescribeCommand(args) + "  (in " + Debug::PathText(workDir.u8string()) + ")");
+}
+
 #ifdef _WIN32
+
+struct ServerProcess::Native {
+	HANDLE process = nullptr;
+	HANDLE input = nullptr;   // write end of the program's stdin
+	HANDLE output = nullptr;  // read end of the program's stdout/stderr
+};
+
 static std::wstring Widen(const std::string& text)
 {
 	if (text.empty())
@@ -55,15 +84,6 @@ static void AppendQuoted(std::wstring& commandLine, const std::wstring& arg)
 		}
 	}
 	commandLine += L'"';
-}
-
-// Traces a child process being started, or failing to.
-static void TraceStart(const std::vector<std::string>& args, const fs::path& workDir, const std::string& startError)
-{
-	if (!Debug::Enabled(Debug::kProcess))
-		return;
-	Debug::Write(Debug::kProcess, (startError.empty() ? "start  " : "FAILED to start: " + startError + "  ") +
-		Debug::DescribeCommand(args) + "  (in " + Debug::PathText(workDir.u8string()) + ")");
 }
 
 static std::string LastErrorText(const std::string& what)
@@ -108,7 +128,6 @@ static bool StartChild(std::wstring& commandLine, const std::wstring& dir, HANDL
 	SetLastError(error);
 	return started != FALSE;
 }
-#endif
 
 bool RunProcess(const std::vector<std::string>& args,
 				const fs::path& workDir,
@@ -120,7 +139,6 @@ bool RunProcess(const std::vector<std::string>& args,
 				bool killOnCancel,
 				const std::atomic<bool>* kill)
 {
-#ifdef _WIN32
 	if (args.empty()) {
 		if (err) *err = "No program to run";
 		return false;
@@ -181,24 +199,17 @@ bool RunProcess(const std::vector<std::string>& args,
 	CloseHandle(process.hProcess);
 	if (exitCode) *exitCode = static_cast<int>(code);
 	return true;
-#else
-	(void)args; (void)workDir; (void)logFile; (void)wait; (void)exitCode; (void)cancel; (void)killOnCancel; (void)kill;
-	if (err) *err = "Launching programs is only implemented on Windows";
-	return false;
-#endif
 }
+
+ServerProcess::ServerProcess() = default;
 
 ServerProcess::~ServerProcess()
 {
 	if (Running())
 		Kill();
-#ifdef _WIN32
-	if (m_input)
-		CloseHandle(static_cast<HANDLE>(m_input));
-	m_input = nullptr;
-#endif
+	if (m_native && m_native->input)
+		CloseHandle(m_native->input);
 	if (m_reader.joinable()) {
-#ifdef _WIN32
 		// The reader ends when every copy of the pipe's write end is closed. A process the
 		// server started itself can still hold one after the server is gone, so stop waiting.
 		const HANDLE reader = static_cast<HANDLE>(m_reader.native_handle());
@@ -206,22 +217,20 @@ ServerProcess::~ServerProcess()
 			CancelSynchronousIo(reader);
 			std::this_thread::sleep_for(std::chrono::milliseconds(20));
 		}
-#endif
 		m_reader.join();
 	}
-#ifdef _WIN32
-	if (m_output)
-		CloseHandle(static_cast<HANDLE>(m_output));
-	if (m_process)
-		CloseHandle(static_cast<HANDLE>(m_process));
-#endif
+	if (m_native) {
+		if (m_native->output)
+			CloseHandle(m_native->output);
+		if (m_native->process)
+			CloseHandle(m_native->process);
+	}
 }
 
 bool ServerProcess::Start(const std::vector<std::string>& args, const fs::path& workDir, const fs::path& logFile,
 	std::string* err)
 {
-#ifdef _WIN32
-	if (m_process) {
+	if (m_native) {
 		if (err) *err = "This server process has already been started";
 		return false;
 	}
@@ -258,30 +267,457 @@ bool ServerProcess::Start(const std::vector<std::string>& args, const fs::path& 
 		return false;
 	}
 	CloseHandle(process.hThread);
-	m_process = process.hProcess;
-	m_input = inputWrite;
-	m_output = outputRead;
+	m_native = std::make_unique<Native>();
+	m_native->process = process.hProcess;
+	m_native->input = inputWrite;
+	m_native->output = outputRead;
 	m_logFile = logFile;
 	std::error_code ec;
 	TracedFs::CreateDirectories(logFile.parent_path(), ec);
 	m_reader = std::thread([this]() { ReadOutput(); });
 	return true;
+}
+
+// Reads what the program has written. Returns the number of bytes read, or 0 once its pipe has closed.
+static std::size_t ReadPipe(HANDLE pipe, char* buffer, std::size_t size)
+{
+	DWORD read = 0;
+	if (!ReadFile(pipe, buffer, static_cast<DWORD>(size), &read, nullptr))
+		return 0;
+	return read;
+}
+
+bool ServerProcess::Running() const
+{
+	return m_native && m_native->process && WaitForSingleObject(m_native->process, 0) == WAIT_TIMEOUT;
+}
+
+int ServerProcess::ExitCode() const
+{
+	DWORD code = 0;
+	if (m_native && m_native->process && GetExitCodeProcess(m_native->process, &code))
+		return static_cast<int>(code);
+	return -1;
+}
+
+void ServerProcess::Send(const std::string& line)
+{
+	if (!m_native || !m_native->input || !Running())
+		return;
+	const std::string text = line + "\n";
+	DWORD written = 0;
+	WriteFile(m_native->input, text.data(), static_cast<DWORD>(text.size()), &written, nullptr);
+	AddLine("> " + line);
+}
+
+void ServerProcess::Kill()
+{
+	if (m_native && Running()) {
+		TerminateProcess(m_native->process, 1);
+		WaitForSingleObject(m_native->process, 5000);
+	}
+}
+
+bool ServerProcess::WaitForExit(int timeoutMs)
+{
+	if (!m_native || !m_native->process)
+		return true;
+	return WaitForSingleObject(m_native->process, static_cast<DWORD>(timeoutMs)) != WAIT_TIMEOUT;
+}
+
+#else // POSIX
+
+namespace {
+
+// How long a program gets to shut down after SIGTERM before it is killed outright.
+constexpr int kTerminateGraceMs = 3000;
+constexpr auto kPollInterval = std::chrono::milliseconds(20);
+// The status Reap reports for a program that is no longer our child (already reaped elsewhere).
+constexpr int kNotOurs = -1;
+
+std::string ErrorText(const std::string& what, int error)
+{
+	return what + " (" + std::strerror(error) + ")";
+}
+
+// Moves a descriptor above 2, so it can't be confused with a standard stream if those were closed.
+PosixFd AboveStandardStreams(PosixFd fd)
+{
+	if (!fd.Valid() || fd.Get() > 2)
+		return fd;
+	return PosixFd(fcntl(fd.Get(), F_DUPFD_CLOEXEC, 3));
+}
+
+// Every descriptor the launcher opens is close-on-exec, so a child inherits only the
+// standard streams it is given below. Without that it would also get another child's pipe
+// or log, which keeps that pipe open after its own process exits and stalls whoever reads it.
+PosixFd OpenDescriptor(const fs::path& path, int flags)
+{
+	return AboveStandardStreams(PosixFd(::open(path.c_str(), flags | O_CLOEXEC, 0644)));
+}
+
+bool MakePipe(PosixFd& readEnd, PosixFd& writeEnd)
+{
+	int fds[2];
+#ifdef __linux__
+	if (::pipe2(fds, O_CLOEXEC) != 0)
+		return false;
 #else
-	(void)args; (void)workDir; (void)logFile;
-	if (err) *err = "Running servers is only implemented on Windows";
-	return false;
+	if (::pipe(fds) != 0)
+		return false;
+	fcntl(fds[0], F_SETFD, FD_CLOEXEC);
+	fcntl(fds[1], F_SETFD, FD_CLOEXEC);
 #endif
+	readEnd = AboveStandardStreams(PosixFd(fds[0]));
+	writeEnd = AboveStandardStreams(PosixFd(fds[1]));
+	return readEnd.Valid() && writeEnd.Valid();
+}
+
+// Starts the program with the given standard streams. Returns 0, or the error number.
+int StartChild(const std::vector<std::string>& args, const fs::path& workDir, int input, int output, pid_t& pid)
+{
+	// A relative path to the program is relative to the launcher, not to the folder it runs in.
+	fs::path program(args[0]);
+	if (program.has_parent_path() && program.is_relative()) {
+		std::error_code ec;
+		program = fs::absolute(program, ec);
+	}
+
+	posix_spawn_file_actions_t actions;
+	if (const int error = posix_spawn_file_actions_init(&actions); error != 0)
+		return error;
+	posix_spawn_file_actions_adddup2(&actions, input, STDIN_FILENO);
+	posix_spawn_file_actions_adddup2(&actions, output, STDOUT_FILENO);
+	posix_spawn_file_actions_adddup2(&actions, output, STDERR_FILENO);
+	if (!workDir.empty())
+		posix_spawn_file_actions_addchdir_np(&actions, workDir.c_str());
+
+	std::vector<char*> argv;
+	argv.reserve(args.size() + 1);
+	for (const std::string& arg : args)
+		argv.push_back(const_cast<char*>(arg.c_str()));
+	argv.push_back(nullptr);
+
+	const int error = posix_spawnp(&pid, program.c_str(), &actions, nullptr, argv.data(), environ);
+	posix_spawn_file_actions_destroy(&actions);
+	return error;
+}
+
+// The shell's convention: the exit code, or 128 plus the signal that ended the program.
+int ExitCodeOf(int status)
+{
+	if (status == kNotOurs)
+		return -1;
+	if (WIFEXITED(status))
+		return WEXITSTATUS(status);
+	if (WIFSIGNALED(status))
+		return 128 + WTERMSIG(status);
+	return -1;
+}
+
+// Reaps the program if it has ended. Returns true when it has (status is then set).
+bool Reap(pid_t pid, int& status)
+{
+	for (;;) {
+		const pid_t result = ::waitpid(pid, &status, WNOHANG);
+		if (result == pid)
+			return true;
+		if (result == 0)
+			return false;
+		if (errno != EINTR) {
+			status = kNotOurs;
+			return true;
+		}
+	}
+}
+
+// Waits up to timeoutMs for the program to end. Returns true when it has.
+bool WaitFor(pid_t pid, int timeoutMs, int& status)
+{
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+	while (!Reap(pid, status)) {
+		if (std::chrono::steady_clock::now() >= deadline)
+			return false;
+		std::this_thread::sleep_for(kPollInterval);
+	}
+	return true;
+}
+
+// Asks the program to end (SIGTERM, so a Java server can still save), then kills it if it
+// hasn't gone within the grace period. Always reaps it.
+void Terminate(pid_t pid, int graceMs)
+{
+	int status = 0;
+	if (Reap(pid, status))
+		return;
+	::kill(pid, SIGTERM);
+	if (WaitFor(pid, graceMs, status))
+		return;
+	::kill(pid, SIGKILL);
+	while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {
+	}
+}
+
+// Reaps a program we leave running, once it ends, so it doesn't stay a zombie.
+void ReapInBackground(pid_t pid)
+{
+	std::thread([pid]() {
+		int status = 0;
+		while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {
+		}
+	}).detach();
+}
+
+}
+
+struct ServerProcess::Native {
+	pid_t pid = -1;
+	PosixFd input;   // write end of the program's stdin
+	PosixFd output;  // read end of the program's stdout/stderr
+	std::atomic<bool> stopReading{ false };
+	mutable std::mutex mutex; // guards exited and exitCode
+	mutable bool exited = false;
+	mutable int exitCode = -1;
+};
+
+bool RunProcess(const std::vector<std::string>& args,
+				const fs::path& workDir,
+				const fs::path& logFile,
+				bool wait,
+				int* exitCode,
+				std::string* err,
+				const std::atomic<bool>* cancel,
+				bool killOnCancel,
+				const std::atomic<bool>* kill)
+{
+	if (args.empty()) {
+		if (err) *err = "No program to run";
+		return false;
+	}
+	std::error_code ec;
+	TracedFs::CreateDirectories(logFile.parent_path(), ec);
+	PosixFd log = OpenDescriptor(logFile, O_WRONLY | O_APPEND | O_CREAT);
+	if (!log.Valid()) {
+		if (err) *err = ErrorText("Couldn't open log file", errno);
+		return false;
+	}
+	PosixFd nul = OpenDescriptor("/dev/null", O_RDONLY);
+	if (!nul.Valid()) {
+		if (err) *err = ErrorText("Couldn't open /dev/null", errno);
+		return false;
+	}
+
+	pid_t pid = -1;
+	const int startErrno = StartChild(args, workDir, nul.Get(), log.Get(), pid);
+	const std::string startError = startErrno == 0 ? std::string() : ErrorText("Couldn't start " + args[0], startErrno);
+	TraceStart(args, workDir, startError);
+	if (startErrno != 0) {
+		if (err) *err = startError;
+		return false;
+	}
+	log.Reset();
+	nul.Reset();
+
+	if (!wait) {
+		ReapInBackground(pid);
+		return true;
+	}
+	for (;;) {
+		int status = 0;
+		if (Reap(pid, status)) {
+			const int code = ExitCodeOf(status);
+			Debug::Write(Debug::kProcess, "exit " + std::to_string(code) + "  " + Debug::DescribeCommand({ args[0] }));
+			if (exitCode) *exitCode = code;
+			return true;
+		}
+		if (kill && kill->load()) {
+			Terminate(pid, kTerminateGraceMs);
+			Debug::Write(Debug::kProcess, "killed  " + Debug::DescribeCommand({ args[0] }) + " (stopped)");
+			if (err) *err = "Stopped";
+			return false;
+		}
+		if (cancel && cancel->load()) {
+			if (killOnCancel)
+				Terminate(pid, kTerminateGraceMs);
+			else
+				ReapInBackground(pid);
+			Debug::Write(Debug::kProcess, std::string(killOnCancel ? "killed  " : "left running  ") + Debug::DescribeCommand({ args[0] }) + " (cancelled)");
+			if (err) *err = "Cancelled";
+			return false;
+		}
+		std::this_thread::sleep_for(kPollInterval);
+	}
+}
+
+ServerProcess::ServerProcess() = default;
+
+ServerProcess::~ServerProcess()
+{
+	if (Running())
+		Kill();
+	if (m_native)
+		m_native->input.Reset();
+	if (m_reader.joinable()) {
+		// The reader ends when every copy of the pipe's write end is closed. A program the
+		// server started itself can still hold one after the server is gone, so stop waiting.
+		for (int attempt = 0; attempt < 10 && !m_readerDone.load(); ++attempt)
+			std::this_thread::sleep_for(kPollInterval);
+		m_native->stopReading.store(true);
+		m_reader.join();
+	}
+}
+
+bool ServerProcess::Start(const std::vector<std::string>& args, const fs::path& workDir, const fs::path& logFile,
+	std::string* err)
+{
+	if (m_native) {
+		if (err) *err = "This server process has already been started";
+		return false;
+	}
+	if (args.empty()) {
+		if (err) *err = "No program to run";
+		return false;
+	}
+	// Writing to a program that has already gone must fail with an error, not end the launcher.
+	static const bool sigpipeIgnored = (std::signal(SIGPIPE, SIG_IGN), true);
+	(void)sigpipeIgnored;
+
+	PosixFd inputRead, inputWrite, outputRead, outputWrite;
+	if (!MakePipe(inputRead, inputWrite) || !MakePipe(outputRead, outputWrite)) {
+		if (err) *err = ErrorText("Couldn't create pipes", errno);
+		return false;
+	}
+	pid_t pid = -1;
+	const int startErrno = StartChild(args, workDir, inputRead.Get(), outputWrite.Get(), pid);
+	const std::string startError = startErrno == 0 ? std::string() : ErrorText("Couldn't start " + args[0], startErrno);
+	TraceStart(args, workDir, startError);
+	if (startErrno != 0) {
+		if (err) *err = startError;
+		return false;
+	}
+	// The child has its own copies; ours must go so the output pipe closes when it exits.
+	inputRead.Reset();
+	outputWrite.Reset();
+
+	m_native = std::make_unique<Native>();
+	m_native->pid = pid;
+	m_native->input = std::move(inputWrite);
+	m_native->output = std::move(outputRead);
+	m_logFile = logFile;
+	std::error_code ec;
+	TracedFs::CreateDirectories(logFile.parent_path(), ec);
+	m_reader = std::thread([this]() { ReadOutput(); });
+	return true;
+}
+
+// Reads what the program has written. Returns the number of bytes read, or 0 once its pipe has
+// closed or reading is stopped.
+static std::size_t ReadPipe(const std::atomic<bool>& stop, int pipe, char* buffer, std::size_t size)
+{
+	while (!stop.load()) {
+		pollfd wanted{ pipe, POLLIN, 0 };
+		const int ready = ::poll(&wanted, 1, 100);
+		if (ready < 0 && errno != EINTR)
+			return 0;
+		if (ready <= 0)
+			continue;
+		const ssize_t count = ::read(pipe, buffer, size);
+		if (count >= 0)
+			return static_cast<std::size_t>(count);
+		if (errno != EINTR && errno != EAGAIN)
+			return 0;
+	}
+	return 0;
+}
+
+bool ServerProcess::Running() const
+{
+	if (!m_native || m_native->pid <= 0)
+		return false;
+	std::lock_guard<std::mutex> lock(m_native->mutex);
+	if (!m_native->exited) {
+		int status = 0;
+		if (!Reap(m_native->pid, status))
+			return true;
+		m_native->exited = true;
+		m_native->exitCode = ExitCodeOf(status);
+	}
+	return false;
+}
+
+int ServerProcess::ExitCode() const
+{
+	if (!m_native || Running())
+		return -1;
+	std::lock_guard<std::mutex> lock(m_native->mutex);
+	return m_native->exitCode;
+}
+
+void ServerProcess::Send(const std::string& line)
+{
+	if (!m_native || !m_native->input.Valid() || !Running())
+		return;
+	const std::string text = line + "\n";
+	std::size_t sent = 0;
+	while (sent < text.size()) {
+		const ssize_t count = ::write(m_native->input.Get(), text.data() + sent, text.size() - sent);
+		if (count < 0 && errno == EINTR)
+			continue;
+		if (count <= 0)
+			break;
+		sent += static_cast<std::size_t>(count);
+	}
+	AddLine("> " + line);
+}
+
+void ServerProcess::Kill()
+{
+	if (m_native && Running()) {
+		::kill(m_native->pid, SIGTERM);
+		if (!WaitForExit(2000))
+			::kill(m_native->pid, SIGKILL);
+		WaitForExit(5000);
+	}
+}
+
+bool ServerProcess::WaitForExit(int timeoutMs)
+{
+	if (!m_native || m_native->pid <= 0)
+		return true;
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+	while (Running()) {
+		if (std::chrono::steady_clock::now() >= deadline)
+			return false;
+		std::this_thread::sleep_for(kPollInterval);
+	}
+	return true;
+}
+
+#endif
+
+void ServerProcess::AddLine(std::string line)
+{
+	std::lock_guard<std::mutex> lock(m_mutex);
+	m_lines.push_back(std::move(line));
+	++m_totalLines;
+	if (m_lines.size() > kMaxLines)
+		m_lines.pop_front();
 }
 
 void ServerProcess::ReadOutput()
 {
-#ifdef _WIN32
 	std::ofstream log(m_logFile, std::ios::app | std::ios::binary);
 	std::string pending;
 	char buffer[4096];
-	DWORD read = 0;
-	while (ReadFile(static_cast<HANDLE>(m_output), buffer, sizeof(buffer), &read, nullptr) && read > 0) {
-		log.write(buffer, read);
+	for (;;) {
+#ifdef _WIN32
+		const std::size_t read = ReadPipe(m_native->output, buffer, sizeof(buffer));
+#else
+		const std::size_t read = ReadPipe(m_native->stopReading, m_native->output.Get(), buffer, sizeof(buffer));
+#endif
+		if (read == 0)
+			break;
+		log.write(buffer, static_cast<std::streamsize>(read));
 		log.flush();
 		pending.append(buffer, read);
 		std::size_t newline;
@@ -290,81 +726,12 @@ void ServerProcess::ReadOutput()
 			pending.erase(0, newline + 1);
 			if (!line.empty() && line.back() == '\r')
 				line.pop_back();
-			std::lock_guard<std::mutex> lock(m_mutex);
-			m_lines.push_back(std::move(line));
-			++m_totalLines;
-			if (m_lines.size() > kMaxLines)
-				m_lines.pop_front();
+			AddLine(std::move(line));
 		}
 	}
-	if (!pending.empty()) {
-		std::lock_guard<std::mutex> lock(m_mutex);
-		m_lines.push_back(pending);
-		++m_totalLines;
-		if (m_lines.size() > kMaxLines)
-			m_lines.pop_front();
-	}
-#endif
+	if (!pending.empty())
+		AddLine(pending);
 	m_readerDone.store(true);
-}
-
-bool ServerProcess::Running() const
-{
-#ifdef _WIN32
-	return m_process && WaitForSingleObject(static_cast<HANDLE>(m_process), 0) == WAIT_TIMEOUT;
-#else
-	return false;
-#endif
-}
-
-int ServerProcess::ExitCode() const
-{
-#ifdef _WIN32
-	DWORD code = 0;
-	if (m_process && GetExitCodeProcess(static_cast<HANDLE>(m_process), &code))
-		return static_cast<int>(code);
-#endif
-	return -1;
-}
-
-void ServerProcess::Send(const std::string& line)
-{
-#ifdef _WIN32
-	if (!m_input || !Running())
-		return;
-	const std::string text = line + "\n";
-	DWORD written = 0;
-	WriteFile(static_cast<HANDLE>(m_input), text.data(), static_cast<DWORD>(text.size()), &written, nullptr);
-	std::lock_guard<std::mutex> lock(m_mutex);
-	m_lines.push_back("> " + line);
-	++m_totalLines;
-	if (m_lines.size() > kMaxLines)
-		m_lines.pop_front();
-#else
-	(void)line;
-#endif
-}
-
-void ServerProcess::Kill()
-{
-#ifdef _WIN32
-	if (m_process && Running()) {
-		TerminateProcess(static_cast<HANDLE>(m_process), 1);
-		WaitForSingleObject(static_cast<HANDLE>(m_process), 5000);
-	}
-#endif
-}
-
-bool ServerProcess::WaitForExit(int timeoutMs)
-{
-#ifdef _WIN32
-	if (!m_process)
-		return true;
-	return WaitForSingleObject(static_cast<HANDLE>(m_process), static_cast<DWORD>(timeoutMs)) != WAIT_TIMEOUT;
-#else
-	(void)timeoutMs;
-	return true;
-#endif
 }
 
 std::uint64_t ServerProcess::TotalLines() const

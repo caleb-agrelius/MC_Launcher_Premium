@@ -9,9 +9,11 @@
 #include "Network/CachingHttpClient.h"
 #include "Network/HttpClient.h"
 #include "Network/Modrinth.h"
+#include "Network/MicrosoftAuth.h"
 #include "Network/OfflineHttpClient.h"
 #include "Network/TracingHttpClient.h"
 #include "Platform/Platform.h"
+#include "Storage/Account.h"
 #include "Storage/Library.h"
 #include "Storage/Settings.h"
 #include "UI/Theme.h"
@@ -20,6 +22,7 @@
 #include "Util/Paths.h"
 #include "Util/Process.h"
 #include "Util/Sha1.h"
+#include "Util/Sha256.h"
 #include "Util/SharedFiles.h"
 #include "Util/Text.h"
 #include "Util/TracedFs.h"
@@ -28,6 +31,7 @@
 #include <miniz/miniz.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -226,17 +230,16 @@ static void ServerChecks(const fs::path& dir, const fs::path& executable)
 		"Mod was not enabled again");
 	std::atomic<bool> cancel{ true };
 	Check(!SetupServer(http, request, info, {}, &error, &cancel) && error == "Cancelled", "Setup ignored cancellation");
-#ifdef _WIN32
 	// This executable acts as the installer; cached fixtures keep the checks offline.
 	index["dependencies"]["forge"] = "47.2.0";
 	Write(request.extractedDir / "modrinth.index.json", index.dump());
 	Write(request.gameRoot / "installers/forge-1.20.1-47.2.0-installer.jar", "stub");
-	Write(request.serverDir / "libraries/net/minecraftforge/forge/1.20.1-47.1.0/win_args.txt", "stale");
-	Write(request.serverDir / "libraries/net/minecraftforge/forge/1.20.1-47.2.0/win_args.txt", "current");
+	const std::string argsFile = ForgeArgsFileName();
+	Write(request.serverDir / ("libraries/net/minecraftforge/forge/1.20.1-47.1.0/" + argsFile), "stale");
+	Write(request.serverDir / ("libraries/net/minecraftforge/forge/1.20.1-47.2.0/" + argsFile), "current");
 	Check(SetupServer(http, request, info, {}, &error, nullptr), error);
-	Check(info.launchArgs[0] == "@libraries/net/minecraftforge/forge/1.20.1-47.2.0/win_args.txt",
+	Check(info.launchArgs[0] == "@libraries/net/minecraftforge/forge/1.20.1-47.2.0/" + argsFile,
 		"Forge update selected stale loader arguments");
-#endif
 	request.serverDir = dir / "blocked";
 	fs::create_directories(request.serverDir / ".mclp-server.json");
 	Write(request.serverDir / "mods/shared.jar", "stub");
@@ -480,9 +483,90 @@ static void CardChecks()
 	ImGui::DestroyContext();
 }
 
+static std::string HexOf(const std::array<unsigned char, 32>& digest)
+{
+	static const char* digits = "0123456789abcdef";
+	std::string hex;
+	for (unsigned char byte : digest) {
+		hex += digits[byte >> 4];
+		hex += digits[byte & 15];
+	}
+	return hex;
+}
+
+// Microsoft sign-in's local pieces: SHA-256 and the PKCE challenge, reading the browser's
+// redirect, the loopback listener a browser talks to, and the saved-account file.
+static void SignInChecks(const fs::path& dir)
+{
+	Check(HexOf(Sha256("")) == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "SHA-256 of nothing");
+	Check(HexOf(Sha256("abc")) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "SHA-256 of abc");
+	Check(HexOf(Sha256("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq")) ==
+		"248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1", "SHA-256 across two blocks");
+	Check(HexOf(Sha256(std::string(1000000, 'a'))) == "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0",
+		"SHA-256 of a million a's");
+	// The example in RFC 7636, appendix B.
+	Check(PkceChallenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk") == "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+		"PKCE challenge");
+
+	std::string code, error;
+	Check(ParseAuthorizationRedirect("GET /?code=abc%20d&state=s1 HTTP/1.1\r\nHost: localhost\r\n\r\n", "s1", code, &error) &&
+		code == "abc d", "A valid redirect was refused: " + error);
+	Check(!ParseAuthorizationRedirect("GET /?code=abc&state=other HTTP/1.1\r\n\r\n", "s1", code, &error) &&
+		error.find("state") != std::string::npos, "A redirect for another sign-in was accepted");
+	Check(!ParseAuthorizationRedirect("GET /?error=access_denied&error_description=Nope&state=s1 HTTP/1.1\r\n\r\n", "s1", code, &error) &&
+		error == "Microsoft sign-in failed: Nope", "An OAuth error was not reported: " + error);
+	Check(!ParseAuthorizationRedirect("GET /?state=s1 HTTP/1.1\r\n\r\n", "s1", code, &error), "A redirect without a code was accepted");
+	Check(!ParseAuthorizationRedirect("GET /favicon.ico HTTP/1.1\r\n\r\n", "s1", code, &error), "A request without parameters was accepted");
+	Check(!ParseAuthorizationRedirect("POST /?code=a&state=s1 HTTP/1.1\r\n\r\n", "s1", code, &error), "A POST was accepted");
+	Check(!ParseAuthorizationRedirect("GET /?code=%zz&state=s1 HTTP/1.1\r\n\r\n", "s1", code, &error), "A bad escape was accepted");
+
+	// A browser (here libcurl) sent to the local address reaches the listener, and gets the reply.
+	Platform::LoopbackListener listener;
+	unsigned short port = 0;
+	Check(listener.Start(port, &error) && port != 0, "Listener did not start: " + error);
+	std::string head;
+	Check(listener.WaitForRequest(50, head) == Platform::LoopbackListener::Result::Timeout, "Nothing connected, yet a request arrived");
+	std::string page, fetchError;
+	bool fetched = false;
+	std::thread browser([&]() {
+		HttpClient http;
+		fetched = http.Get("http://127.0.0.1:" + std::to_string(port) + "/?code=the-code&state=the-state", page, &fetchError);
+	});
+	Platform::LoopbackListener::Result result = Platform::LoopbackListener::Result::Timeout;
+	for (int attempt = 0; attempt < 40 && result == Platform::LoopbackListener::Result::Timeout; ++attempt)
+		result = listener.WaitForRequest(250, head);
+	Check(result == Platform::LoopbackListener::Result::Request, "The browser's request never reached the listener");
+	Check(ParseAuthorizationRedirect(head, "the-state", code, &error) && code == "the-code", "Listener request: " + head);
+	listener.Reply("<html>thanks</html>");
+	browser.join();
+	Check(fetched && page == "<html>thanks</html>", "The browser did not get the reply: " + fetchError);
+
+	// Saved accounts round-trip, and where nothing encrypts them only the owner can read the file.
+	const fs::path path = dir / "account.dat";
+	AccountList list;
+	Account microsoft;
+	microsoft.type = Account::Type::Microsoft;
+	microsoft.name = "Steve";
+	microsoft.uuid = "0123456789abcdef0123456789abcdef";
+	microsoft.accessToken = "access-token";
+	microsoft.refreshToken = "refresh-token";
+	list.AddOrReplace(microsoft);
+	list.AddOrReplace(MakeOfflineAccount("Alex"));
+	Check(SaveAccounts(path.string(), list), "Accounts did not save");
+	const AccountList loaded = LoadAccounts(path.string());
+	Check(loaded.accounts.size() == 2 && loaded.accounts[0].refreshToken == "refresh-token" && loaded.Active().name == "Alex",
+		"Accounts did not round-trip");
+#ifndef _WIN32
+	std::error_code ec;
+	Check(fs::status(path, ec).permissions() == (fs::perms::owner_read | fs::perms::owner_write), "account.dat is readable by other users");
+	Check(Read(path).find("refresh-token") != std::string::npos, "Accounts are stored as written where there is no encryption");
+#else
+	Check(Read(path).find("refresh-token") == std::string::npos, "account.dat is not encrypted");
+#endif
+}
+
 static void ProcessChecks(const fs::path& dir, const fs::path& executable)
 {
-#ifdef _WIN32
 	ServerProcess process;
 	std::string error;
 	Check(process.Start({ executable.string(), "--console-fixture", "argument with spaces" }, dir,
@@ -535,7 +619,6 @@ static void ProcessChecks(const fs::path& dir, const fs::path& executable)
 		Check(std::chrono::steady_clock::now() - stopping < std::chrono::seconds(4),
 			"Console reader waited on a child that inherited its pipe");
 	}
-#endif
 }
 
 // A jar holding the given entries, written with miniz.
@@ -1322,7 +1405,6 @@ static void DebugTraceChecks(const fs::path& dir, const fs::path& executable)
 	Check(Contains(sink.str(), "<- GET FAILED: connection refused"), "A failed GET should be traced:\n" + sink.str());
 
 	// Child processes: the command, then the exit code, with token values hidden.
-#ifdef _WIN32
 	sink.str("");
 	int exitCode = -1;
 	Check(RunProcess({ executable.string(), "-jar", "--accessToken", "SECRET" }, dir, dir / "proc.log", true, &exitCode) && exitCode == 0,
@@ -1330,7 +1412,6 @@ static void DebugTraceChecks(const fs::path& dir, const fs::path& executable)
 	trace = sink.str();
 	Check(Contains(trace, "[PROC ]") && Contains(trace, "start  ") && Contains(trace, "--accessToken ***") && Contains(trace, "exit 0") &&
 		!Contains(trace, "SECRET"), "A process should be traced without its tokens:\n" + trace);
-#endif
 
 	// Off: nothing is written and the calls still work.
 	Debug::Configure(0, &sink);
@@ -1375,6 +1456,7 @@ int main(int argc, char** argv)
 		PlayerDataChecks(dir);
 		TextChecks();
 		CardChecks();
+		SignInChecks(dir);
 		ProcessChecks(dir, executable);
 		ContentChecks(dir);
 		PackEditChecks(dir);

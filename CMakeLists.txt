@@ -14,6 +14,7 @@ find_package(CURL REQUIRED)
 find_package(miniz CONFIG QUIET)
 find_package(WebP CONFIG REQUIRED)
 find_package(Stb REQUIRED)
+find_package(Threads REQUIRED)
 
 include(FetchContent)
 FetchContent_Declare(
@@ -34,6 +35,12 @@ endif()
 if (MSVC)
   # Compile each target's source files in parallel (cmake --build builds the targets one after another).
   add_compile_options(/MP)
+endif()
+
+# Every target below includes glad, so GLFW must not pull in the system's OpenGL header too.
+add_compile_definitions(GLFW_INCLUDE_NONE)
+if (MSVC)
+  add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
 endif()
 
 # Everything except main() is compiled once into this library; the app and both check executables
@@ -166,6 +173,7 @@ add_library(launcher_core STATIC
   src/Util/Paths.cpp
   src/Util/Process.cpp
   src/Util/Sha1.cpp
+  src/Util/Sha256.cpp
   src/Util/SharedFiles.cpp
   src/Util/Text.cpp
   src/Util/TracedFs.cpp
@@ -186,6 +194,8 @@ target_link_libraries(launcher_core PUBLIC
   nlohmann_json::nlohmann_json
   CURL::libcurl
   WebP::webp
+  Threads::Threads
+  ${CMAKE_DL_LIBS}
 )
 
 if (miniz_FOUND)
@@ -195,7 +205,6 @@ else()
 endif()
 
 if (WIN32)
-  target_compile_definitions(launcher_core PUBLIC "_CRT_SECURE_NO_WARNINGS" "GLFW_INCLUDE_NONE")
   target_link_libraries(launcher_core PUBLIC bcrypt shell32 ws2_32 winmm)
 endif()
 

@@ -24,6 +24,11 @@ static const char* kJavaExe = "java";
 static const char* kJavawExe = "java";
 #endif
 
+const char* JavaExecutableName(bool windowed)
+{
+	return windowed ? kJavawExe : kJavaExe;
+}
+
 // Version numbers as a list of integers, for ordering: "1.8.0_382" -> 1 8 0 382.
 static std::vector<int> VersionParts(const std::string& version)
 {
@@ -235,12 +240,36 @@ std::vector<JavaInstall> FindJavaInstalls(const fs::path& gameRoot)
 		RegistryHomes(HKEY_LOCAL_MACHINE, vendor, 4, homes);
 		RegistryHomes(HKEY_CURRENT_USER, vendor, 4, homes);
 	}
+#else
+	// A java on PATH is usually a link (/usr/bin/java -> /etc/alternatives/java -> the JDK's bin/java),
+	// so the home is wherever the link finally points.
+	const std::string path = EnvPath("PATH").string();
+	for (std::size_t start = 0; start <= path.size();) {
+		std::size_t end = path.find(':', start);
+		if (end == std::string::npos)
+			end = path.size();
+		if (end > start) {
+			std::error_code ec;
+			const fs::path java = fs::canonical(fs::path(path.substr(start, end - start)) / kJavaExe, ec);
+			if (!ec)
+				homes.push_back(java.parent_path().parent_path());
+		}
+		start = end + 1;
+	}
 #endif
 	for (const fs::path& home : homes)
 		ScanFolder(home, 0, false, found);
 
 	// Folders that hold Java homes.
 	std::vector<fs::path> vendorFolders;
+#ifndef _WIN32
+	for (const char* folder : { "/usr/lib/jvm", "/usr/lib64/jvm", "/usr/java", "/opt/java", "/opt/jdks", "/opt" })
+		vendorFolders.push_back(folder);
+	if (const fs::path home = EnvPath("HOME"); !home.empty()) {
+		vendorFolders.push_back(home / ".jdks");                       // IntelliJ's downloads
+		vendorFolders.push_back(home / ".sdkman" / "candidates" / "java");
+	}
+#endif
 	for (const char* programs : { "ProgramW6432", "ProgramFiles" }) {
 		const fs::path base = EnvPath(programs);
 		if (base.empty())
@@ -269,6 +298,19 @@ std::vector<JavaInstall> FindJavaInstalls(const fs::path& gameRoot)
 		ScanFolder(appData / ".minecraft" / "runtime", 3, true, found);
 		ScanFolder(appData / "PrismLauncher" / "java", 3, false, found);
 	}
+#ifndef _WIN32
+	if (const fs::path home = EnvPath("HOME"); !home.empty()) {
+		fs::path data = EnvPath("XDG_DATA_HOME");
+		if (data.empty())
+			data = home / ".local" / "share";
+		ScanFolder(home / ".minecraft" / "runtime", 3, true, found);
+		ScanFolder(data / "PrismLauncher" / "java", 3, false, found);
+		// Prism as a Flatpak or Snap keeps its own data folder.
+		ScanFolder(home / ".var" / "app" / "org.prismlauncher.PrismLauncher" / "data" / "PrismLauncher" / "java", 3, false, found);
+		ScanFolder(home / ".var" / "app" / "com.mojang.Minecraft" / ".minecraft" / "runtime", 3, true, found);
+		ScanFolder(home / "snap" / "prism-launcher" / "current" / ".local" / "share" / "PrismLauncher" / "java", 3, false, found);
+	}
+#endif
 	if (const fs::path local = EnvPath("LOCALAPPDATA"); !local.empty())
 		ScanFolder(local / "Packages" / "Microsoft.4297127D64EC6_8wekyb3d8bbwe" / "LocalCache" / "Local" / "runtime", 3, true, found);
 

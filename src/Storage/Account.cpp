@@ -1,4 +1,5 @@
 #include "Account.h"
+#include "Platform/Platform.h"
 #include "Util/TracedFs.h"
 
 #include <nlohmann/json.hpp>
@@ -11,15 +12,6 @@
 #include <random>
 #include <vector>
 
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#include <windows.h>
-#include <wincrypt.h>
-#include <dpapi.h>
-#pragma comment(lib, "crypt32.lib")
-#endif
-
 using json = nlohmann::json;
 
 static const char* TypeName(Account::Type type)
@@ -30,22 +22,6 @@ static const char* TypeName(Account::Type type)
 	default: return "none";
 	}
 }
-
-#ifdef _WIN32
-static bool Protect(const std::string& plain, std::string& out, bool encrypt)
-{
-	DATA_BLOB in{ static_cast<DWORD>(plain.size()), reinterpret_cast<BYTE*>(const_cast<char*>(plain.data())) };
-	DATA_BLOB result{};
-	const BOOL ok = encrypt
-		? CryptProtectData(&in, L"MC Launcher Premium account", nullptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &result)
-		: CryptUnprotectData(&in, nullptr, nullptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &result);
-	if (!ok)
-		return false;
-	out.assign(reinterpret_cast<const char*>(result.pbData), result.cbData);
-	LocalFree(result.pbData);
-	return true;
-}
-#endif
 
 static Account AccountFromJson(const json& j)
 {
@@ -133,12 +109,10 @@ AccountList LoadAccounts(const std::string& path)
 	if (!ifs.is_open())
 		return list;
 	std::string data((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
-#ifdef _WIN32
 	std::string plain;
-	if (!Protect(data, plain, false))
+	if (!Platform::UnprotectSecret(data, plain))
 		return list;
 	data.swap(plain);
-#endif
 	try {
 		const json j = json::parse(data);
 		if (j.contains("accounts")) {
@@ -168,15 +142,15 @@ bool SaveAccounts(const std::string& path, const AccountList& list)
 	for (const Account& account : list.accounts)
 		accounts.push_back(AccountToJson(account));
 	std::string data = json{ { "active", list.active }, { "accounts", accounts } }.dump();
-#ifdef _WIN32
 	std::string encrypted;
-	if (!Protect(data, encrypted, true))
+	if (!Platform::ProtectSecret(data, encrypted))
 		return false;
 	data.swap(encrypted);
-#endif
 	auto ofs = TracedFs::OpenWrite(path, std::ios::binary | std::ios::trunc);
 	if (!ofs.is_open())
 		return false;
+	// Created with the user's umask; where there is no per-user encryption, only the owner may read it.
+	Platform::RestrictToOwner(path);
 	ofs.write(data.data(), static_cast<std::streamsize>(data.size()));
 	return ofs.good();
 }

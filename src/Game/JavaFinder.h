@@ -9,7 +9,7 @@
 
 struct JavaInstall {
 	std::filesystem::path home;   // the folder holding bin/
-	std::filesystem::path java;   // bin/java.exe (console)
+	std::filesystem::path java;   // bin/java(.exe) (console)
 	std::filesystem::path javaw;  // bin/javaw.exe (no console window), or java when there is none
 	std::string version;          // e.g. "17.0.8", "1.8.0_382"
 	int major = 0;                // e.g. 17, 8
@@ -17,12 +17,16 @@ struct JavaInstall {
 	bool mojang = false;          // a Mojang runtime (ours or the official launcher's)
 };
 
+// The Java launcher's file name on this OS: java.exe, or javaw.exe (no console window) when
+// windowed, on Windows; java elsewhere.
+const char* JavaExecutableName(bool windowed);
+
 // "1.8.0_382" -> 8, "17.0.8" -> 17, "21" -> 21, "" or junk -> 0.
 int JavaMajorVersion(const std::string& version);
 
 // Reads one Java home: its release file (JAVA_VERSION, IMPLEMENTOR, OS_ARCH), else the
 // version in its folder name (jdk-17.0.2, jre1.8.0_381, zulu21...). False when it isn't a
-// usable 64-bit Java (no bin/java.exe, an x86 build, or no version).
+// usable 64-bit Java (no bin/java(.exe), an x86 build, or no version).
 bool ReadJavaInstall(const std::filesystem::path& home, JavaInstall& out);
 
 // Java homes inside each folder: the folder itself, its children, and their children (so
@@ -31,9 +35,10 @@ bool ReadJavaInstall(const std::filesystem::path& home, JavaInstall& out);
 std::vector<JavaInstall> ScanJavaFolders(const std::vector<std::filesystem::path>& folders);
 
 // Every Java found on this PC: JAVA_HOME, PATH, the registry (Oracle, Adoptium, Microsoft,
-// Zulu, BellSoft, Corretto), common install folders, IntelliJ's ~/.jdks, the Minecraft
-// launcher's and Prism's runtimes, and Mojang runtimes this launcher downloaded under
-// gameRoot/runtime/. Each home appears once, newest version first.
+// Zulu, BellSoft, Corretto), common install folders (Program Files on Windows; /usr/lib/jvm,
+// /opt and SDKMAN on Linux), IntelliJ's ~/.jdks, the Minecraft launcher's and Prism's
+// runtimes, and Mojang runtimes this launcher downloaded under gameRoot/runtime/. Each home
+// appears once, newest version first.
 std::vector<JavaInstall> FindJavaInstalls(const std::filesystem::path& gameRoot);
 
 // The best install for a Minecraft version that needs Java `requiredMajor`: the newest one

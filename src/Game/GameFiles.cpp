@@ -1,5 +1,6 @@
 #include "GameFiles.h"
 
+#include "Game/JavaFinder.h"
 #include "Network/HttpClient.h"
 #include "Storage/Installer.h"
 #include "Util/Paths.h"
@@ -579,12 +580,7 @@ bool InstallJavaRuntime(IHttpClient& http, const fs::path& root, const std::stri
 	fs::path& javaExe, const ProgressFn& progress, std::string* err, const std::atomic<bool>* cancel)
 {
 	const fs::path runtimeDir = root / "runtime" / component;
-#ifdef _WIN32
-	javaExe = runtimeDir / "bin" / (windowed ? "javaw.exe" : "java.exe");
-#else
-	(void)windowed;
-	javaExe = runtimeDir / "bin" / "java";
-#endif
+	javaExe = runtimeDir / "bin" / JavaExecutableName(windowed);
 	const fs::path marker = runtimeDir / ".manifest-sha1";
 
 	if (progress)
