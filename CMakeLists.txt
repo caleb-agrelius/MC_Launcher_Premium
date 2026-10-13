@@ -36,8 +36,10 @@ if (MSVC)
   add_compile_options(/MP)
 endif()
 
-add_executable(MC_Launcher_Premium
-  src/main.cpp
+# Everything except main() is compiled once into this library; the app and both check executables
+# link it, so the checks no longer recompile the app's sources. A static library only contributes the
+# object files a consumer references, so each check executable still links just what it uses.
+add_library(launcher_core STATIC
   ${PLATFORM_SOURCES}
   src/App/AppRoot.cpp
   src/App/Application.cpp
@@ -169,13 +171,13 @@ add_executable(MC_Launcher_Premium
   ${imgui_backend_source_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
 )
 
-target_include_directories(MC_Launcher_Premium PRIVATE
+target_include_directories(launcher_core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/src
   ${imgui_backend_source_SOURCE_DIR}/backends
   ${Stb_INCLUDE_DIR}
 )
 
-target_link_libraries(MC_Launcher_Premium PRIVATE
+target_link_libraries(launcher_core PUBLIC
   imgui::imgui
   glfw
   glad::glad
@@ -185,20 +187,26 @@ target_link_libraries(MC_Launcher_Premium PRIVATE
 )
 
 if (miniz_FOUND)
-  target_link_libraries(MC_Launcher_Premium PRIVATE miniz::miniz)
+  target_link_libraries(launcher_core PUBLIC miniz::miniz)
 else()
   message(STATUS "miniz not found via find_package; Installer may fail. Consider: vcpkg install miniz")
 endif()
 
 if (WIN32)
-  # The executable's icon (resources/logo.ico, written by logo_export).
-  target_sources(MC_Launcher_Premium PRIVATE resources/app.rc)
-  target_compile_definitions(MC_Launcher_Premium PRIVATE "_CRT_SECURE_NO_WARNINGS" "GLFW_INCLUDE_NONE")
-  target_link_libraries(MC_Launcher_Premium PRIVATE bcrypt shell32 ws2_32)
+  target_compile_definitions(launcher_core PUBLIC "_CRT_SECURE_NO_WARNINGS" "GLFW_INCLUDE_NONE")
+  target_link_libraries(launcher_core PUBLIC bcrypt shell32 ws2_32)
 endif()
 
 # Precompiled third-party and standard headers (src/Pch.h), so each source file doesn't re-parse them.
-target_precompile_headers(MC_Launcher_Premium PRIVATE src/Pch.h)
+target_precompile_headers(launcher_core PRIVATE src/Pch.h)
+
+add_executable(MC_Launcher_Premium src/main.cpp)
+target_link_libraries(MC_Launcher_Premium PRIVATE launcher_core)
+target_precompile_headers(MC_Launcher_Premium REUSE_FROM launcher_core)
+if (WIN32)
+  # The executable's icon (resources/logo.ico, written by logo_export).
+  target_sources(MC_Launcher_Premium PRIVATE resources/app.rc)
+endif()
 
 # Visual Studio: make F5 launch the app (not ALL_BUILD), running from the repo root.
 set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT MC_Launcher_Premium)
@@ -212,87 +220,14 @@ message(STATUS "Configured MC_Launcher_Premium project (vcpkg mode)")
 
 include(CTest)
 if (BUILD_TESTING)
-  add_executable(launcher_checks
-    tests/LauncherChecks.cpp
-    ${PLATFORM_SOURCES}
-    src/Game/GameFiles.cpp
-    src/Game/GameOptions.cpp
-    src/Game/InstanceContent.cpp
-    src/Game/JarMods.cpp
-    src/Game/JavaFinder.cpp
-    src/Game/Loaders.cpp
-    src/Game/PackCreator.cpp
-    src/Game/PackInstance.cpp
-    src/Game/ServerSetup.cpp
-    src/Model/Modpack.cpp
-    src/Network/CachingHttpClient.cpp
-    src/Network/HttpClient.cpp
-    src/Network/Modrinth.cpp
-    src/Network/OfflineHttpClient.cpp
-    src/Network/TracingHttpClient.cpp
-    src/Storage/Installer.cpp
-    src/Storage/Library.cpp
-    src/Storage/Settings.cpp
-    src/UI/ImageCache.cpp
-    src/UI/Logo.cpp
-    src/UI/Theme.cpp
-    src/UI/Widgets.cpp
-    src/Util/DebugTrace.cpp
-    src/Util/Hash.cpp
-    src/Util/Paths.cpp
-    src/Util/Process.cpp
-    src/Util/Sha1.cpp
-    src/Util/SharedFiles.cpp
-    src/Util/Text.cpp
-    src/Util/TracedFs.cpp
-  )
-  get_target_property(launcher_includes MC_Launcher_Premium INCLUDE_DIRECTORIES)
-  get_target_property(launcher_libraries MC_Launcher_Premium LINK_LIBRARIES)
-  target_include_directories(launcher_checks PRIVATE ${launcher_includes})
-  target_link_libraries(launcher_checks PRIVATE ${launcher_libraries})
-  target_precompile_headers(launcher_checks PRIVATE src/Pch.h)
-  if (WIN32)
-    target_compile_definitions(launcher_checks PRIVATE _CRT_SECURE_NO_WARNINGS GLFW_INCLUDE_NONE)
-  endif()
+  add_executable(launcher_checks tests/LauncherChecks.cpp)
+  target_link_libraries(launcher_checks PRIVATE launcher_core)
+  target_precompile_headers(launcher_checks REUSE_FROM launcher_core)
   add_test(NAME launcher_checks COMMAND launcher_checks)
   set_tests_properties(launcher_checks PROPERTIES TIMEOUT 30)
 
   # Checks against the real pack APIs. Not a CTest test: they need the internet.
-  add_executable(live_checks
-    tests/LiveChecks.cpp
-    ${PLATFORM_SOURCES}
-    src/Game/GameFiles.cpp
-    src/Game/GameOptions.cpp
-    src/Game/InstanceContent.cpp
-    src/Game/JarMods.cpp
-    src/Game/JavaFinder.cpp
-    src/Game/Loaders.cpp
-    src/Game/PackCreator.cpp
-    src/Game/PackInstance.cpp
-    src/Game/ServerSetup.cpp
-    src/Model/Modpack.cpp
-    src/Network/AtLauncher.cpp
-    src/Network/CurseForge.cpp
-    src/Network/Ftb.cpp
-    src/Network/HttpClient.cpp
-    src/Network/Modrinth.cpp
-    src/Network/ModSearch.cpp
-    src/Network/PackSources.cpp
-    src/Network/Technic.cpp
-    src/Storage/InstallPlan.cpp
-    src/Storage/Installer.cpp
-    src/Util/DebugTrace.cpp
-    src/Util/Hash.cpp
-    src/Util/Paths.cpp
-    src/Util/Process.cpp
-    src/Util/Sha1.cpp
-    src/Util/SharedFiles.cpp
-    src/Util/Text.cpp
-    src/Util/TracedFs.cpp
-  )
-  target_include_directories(live_checks PRIVATE ${launcher_includes})
-  target_link_libraries(live_checks PRIVATE ${launcher_libraries})
-  if (WIN32)
-    target_compile_definitions(live_checks PRIVATE _CRT_SECURE_NO_WARNINGS GLFW_INCLUDE_NONE)
-  endif()
+  add_executable(live_checks tests/LiveChecks.cpp)
+  target_link_libraries(live_checks PRIVATE launcher_core)
+  target_precompile_headers(live_checks REUSE_FROM launcher_core)
 endif()

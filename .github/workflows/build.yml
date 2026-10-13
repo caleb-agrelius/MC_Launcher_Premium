@@ -1,0 +1,103 @@
+# Reusable build: configure with vcpkg, build the app and its checks, run the offline checks.
+# Called by ci.yml (pull requests, pushes to main) and release.yml (manual releases).
+name: Build
+
+on:
+  workflow_call:
+    inputs:
+      configuration:
+        description: CMake configuration to build (Debug or Release)
+        type: string
+        default: Release
+      artifact-name:
+        description: Upload build/<configuration> under this artifact name (empty to skip)
+        type: string
+        default: ''
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-cache
+      IMGUI_SRC: ${{ github.workspace }}\imgui-src
+    steps:
+      - uses: actions/checkout@v4
+
+      # The runner ships a vcpkg checkout. vcpkg.json pins a builtin-baseline, so that checkout is
+      # usable only if it can supply the baseline commit; otherwise clone vcpkg ourselves.
+      - name: Locate vcpkg
+        run: |
+          $baseline = (Get-Content vcpkg.json -Raw | ConvertFrom-Json).'builtin-baseline'
+          $root = $env:VCPKG_INSTALLATION_ROOT
+          $usable = $false
+          if ($root -and (Test-Path "$root\vcpkg.exe")) {
+            git -C $root fetch --quiet origin $baseline
+            git -C $root cat-file -e "$baseline^{commit}"
+            $usable = ($LASTEXITCODE -eq 0)
+          }
+          if ($usable) {
+            Write-Host "Using the runner's vcpkg at $root"
+          } else {
+            Write-Host "Runner vcpkg is missing or cannot supply baseline $baseline; cloning vcpkg"
+            $root = Join-Path $env:GITHUB_WORKSPACE 'vcpkg'
+            git clone https://github.com/microsoft/vcpkg.git $root
+            & "$root\bootstrap-vcpkg.bat" -disableMetrics
+          }
+          "VCPKG_ROOT=$root" >> $env:GITHUB_ENV
+          New-Item -ItemType Directory -Force $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+
+      - name: Cache vcpkg packages
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-${{ runner.os }}-
+
+      # CMakeLists.txt fetches the ImGui backends from git on every configure. Fetch the same tag
+      # once, cache it, and point FetchContent at the checkout.
+      - name: Read ImGui tag
+        id: imgui
+        run: |
+          $m = Select-String -Path CMakeLists.txt -Pattern 'GIT_TAG\s+(v[\w.]+)' | Select-Object -First 1
+          if (-not $m) { throw 'No GIT_TAG found for imgui_backend_source in CMakeLists.txt' }
+          "tag=$($m.Matches[0].Groups[1].Value)" >> $env:GITHUB_OUTPUT
+
+      - name: Cache ImGui source
+        id: imgui-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.IMGUI_SRC }}
+          key: imgui-${{ steps.imgui.outputs.tag }}
+
+      - name: Fetch ImGui source
+        if: steps.imgui-cache.outputs.cache-hit != 'true'
+        run: git clone --depth 1 --branch ${{ steps.imgui.outputs.tag }} https://github.com/ocornut/imgui.git $env:IMGUI_SRC
+
+      # No -G: CMake picks the newest Visual Studio installed on the runner, as mcdebug does locally.
+      # Naming a version breaks whenever windows-latest moves to a new one.
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+          -DFETCHCONTENT_SOURCE_DIR_IMGUI_BACKEND_SOURCE="$env:IMGUI_SRC"
+
+      # live_checks needs the internet and logo_export only regenerates the icon, so CI skips both.
+      - name: Build
+        run: cmake --build build --config ${{ inputs.configuration }} --parallel --target MC_Launcher_Premium launcher_checks
+
+      - name: Run checks
+        env:
+          MCLP_OFFLINE: '1'
+        run: ctest --test-dir build -C ${{ inputs.configuration }} --output-on-failure
+
+      - name: Upload build
+        if: inputs.artifact-name != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: |
+            build/${{ inputs.configuration }}/MC_Launcher_Premium.exe
+            build/${{ inputs.configuration }}/*.dll
+          if-no-files-found: error
+          retention-days: 1
