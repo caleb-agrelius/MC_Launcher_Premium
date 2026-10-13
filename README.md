@@ -58,7 +58,7 @@ Re-run the configure command after adding source files or editing `CMakeLists.tx
 
 GitHub Actions (`.github/workflows/`):
 
-- **CI** (`ci.yml`) runs on every pull request and push to `main`: it configures with vcpkg, builds the app and `launcher_checks` (not `live_checks` or `logo_export`), and runs the checks through CTest (offline). Pull requests build Release only; pushes to `main` build Debug and Release.
+- **CI** (`ci.yml`) runs on every pull request: it configures with vcpkg, builds the app and `launcher_checks` (not `live_checks` or `logo_export`), and runs the checks through CTest (offline). It builds Release only, and merging to `main` does not trigger another build.
 - **Release** (`release.yml`) is manual: Actions > Release > Run workflow, enter a version such as `1.2.0`. It builds Release from the selected ref, runs the checks, and publishes `MC_Launcher_Premium-v<version>-win64.zip` (exe, DLLs, `resources/`) as GitHub release `v<version>`.
 - Both call the reusable `build.yml`.
 
