@@ -202,12 +202,14 @@ endif()
 # Precompiled third-party and standard headers (src/Pch.h), so each source file doesn't re-parse them.
 target_precompile_headers(launcher_core PRIVATE src/Pch.h)
 
-add_executable(MC_Launcher_Premium src/main.cpp)
+add_executable(MC_Launcher_Premium WIN32 src/main.cpp)
 target_link_libraries(MC_Launcher_Premium PRIVATE launcher_core)
 target_precompile_headers(MC_Launcher_Premium REUSE_FROM launcher_core)
 if (WIN32)
   # The executable's icon (resources/logo.ico, written by logo_export).
   target_sources(MC_Launcher_Premium PRIVATE resources/app.rc)
+  # WIN32 makes it a GUI-subsystem app, so no console window opens; keep the plain main() as the entry point.
+  target_link_options(MC_Launcher_Premium PRIVATE /ENTRY:mainCRTStartup)
 endif()
 
 # Visual Studio: make F5 launch the app (not ALL_BUILD), running from the repo root.
