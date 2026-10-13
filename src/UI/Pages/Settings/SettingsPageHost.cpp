@@ -42,8 +42,7 @@ SettingsPageContext SettingsPageHost::Context(double shownAt)
 	const Account& account = m_accounts.Active();
 	context.accountName = account.type == Account::Type::None ? std::string() : account.name;
 	context.accountCount = static_cast<int>(m_accounts.List().accounts.size());
-	context.accountKind = account.type == Account::Type::Microsoft ? "Microsoft account"
-		: account.type == Account::Type::Offline ? "Offline (singleplayer)" : "No account yet";
+	context.accountKind = account.type == Account::Type::Microsoft ? "Microsoft account" : "No account yet";
 
 	context.javas = &m_javas.Installs();
 	context.javasScanned = m_javas.Scanned();

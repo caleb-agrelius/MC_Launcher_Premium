@@ -45,12 +45,12 @@ bool AccountTab::Draw(Settings& settings, const SettingsPageContext& context, Se
 		ImGui::TextDisabled("%d accounts saved. Switch, add or sign out from the ACCOUNT section of the sidebar.",
 			context.accountCount);
 	else
-		ImGui::TextDisabled("Sign in, add another account, play offline, or sign out from the ACCOUNT section of the sidebar.");
+		ImGui::TextDisabled("Sign in, add another account, or sign out from the ACCOUNT section of the sidebar.");
 	ImGui::EndGroup();
 	ui.EndCard();
 
 	ui.RowsCard("microsoft_card", "Microsoft sign-in", "Signing in with Microsoft needs an Azure app (client) ID that Mojang has approved for the "
-		"Minecraft API. Without one, only offline mode is available.", [&] {
+		"Minecraft API. Without one you can't sign in, and Minecraft can't be played.", [&] {
 		ui.Row("Azure client ID", "Takes effect the next time you sign in.");
 		changed |= ImGui::InputTextWithHint("##client_id", "00000000-0000-0000-0000-000000000000", &settings.microsoftClientId);
 	});

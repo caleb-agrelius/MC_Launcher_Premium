@@ -40,5 +40,4 @@ void Sidebar::Draw(Page current)
 
 	m_account.Draw();
 	ImGui::EndChild();
-	m_account.DrawOfflinePopup();
 }

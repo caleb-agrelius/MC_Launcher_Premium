@@ -2,16 +2,19 @@
 #include "Game/InstanceContent.h"
 #include "Game/JarMods.h"
 #include "Game/JavaFinder.h"
+#include "Game/Launcher.h"
 #include "Game/Loaders.h"
 #include "Game/PackCreator.h"
 #include "Game/PackInstance.h"
 #include "Game/ServerSetup.h"
 #include "Network/CachingHttpClient.h"
 #include "Network/HttpClient.h"
+#include "Network/MicrosoftAuth.h"
 #include "Network/Modrinth.h"
 #include "Network/OfflineHttpClient.h"
 #include "Network/TracingHttpClient.h"
 #include "Platform/Platform.h"
+#include "Storage/Account.h"
 #include "Storage/Library.h"
 #include "Storage/Settings.h"
 #include "UI/Theme.h"
@@ -33,6 +36,7 @@
 #include <cmath>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <sstream>
 #include <stdexcept>
 #include <thread>
@@ -1342,6 +1346,120 @@ static void DebugTraceChecks(const fs::path& dir, const fs::path& executable)
 	Debug::Configure(0, nullptr);
 }
 
+// Last, so its macros (CopyFile, CreateHardLink...) don't rename the TracedFs calls above.
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#include <dpapi.h>
+#pragma comment(lib, "crypt32.lib")
+#endif
+
+// Answers sign-in requests by URL prefix with a status and JSON body, and remembers which URLs were asked.
+class AuthHttp final : public IHttpClient {
+public:
+	std::map<std::string, std::pair<long, std::string>> replies;
+	std::vector<std::string> asked;
+
+	bool DownloadToFile(const std::string&, const std::string&, std::function<void(double, double)>, std::string*,
+		const std::atomic<bool>*, const std::vector<std::string>&) override { return false; }
+	bool Get(const std::string&, std::string&, std::string*, const std::atomic<bool>*,
+		const std::vector<std::string>&) override { return false; }
+	bool Post(const std::string&, const std::string&, std::string&, std::string*, const std::atomic<bool>*,
+		const std::vector<std::string>&) override { return false; }
+	bool Request(const std::string& url, const std::vector<std::string>&, const std::string&, std::string& body, long& status,
+		std::string* err, const std::atomic<bool>*) override
+	{
+		asked.push_back(url);
+		for (const auto& [prefix, reply] : replies) {
+			if (url.rfind(prefix, 0) == 0) {
+				status = reply.first;
+				body = reply.second;
+				return true;
+			}
+		}
+		if (err) *err = "No reply for " + url;
+		return false;
+	}
+};
+
+// account.dat as LoadAccounts reads it (DPAPI on Windows).
+static void WriteAccountFile(const fs::path& path, const std::string& plain)
+{
+	std::string data = plain;
+#ifdef _WIN32
+	DATA_BLOB in{ static_cast<DWORD>(plain.size()), reinterpret_cast<BYTE*>(const_cast<char*>(plain.data())) };
+	DATA_BLOB out{};
+	Check(CryptProtectData(&in, L"test", nullptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &out) != FALSE,
+		"DPAPI should encrypt the fixture");
+	data.assign(reinterpret_cast<const char*>(out.pbData), out.cbData);
+	LocalFree(out.pbData);
+#endif
+	Write(path, data);
+}
+
+static void AccountChecks(const fs::path& dir)
+{
+	Account microsoft;
+	microsoft.type = Account::Type::Microsoft;
+	microsoft.name = "Steve";
+	microsoft.uuid = "0123456789abcdef0123456789abcdef";
+	microsoft.accessToken = "mc-token";
+	microsoft.refreshToken = "refresh";
+	Check(CanLaunchAs(microsoft), "A signed-in Microsoft account should be able to launch");
+	Check(!CanLaunchAs(Account{}), "No account must not launch");
+	Account noToken = microsoft;
+	noToken.accessToken = "0"; // what offline accounts used
+	Check(!CanLaunchAs(noToken), "An account without a Minecraft token must not launch");
+	Account noRefresh = microsoft;
+	noRefresh.refreshToken.clear();
+	Check(!CanLaunchAs(noRefresh), "An account that can't be re-checked must not launch");
+
+	// Offline accounts saved by older versions are dropped on load.
+	const fs::path file = dir / "account.dat";
+	WriteAccountFile(file, json{ { "active", 1 }, { "accounts", json::array({
+		{ { "type", "microsoft" }, { "name", "Steve" }, { "uuid", microsoft.uuid }, { "accessToken", "mc-token" },
+		  { "refreshToken", "refresh" } },
+		{ { "type", "offline" }, { "name", "Alex" }, { "uuid", "fedcba9876543210fedcba9876543210" }, { "accessToken", "0" } },
+	}) } }.dump());
+	const AccountList loaded = LoadAccounts(file.string());
+	Check(loaded.accounts.size() == 1 && loaded.accounts[0].name == "Steve" && loaded.Active().name == "Steve",
+		"Saved offline accounts should be dropped");
+	WriteAccountFile(file, json{ { "type", "offline" }, { "name", "Alex" }, { "uuid", "fedcba9876543210fedcba9876543210" } }.dump());
+	Check(LoadAccounts(file.string()).accounts.empty(), "A single saved offline account should be dropped");
+
+	// Re-checking the account needs Minecraft ownership, not just a sign-in.
+	AuthHttp auth;
+	auth.replies["https://login.microsoftonline.com/"] = { 200, R"({"access_token":"ms","refresh_token":"refresh2"})" };
+	auth.replies["https://user.auth.xboxlive.com/"] = { 200, R"({"Token":"xbl"})" };
+	auth.replies["https://xsts.auth.xboxlive.com/"] = { 200, R"({"Token":"xsts","DisplayClaims":{"xui":[{"uhs":"hash"}]}})" };
+	auth.replies["https://api.minecraftservices.com/authentication/"] = { 200, R"({"access_token":"mc2","expires_in":86400})" };
+	auth.replies["https://api.minecraftservices.com/entitlements/"] = { 200, R"({"items":[]})" };
+	auth.replies["https://api.minecraftservices.com/minecraft/profile"] = { 200, R"({"id":"0123456789abcdef0123456789abcdef","name":"Steve"})" };
+	Account checked = microsoft;
+	std::string error;
+	Check(!RefreshMicrosoftAccount(auth, "client", checked, &error) && Contains(error, "doesn't own Minecraft") &&
+		checked.accessToken == "mc-token", "An account without the game should fail the check: " + error);
+	Check(std::none_of(auth.asked.begin(), auth.asked.end(), [](const std::string& url) { return Contains(url, "/minecraft/profile"); }),
+		"The profile shouldn't be read for an account without the game");
+	auth.replies["https://api.minecraftservices.com/entitlements/"] = { 200, R"({"items":[{"name":"product_minecraft"},{"name":"game_minecraft"}]})" };
+	Check(RefreshMicrosoftAccount(auth, "client", checked, &error) && checked.accessToken == "mc2" &&
+		checked.refreshToken == "refresh2" && CanLaunchAs(checked), "An account that owns the game should pass the check: " + error);
+
+	// The launcher itself refuses to start without an account, before touching any files.
+	AuthHttp none;
+	PlayRequest request;
+	request.gameRoot = dir / "play" / "minecraft";
+	request.extractedDir = dir / "play" / "installs" / "pack";
+	request.instanceDir = dir / "play" / "instances" / "pack";
+	request.account = noToken;
+	bool progressed = false;
+	error.clear();
+	Check(!PlayModpack(none, request, [&](const std::string&, double) { progressed = true; }, &error, nullptr) &&
+		Contains(error, "Microsoft account") && !progressed && none.asked.empty() && !fs::exists(dir / "play"),
+		"PlayModpack should refuse an account that can't launch: " + error);
+}
+
 int main(int argc, char** argv)
 {
 	if (argc > 1 && std::string(argv[1]) == "-jar")
@@ -1368,6 +1486,7 @@ int main(int argc, char** argv)
 		fs::create_directories(dir);
 		const fs::path executable = fs::absolute(argv[0]);
 		SettingsChecks(dir);
+		AccountChecks(dir);
 		ServerChecks(dir, executable);
 		WholePackServerChecks(dir, executable);
 		DockerChecks(dir);

@@ -6,7 +6,6 @@
 #include "Services/AppPaths.h"
 
 #include <chrono>
-#include <ctime>
 #include <filesystem>
 #include <iterator>
 
@@ -99,11 +98,16 @@ void PlayService::Forget(const std::string& packId, bool wholePack, const std::s
 void PlayService::Start(const Modpack& pack)
 {
 	const Account account = m_accounts.Active();
-	if (account.type == Account::Type::None) {
-		RecordError(Key(pack), "Sign in with Microsoft or choose an offline name in the sidebar first.");
+	const Settings& settings = m_settings.Get();
+	if (!CanLaunchAs(account)) {
+		RecordError(Key(pack), "Sign in with a Microsoft account that owns Minecraft: Java Edition first.");
 		return;
 	}
-	const Settings& settings = m_settings.Get();
+	if (settings.microsoftClientId.empty()) {
+		RecordError(Key(pack), "Playing needs Microsoft sign-in, which needs a client ID approved by Mojang. "
+			"Set it in Settings > Account.");
+		return;
+	}
 	auto cancel = std::make_shared<std::atomic<bool>>(false);
 	auto stop = std::make_shared<std::atomic<bool>>(false);
 	const std::string stateKey = Key(pack);
@@ -155,16 +159,14 @@ void PlayService::Start(const Modpack& pack)
 			}
 		};
 		std::string error;
-		bool ok = true;
-		// Microsoft tokens last about a day; refresh one that expires within 5 minutes.
-		if (request.account.type == Account::Type::Microsoft &&
-			request.account.accessExpires < static_cast<std::int64_t>(std::time(nullptr)) + 300) {
-			progress("Refreshing Microsoft sign-in", -1.0);
-			ok = RefreshMicrosoftAccount(m_rt.http, clientId, request.account, &error, cancel.get());
-			if (ok) {
-				const Account refreshed = request.account;
-				m_rt.ui.Post([this, refreshed]() { m_accounts.Update(refreshed); });
-			}
+		// Every launch checks the account with Microsoft and Minecraft services first (sign-in,
+		// ownership and profile), so a saved account that lost access, or one that never had it,
+		// can't play. There's no way to play without this check passing.
+		progress("Checking Microsoft account", -1.0);
+		bool ok = RefreshMicrosoftAccount(m_rt.http, clientId, request.account, &error, cancel.get());
+		if (ok) {
+			const Account refreshed = request.account;
+			m_rt.ui.Post([this, refreshed]() { m_accounts.Update(refreshed); });
 		}
 		try {
 			if (ok)

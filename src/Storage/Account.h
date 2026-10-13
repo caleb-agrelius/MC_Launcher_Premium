@@ -6,11 +6,11 @@
 
 // The player identity passed to Minecraft at launch.
 struct Account {
-	enum class Type { None, Microsoft, Offline };
+	enum class Type { None, Microsoft };
 	Type type = Type::None;
 	std::string name;        // in-game username
 	std::string uuid;        // 32 hex digits, no dashes
-	std::string accessToken; // Minecraft access token ("0" for offline)
+	std::string accessToken; // Minecraft access token
 	std::int64_t accessExpires = 0; // unix seconds; Microsoft only
 	std::string refreshToken;       // Microsoft OAuth refresh token
 	std::string xuid;               // Xbox user id; Microsoft only
@@ -23,8 +23,8 @@ struct AccountList {
 
 	// The active account, or a Type::None account when there are none.
 	Account Active() const;
-	// Adds an account, or replaces the saved one for the same player (same UUID, or for
-	// offline accounts the same name), and makes it active.
+	// Adds an account, or replaces the saved one for the same player (same UUID), and makes
+	// it active.
 	void AddOrReplace(const Account& account);
 	// Updates the saved account with this UUID (e.g. after a token refresh). Does nothing
 	// if it was removed meanwhile.
@@ -35,14 +35,12 @@ struct AccountList {
 
 // account.dat in the data folder. On Windows the contents are encrypted with
 // DPAPI, so only the same Windows user can read the saved tokens. Files from before
-// multiple accounts (a single account) still load. Missing or unreadable files give
-// an empty list.
+// multiple accounts (a single account) still load. Offline accounts saved by older
+// versions are dropped. Missing or unreadable files give an empty list.
 AccountList LoadAccounts(const std::string& path);
 bool SaveAccounts(const std::string& path, const AccountList& list);
 
-// An offline account for singleplayer and offline-mode servers. The UUID is
-// random and should be kept so worlds keep the player's inventory.
-Account MakeOfflineAccount(const std::string& name);
-
-// 3-16 characters of letters, digits and underscores, like Minecraft usernames.
-bool IsValidPlayerName(const std::string& name);
+// Whether this account may launch Minecraft: a Microsoft account with a Minecraft access
+// token, a refresh token and a profile. It says nothing about whether the token is still
+// accepted; PlayService checks that with Minecraft services before every launch.
+bool CanLaunchAs(const Account& account);
