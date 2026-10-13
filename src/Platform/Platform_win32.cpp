@@ -5,6 +5,7 @@
 
 #include <cstdio>
 #include <filesystem>
+#include <io.h>
 #include <iostream>
 #include <iterator>
 
@@ -183,17 +184,19 @@ void AttachParentConsole()
 {
 	if (!AttachConsole(ATTACH_PARENT_PROCESS))
 		return;
-	// Streams already redirected to a file or pipe keep their target.
-	const auto reopenIfUnset = [](DWORD id, const char* device, const char* mode, FILE* stream) {
-		const HANDLE handle = GetStdHandle(id);
-		if (handle == nullptr || handle == INVALID_HANDLE_VALUE) {
-			FILE* reopened = nullptr;
-			freopen_s(&reopened, device, mode, stream);
-		}
+	// A GUI-subsystem process can inherit console handles that look valid but don't reach the terminal,
+	// so point each stream at the console unless it was redirected to a file or pipe.
+	const auto bind = [](DWORD id, const char* device, const char* mode, FILE* stream) {
+		const DWORD type = GetFileType(GetStdHandle(id));
+		if (type == FILE_TYPE_DISK || type == FILE_TYPE_PIPE)
+			return;
+		FILE* reopened = nullptr;
+		if (freopen_s(&reopened, device, mode, stream) == 0)
+			SetStdHandle(id, reinterpret_cast<HANDLE>(_get_osfhandle(_fileno(stream))));
 	};
-	reopenIfUnset(STD_OUTPUT_HANDLE, "CONOUT$", "w", stdout);
-	reopenIfUnset(STD_ERROR_HANDLE, "CONOUT$", "w", stderr);
-	reopenIfUnset(STD_INPUT_HANDLE, "CONIN$", "r", stdin);
+	bind(STD_OUTPUT_HANDLE, "CONOUT$", "w", stdout);
+	bind(STD_ERROR_HANDLE, "CONOUT$", "w", stderr);
+	bind(STD_INPUT_HANDLE, "CONIN$", "r", stdin);
 	std::ios::sync_with_stdio();
 }
 std::filesystem::path ExecutableDir()
