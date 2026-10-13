@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
+#include <string>
 
 using Theme::S;
 
@@ -89,6 +90,23 @@ bool AppearanceTab::Draw(Settings& settings, const SettingsPageContext&, Setting
 		}
 		ImGui::EndDisabled();
 		ImGui::EndDisabled();
+
+		ui.Row("Maximum frame rate", "How often the launcher redraws while you use it. Match display follows your monitor's refresh rate: the smoothest scrolling, and the most CPU while it runs.");
+		const std::string frameRateLabel = settings.maxFps == 0 ? "Match display" : std::to_string(settings.maxFps) + " fps";
+		ImGui::SetNextItemWidth(S(180.0f));
+		if (ImGui::BeginCombo("##max_fps", frameRateLabel.c_str())) {
+			for (const int choice : kFrameRateChoices) {
+				const std::string label = choice == 0 ? "Match display" : std::to_string(choice) + " fps";
+				if (ImGui::Selectable(label.c_str(), settings.maxFps == choice)) {
+					settings.maxFps = choice;
+					changed = true;
+				}
+			}
+			ImGui::EndCombo();
+		}
+
+		ui.Row("Lower frame rate when idle", "Redraw at 30 frames per second, or 10 while the window is in the background, when you haven't touched the launcher for a second. Full speed returns the moment you move the mouse or press a key.");
+		changed |= Widgets::Toggle("##idle_fps", &settings.lowerIdleFrameRate);
 
 		ui.Row("Gallery banners", "Show screenshots behind the selected pack. Turn off to save bandwidth.");
 		changed |= Widgets::Toggle("##gallery", &settings.showGalleryBanners);

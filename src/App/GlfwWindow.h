@@ -30,6 +30,11 @@ public:
 
 	bool ShouldClose() const;
 	void PollEvents();
+	// Processes events as they arrive and returns after at most `seconds` (sleeping, not spinning).
+	void WaitEvents(double seconds);
+	bool Focused() const;
+	bool Minimized() const;
+	void SetVsync(bool on);
 	// Files dropped on the window since the last call.
 	std::vector<std::filesystem::path> TakeDroppedPaths();
 
@@ -54,8 +59,15 @@ public:
 private:
 	GlfwWindow() = default;
 
+	// Chooses how a frame waits for the display: on the desktop compositor when it refreshes at the rate of the
+	// monitor the window is on, otherwise on the driver's vsync. Re-checked as the window moves between monitors.
+	void UpdateDisplaySync();
+
 	GLFWwindow* m_window = nullptr;
 	WindowPlacement m_placement;
+	bool m_compositorSync = false; // frames wait on the compositor (Platform::WaitForDisplayRefresh), driver vsync is off
+	bool m_syncChosen = false;
+	int m_framesSinceSyncCheck = 0;
 	bool m_backendsStarted = false;
 	std::vector<std::filesystem::path> m_dropped;
 

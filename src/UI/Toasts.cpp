@@ -41,6 +41,11 @@ void Push(Kind kind, std::string title, std::string body)
 		g_toasts.erase(g_toasts.begin(), g_toasts.end() - kMaxVisible);
 }
 
+bool Visible()
+{
+	return !g_toasts.empty();
+}
+
 void Draw(bool reduceMotion)
 {
 	const double now = ImGui::GetTime();

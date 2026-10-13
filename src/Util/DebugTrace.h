@@ -17,11 +17,12 @@ enum Channel : unsigned {
 	kFile = 4,     // files and folders created, copied, renamed, removed or written
 	kProcess = 8,  // child processes: command line (tokens hidden) and exit code
 	kLog = 16,     // everything the launcher writes to app.log
+	kPerf = 32,    // frames per second and where each frame's time goes (not part of "all": a line every 5 s)
 	kAll = kHttp | kFile | kProcess | kLog,
 };
 
 // Reads a comma-separated channel list: "http,file", "all", or "all,body". Names are
-// http, body, file, process, log and all. Returns false and names the unknown entries in
+// http, body, file, process, log, perf and all. Returns false and names the unknown entries in
 // unknown (when given); the known ones are still added to mask.
 bool ParseChannels(const std::string& text, unsigned& mask, std::string* unknown = nullptr);
 

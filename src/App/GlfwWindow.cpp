@@ -2,6 +2,7 @@
 
 #include "Platform/Platform.h"
 #include "UI/Logo.h"
+#include "Util/FramePerf.h"
 #include "imgui.h"
 
 #include <glad/glad.h>
@@ -10,6 +11,7 @@
 #include "imgui_impl_opengl3.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 
 namespace fs = std::filesystem;
@@ -32,6 +34,25 @@ bool FitsOnAMonitor(const WindowPlacement& placement)
 			return true;
 	}
 	return false;
+}
+
+// The monitor under the middle of the window, or null if it is off every monitor.
+GLFWmonitor* MonitorUnderWindow(GLFWwindow* window)
+{
+	int x = 0, y = 0, w = 0, h = 0;
+	glfwGetWindowPos(window, &x, &y);
+	glfwGetWindowSize(window, &w, &h);
+	const int centerX = x + w / 2;
+	const int centerY = y + h / 2;
+	int count = 0;
+	GLFWmonitor** monitors = glfwGetMonitors(&count);
+	for (int i = 0; i < count; ++i) {
+		int areaX = 0, areaY = 0, areaWidth = 0, areaHeight = 0;
+		glfwGetMonitorWorkarea(monitors[i], &areaX, &areaY, &areaWidth, &areaHeight);
+		if (centerX >= areaX && centerX < areaX + areaWidth && centerY >= areaY && centerY < areaY + areaHeight)
+			return monitors[i];
+	}
+	return nullptr;
 }
 
 // The logo at the sizes the title bar and taskbar ask for.
@@ -91,7 +112,7 @@ std::unique_ptr<GlfwWindow> GlfwWindow::Create(const WindowPlacement& saved, std
 		glfwMaximizeWindow(window);
 	glfwShowWindow(window);
 	glfwMakeContextCurrent(window);
-	glfwSwapInterval(1);
+	self->UpdateDisplaySync();
 	if (!gladLoadGL()) {
 		std::fprintf(stderr, "Failed to initialize GL loader\n");
 		log << "gladLoadGL failed\n";
@@ -147,6 +168,26 @@ void GlfwWindow::PollEvents()
 	glfwPollEvents();
 }
 
+void GlfwWindow::WaitEvents(double seconds)
+{
+	glfwWaitEventsTimeout(seconds);
+}
+
+bool GlfwWindow::Focused() const
+{
+	return glfwGetWindowAttrib(m_window, GLFW_FOCUSED) != 0;
+}
+
+bool GlfwWindow::Minimized() const
+{
+	return glfwGetWindowAttrib(m_window, GLFW_ICONIFIED) != 0;
+}
+
+void GlfwWindow::SetVsync(bool on)
+{
+	glfwSwapInterval(on ? 1 : 0);
+}
+
 std::vector<fs::path> GlfwWindow::TakeDroppedPaths()
 {
 	std::vector<fs::path> taken;
@@ -165,21 +206,11 @@ void GlfwWindow::SetMinimumSize(int width, int height)
 {
 	// The monitor under the middle of the window; its usable area (minus the taskbar) caps the minimum, so
 	// on a small screen or at a high Windows scale the window can still be as large as the screen.
-	int x = 0, y = 0, w = 0, h = 0;
-	glfwGetWindowPos(m_window, &x, &y);
-	glfwGetWindowSize(m_window, &w, &h);
-	const int centerX = x + w / 2;
-	const int centerY = y + h / 2;
-	int count = 0;
-	GLFWmonitor** monitors = glfwGetMonitors(&count);
-	for (int i = 0; i < count; ++i) {
+	if (GLFWmonitor* monitor = MonitorUnderWindow(m_window)) {
 		int areaX = 0, areaY = 0, areaWidth = 0, areaHeight = 0;
-		glfwGetMonitorWorkarea(monitors[i], &areaX, &areaY, &areaWidth, &areaHeight);
-		if (centerX >= areaX && centerX < areaX + areaWidth && centerY >= areaY && centerY < areaY + areaHeight) {
-			width = std::min(width, areaWidth);
-			height = std::min(height, areaHeight);
-			break;
-		}
+		glfwGetMonitorWorkarea(monitor, &areaX, &areaY, &areaWidth, &areaHeight);
+		width = std::min(width, areaWidth);
+		height = std::min(height, areaHeight);
 	}
 	glfwSetWindowSizeLimits(m_window, width, height, GLFW_DONT_CARE, GLFW_DONT_CARE);
 }
@@ -219,15 +250,41 @@ void GlfwWindow::BeginFrame()
 
 void GlfwWindow::EndFrame(const ImVec4& clearColor)
 {
-	ImGui::Render();
-	int width = 0;
-	int height = 0;
-	glfwGetFramebufferSize(m_window, &width, &height);
-	glViewport(0, 0, width, height);
-	glClearColor(clearColor.x, clearColor.y, clearColor.z, 1.0f);
-	glClear(GL_COLOR_BUFFER_BIT);
-	ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+	{
+		FramePerf::Scope scope(FramePerf::kRender);
+		ImGui::Render();
+		int width = 0;
+		int height = 0;
+		glfwGetFramebufferSize(m_window, &width, &height);
+		glViewport(0, 0, width, height);
+		glClearColor(clearColor.x, clearColor.y, clearColor.z, 1.0f);
+		glClear(GL_COLOR_BUFFER_BIT);
+		ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+	}
+	FramePerf::Scope swapScope(FramePerf::kSwap);
 	glfwSwapBuffers(m_window);
+	if (m_compositorSync && !Platform::WaitForDisplayRefresh()) {
+		m_compositorSync = false;
+		glfwSwapInterval(1);
+	}
+	if (++m_framesSinceSyncCheck >= 60)
+		UpdateDisplaySync();
+}
+
+void GlfwWindow::UpdateDisplaySync()
+{
+	m_framesSinceSyncCheck = 0;
+	const GLFWmonitor* monitor = MonitorUnderWindow(m_window);
+	const GLFWvidmode* mode = monitor ? glfwGetVideoMode(const_cast<GLFWmonitor*>(monitor)) : nullptr;
+	const double compositorHz = Platform::CompositorRefreshRate();
+	// Within 5%: 59.94 Hz reports as 60 on one side and 59 on the other.
+	const bool matches = mode && mode->refreshRate > 0 && compositorHz > 0.0 &&
+		std::abs(compositorHz - mode->refreshRate) <= 0.05 * mode->refreshRate;
+	if (m_syncChosen && matches == m_compositorSync)
+		return;
+	m_syncChosen = true;
+	m_compositorSync = matches;
+	glfwSwapInterval(matches ? 0 : 1);
 }
 
 void GlfwWindow::Minimize()

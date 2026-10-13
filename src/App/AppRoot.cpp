@@ -8,6 +8,7 @@
 #include "UI/Theme.h"
 #include "UI/Toasts.h"
 #include "imgui.h"
+#include "Util/FramePerf.h"
 #include "Util/TracedFs.h"
 
 #include <chrono>
@@ -91,7 +92,25 @@ AppRoot::AppRoot(const fs::path& dataRoot, std::ostream& log, GlfwWindow& window
 	log.flush();
 }
 
-void AppRoot::Frame(const std::vector<fs::path>& droppedPaths)
+namespace {
+
+// True when this frame's input shows the player at the keyboard or mouse. Read after ImGui::NewFrame.
+bool InputThisFrame(const ImGuiIO& io)
+{
+	if (io.MouseDelta.x != 0.0f || io.MouseDelta.y != 0.0f || io.MouseWheel != 0.0f || io.MouseWheelH != 0.0f)
+		return true;
+	if (io.InputQueueCharacters.Size > 0)
+		return true;
+	for (int key = ImGuiKey_NamedKey_BEGIN; key < ImGuiKey_NamedKey_END; ++key) {
+		if (ImGui::IsKeyDown(static_cast<ImGuiKey>(key)))
+			return true;
+	}
+	return false;
+}
+
+}
+
+bool AppRoot::Frame(const std::vector<fs::path>& droppedPaths)
 {
 	m_workers.Reap();
 	m_uiQueue.Drain();
@@ -102,10 +121,17 @@ void AppRoot::Frame(const std::vector<fs::path>& droppedPaths)
 	m_settings.SaveIfSettled(ImGui::IsAnyItemActive());
 	m_images.Update(ImGui::GetTime());
 
-	m_window.BeginFrame();
-	m_shell.Draw(droppedPaths);
-	Toasts::Draw(m_settings.Get().reduceMotion);
+	bool active = false;
+	{
+		FramePerf::Scope scope(FramePerf::kUi);
+		m_window.BeginFrame();
+		active = InputThisFrame(ImGui::GetIO()) || !droppedPaths.empty() || ImGui::IsAnyItemActive();
+		m_shell.Draw(droppedPaths);
+		Toasts::Draw(m_settings.Get().reduceMotion);
+		active = active || Toasts::Visible();
+	}
 	m_window.EndFrame(Theme::C().windowBg);
+	return active;
 }
 
 void AppRoot::Shutdown()

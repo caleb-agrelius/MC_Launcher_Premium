@@ -2,6 +2,7 @@
 
 #include "Theme.h"
 #include "Widgets.h"
+#include "Util/FramePerf.h"
 
 #include <glad/glad.h>
 #include <nlohmann/json.hpp>
@@ -825,6 +826,7 @@ bool MobModel::Render(std::string* error)
 {
 	if (!m_loaded || !m_framebuffer)
 		return false;
+	FramePerf::Scope perfScope(FramePerf::kMascot);
 	const float delta = std::clamp(ImGui::GetIO().DeltaTime, 0.0f, 0.1f);
 	const float speed = Widgets::AnimationSpeed();
 	const float easing = m_reduceMotion ? 1.0f : 1.0f - std::exp(-delta * 12.0f * speed);

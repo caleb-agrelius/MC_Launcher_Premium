@@ -15,6 +15,7 @@
 #include <iphlpapi.h>
 #include <shellapi.h>
 #include <shobjidl.h>
+#include <timeapi.h>
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3native.h>
 #pragma comment(lib, "ws2_32.lib")
@@ -155,6 +156,25 @@ std::vector<NetworkAddress> LocalNetworkAddresses()
 		}
 	}
 	return out;
+}
+
+bool WaitForDisplayRefresh()
+{
+	return SUCCEEDED(DwmFlush());
+}
+
+double CompositorRefreshRate()
+{
+	DWM_TIMING_INFO info{};
+	info.cbSize = sizeof(info);
+	if (FAILED(DwmGetCompositionTimingInfo(nullptr, &info)) || info.rateRefresh.uiDenominator == 0)
+		return 0.0;
+	return static_cast<double>(info.rateRefresh.uiNumerator) / info.rateRefresh.uiDenominator;
+}
+
+void UsePreciseTimer()
+{
+	timeBeginPeriod(1);
 }
 
 std::filesystem::path ExecutableDir()

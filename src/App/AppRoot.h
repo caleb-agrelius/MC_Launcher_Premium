@@ -79,8 +79,10 @@ public:
 	AppRoot(const std::filesystem::path& dataRoot, std::ostream& log, GlfwWindow& window, SettingsStore& settings,
 		ThemeController& theme, bool offline = false);
 
-	// One frame, from running what workers posted to presenting the picture.
-	void Frame(const std::vector<std::filesystem::path>& droppedPaths);
+	// One frame, from running what workers posted to presenting the picture. Returns true when the player did something this frame or something on screen
+	// is changing, so the caller keeps the frame rate up (App/FramePacing.h).
+	bool Frame(const std::vector<std::filesystem::path>& droppedPaths);
+	const Settings& CurrentSettings() const { return m_settings.Get(); }
 
 	// Stops everything in flight and saves: running servers get "stop", workers are asked to
 	// finish and waited for, settings are written with the window's last position.

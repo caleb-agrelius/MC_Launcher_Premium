@@ -42,6 +42,7 @@ endif()
 add_library(launcher_core STATIC
   ${PLATFORM_SOURCES}
   src/App/AppRoot.cpp
+  src/App/FramePacing.cpp
   src/App/Application.cpp
   src/App/GlfwWindow.cpp
   src/App/ThemeController.cpp
@@ -160,6 +161,7 @@ add_library(launcher_core STATIC
   src/UI/Toasts.cpp
   src/UI/Widgets.cpp
   src/Util/DebugTrace.cpp
+  src/Util/FramePerf.cpp
   src/Util/Hash.cpp
   src/Util/Paths.cpp
   src/Util/Process.cpp
@@ -194,7 +196,7 @@ endif()
 
 if (WIN32)
   target_compile_definitions(launcher_core PUBLIC "_CRT_SECURE_NO_WARNINGS" "GLFW_INCLUDE_NONE")
-  target_link_libraries(launcher_core PUBLIC bcrypt shell32 ws2_32)
+  target_link_libraries(launcher_core PUBLIC bcrypt shell32 ws2_32 winmm)
 endif()
 
 # Precompiled third-party and standard headers (src/Pch.h), so each source file doesn't re-parse them.

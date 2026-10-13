@@ -1,5 +1,6 @@
 # Makes sure every pull request configures, builds and passes the offline checks.
-# Release only: it is the configuration that ships, and merging to main does not rebuild.
+# Debug only: it compiles about four times faster than Release on the runner. release.yml builds
+# and checks Release before publishing, and merging to main does not rebuild.
 name: CI
 
 on:
@@ -16,4 +17,4 @@ jobs:
   build:
     uses: ./.github/workflows/build.yml
     with:
-      configuration: Release
+      configuration: Debug

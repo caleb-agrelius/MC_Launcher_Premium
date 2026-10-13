@@ -59,6 +59,20 @@ std::vector<NetworkAddress> LocalNetworkAddresses()
 	return {};
 }
 
+bool WaitForDisplayRefresh()
+{
+	return false;
+}
+
+double CompositorRefreshRate()
+{
+	return 0.0;
+}
+
+void UsePreciseTimer()
+{
+}
+
 std::filesystem::path ExecutableDir()
 {
 	std::error_code ec;

@@ -29,6 +29,7 @@ constexpr ChannelName kNames[] = {
 	{ "file", kFile, "FILE " },
 	{ "process", kProcess, "PROC " },
 	{ "log", kLog, "LOG  " },
+	{ "perf", kPerf, "PERF " },
 };
 
 std::string Lowercase(std::string text)
