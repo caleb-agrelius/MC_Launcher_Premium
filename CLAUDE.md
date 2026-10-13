@@ -33,7 +33,7 @@ Other docs: [docs/development.md](docs/development.md) (debugging, logs, trouble
 | [servers.md](docs/features/servers.md) | Dedicated server setup, settings, EULA, process lifecycle and console |
 | [platforms.md](docs/features/platforms.md) | What differs between Windows and Linux (process layer, sign-in storage, Java search, fonts, data folder), `CMakePresets.json`, the Linux build and CI |
 | [launching.md](docs/features/launching.md) | PLAY: `.mrpack` instances, Minecraft/Java/loader install, version JSON, launch command |
-| [accounts.md](docs/features/accounts.md) | Microsoft sign-in, offline mode, `account.dat` |
+| [accounts.md](docs/features/accounts.md) | Microsoft sign-in, the account check before Play, `account.dat` |
 | [planned.md](docs/features/planned.md) | Features that aren't implemented yet |
 
 ## Offline launches

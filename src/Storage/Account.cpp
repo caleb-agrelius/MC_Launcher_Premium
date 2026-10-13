@@ -5,11 +5,8 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
-#include <cctype>
-#include <cstdio>
 #include <fstream>
 #include <iterator>
-#include <random>
 #include <vector>
 
 using json = nlohmann::json;
@@ -18,7 +15,6 @@ static const char* TypeName(Account::Type type)
 {
 	switch (type) {
 	case Account::Type::Microsoft: return "microsoft";
-	case Account::Type::Offline: return "offline";
 	default: return "none";
 	}
 }
@@ -27,10 +23,9 @@ static Account AccountFromJson(const json& j)
 {
 	Account account;
 	const std::string type = j.value("type", "none");
+	// Anything else (such as "offline" from older versions) can't be played as, so it isn't loaded.
 	if (type == "microsoft")
 		account.type = Account::Type::Microsoft;
-	else if (type == "offline")
-		account.type = Account::Type::Offline;
 	account.name = j.value("name", "");
 	account.uuid = j.value("uuid", "");
 	account.accessToken = j.value("accessToken", "");
@@ -57,10 +52,7 @@ static json AccountToJson(const Account& account)
 
 static bool SamePlayer(const Account& a, const Account& b)
 {
-	if (a.type != b.type)
-		return false;
-	// Offline accounts get a new random UUID each time, so the name identifies them.
-	return a.type == Account::Type::Offline ? a.name == b.name : a.uuid == b.uuid;
+	return a.type == b.type && a.uuid == b.uuid;
 }
 
 Account AccountList::Active() const
@@ -72,11 +64,7 @@ void AccountList::AddOrReplace(const Account& account)
 {
 	for (std::size_t i = 0; i < accounts.size(); ++i) {
 		if (SamePlayer(accounts[i], account)) {
-			// Keep an offline player's UUID, so their worlds still know them.
-			const std::string uuid = accounts[i].uuid;
 			accounts[i] = account;
-			if (account.type == Account::Type::Offline)
-				accounts[i].uuid = uuid;
 			active = i;
 			return;
 		}
@@ -155,31 +143,8 @@ bool SaveAccounts(const std::string& path, const AccountList& list)
 	return ofs.good();
 }
 
-Account MakeOfflineAccount(const std::string& name)
+bool CanLaunchAs(const Account& account)
 {
-	std::random_device rd;
-	std::uniform_int_distribution<int> nibble(0, 15);
-	char uuid[33];
-	for (int i = 0; i < 32; ++i)
-		std::snprintf(uuid + i, 2, "%x", nibble(rd));
-	uuid[12] = '4'; // version 4 (random)
-	uuid[16] = "89ab"[nibble(rd) & 3]; // RFC 4122 variant
-
-	Account account;
-	account.type = Account::Type::Offline;
-	account.name = name;
-	account.uuid = uuid;
-	account.accessToken = "0";
-	return account;
-}
-
-bool IsValidPlayerName(const std::string& name)
-{
-	if (name.size() < 3 || name.size() > 16)
-		return false;
-	for (unsigned char c : name) {
-		if (!std::isalnum(c) && c != '_')
-			return false;
-	}
-	return true;
+	return account.type == Account::Type::Microsoft && !account.name.empty() && !account.uuid.empty() &&
+		!account.accessToken.empty() && account.accessToken != "0" && !account.refreshToken.empty();
 }

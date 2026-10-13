@@ -410,6 +410,11 @@ bool RepairModpack(IHttpClient& http, const PlayRequest& request, const Progress
 bool PlayModpack(IHttpClient& http, const PlayRequest& request, const ProgressFn& progress, std::string* err,
 	const std::atomic<bool>* cancel)
 {
+	// No launching without a verified Microsoft account (there's no offline play).
+	if (!CanLaunchAs(request.account)) {
+		if (err) *err = "Sign in with a Microsoft account that owns Minecraft: Java Edition first.";
+		return false;
+	}
 	if (progress)
 		progress("Reading modpack", -1.0);
 

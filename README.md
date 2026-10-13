@@ -15,7 +15,7 @@ A Minecraft: Java Edition modpack launcher for Windows and Linux, written in C++
 - Download and extract Modrinth `.mrpack` files.
 - Install complete packs from CurseForge, FTB, Technic, and ATLauncher, with hash-checked mod downloads.
 - Play Modrinth packs: installs Minecraft, a Mojang Java runtime, and the mod loader (Fabric, Quilt, Forge, or NeoForge), then launches the game. Packs from other sources cannot be played yet.
-- Microsoft account sign-in or offline play. Microsoft sign-in requires an Entra app client ID approved for the Minecraft API; see [docs/features/account-sign-in.md](docs/features/account-sign-in.md).
+- Microsoft account sign-in, checked before every launch; there is no offline play. Microsoft sign-in requires an Entra app client ID approved for the Minecraft API; see [docs/features/account-sign-in.md](docs/features/account-sign-in.md).
 - Add mods, resource packs and shader packs to a pack from Modrinth or CurseForge (Manage > Content > Browse), with the mods they require. CurseForge needs an API key.
 - Color themes, UI scaling, launch and game-option defaults on the Settings page.
 - Host installed Modrinth packs from **Servers** or My Library's **Server** button, with setup, settings and a built-in console. See [server controls](docs/features/servers.md).

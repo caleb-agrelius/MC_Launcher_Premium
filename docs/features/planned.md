@@ -2,7 +2,7 @@
 
 Features that don't exist yet:
 
-- **Microsoft sign-in approval:** the sign-in flow is built (see [accounts.md](accounts.md)), but it needs an Azure app client ID that Mojang has approved for the Minecraft API. Until one is set (Settings > Account, saved as `microsoftClientId`), only offline mode works.
+- **Microsoft sign-in approval:** the sign-in flow is built (see [accounts.md](accounts.md)), but it needs an Azure app client ID that Mojang has approved for the Minecraft API. Until one is set (Settings > Account, saved as `microsoftClientId`), nobody can sign in, and since there is no offline play, Minecraft can't be played from the launcher.
 - **Linux:** the Linux build compiles and passes `launcher_checks` in CI ([platforms.md](platforms.md)), but the app hasn't been used on a Linux desktop. See [Linux](#linux) below.
 - **Request cache on disk and in Manage:** the response cache ([request-caching.md](request-caching.md)) is in memory and starts empty on each launch, so the first Discover load of a session still asks every source (FTB, Technic and ATLauncher download their whole pack lists). Saving entries under the data folder with their age would carry them across launches. Manage > Content > Browse (`ModSearch`) is not on the cache yet and has no refresh button.
 - **CurseForge download size:** Discover shows a version's download size for every source except CurseForge, which would have to download the pack zip and look up each file. Its API gives the pack zip's own size only.
@@ -52,7 +52,7 @@ A Settings choice, say **Performance** with **Low memory** and **Fewer network c
 The Linux build, its CI and the differences from Windows are described in [platforms.md](platforms.md). What is left:
 
 1. **Use the app on a Linux desktop.** Everything below the window has been checked only by `launcher_checks` in CI. Try, on X11 and on Wayland:
-   - sign in offline and with Microsoft (needs the approved client ID above)
+   - sign in with Microsoft and play (needs the approved client ID above)
    - install one pack from each source, play it, and cancel a play
    - run a server, use its console, and try the Docker switch
    - add files with the picker and by drag and drop

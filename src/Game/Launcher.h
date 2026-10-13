@@ -16,7 +16,7 @@ struct PlayRequest {
 	std::filesystem::path gameRoot;     // shared Minecraft files (minecraft/)
 	std::filesystem::path extractedDir; // installs/<pack id>/ (the unzipped .mrpack)
 	std::filesystem::path instanceDir;  // instances/<pack id>/ (the game directory)
-	Account account;                    // must have a valid access token
+	Account account;                    // must pass CanLaunchAs, checked with Minecraft services first
 	LaunchSettings launch;              // memory, Java, JVM arguments, window size
 	GameOptionsSettings gameOptions;    // vanilla options.txt values applied to the instance
 	const std::atomic<bool>* stopGame = nullptr; // set to force-close the running game
@@ -42,7 +42,8 @@ bool RepairModpack(IHttpClient& http,
 // keeps running and PlayModpack returns false with err = "Cancelled". When
 // request.stopGame is set while the game runs, the game is killed and
 // PlayModpack returns false with err = "Stopped".
-// progress receives "Playing" (fraction 1) once the game has started.
+// progress receives "Playing" (fraction 1) once the game has started. Fails at once,
+// before touching any files, unless CanLaunchAs(request.account).
 bool PlayModpack(IHttpClient& http,
 				 const PlayRequest& request,
 				 const ProgressFn& progress,

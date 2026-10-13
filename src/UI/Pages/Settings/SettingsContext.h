@@ -14,7 +14,7 @@ struct SettingsPageContext {
 	std::uint64_t systemMemoryMb = 0;  // 0 if unknown
 	float dpiScale = 1.0f;
 	std::string accountName;           // empty when signed out
-	std::string accountKind;           // e.g. "Microsoft account", "Offline (singleplayer)"
+	std::string accountKind;           // "Microsoft account" or "No account yet"
 	int accountCount = 0;              // saved accounts
 	bool curseForgeEnvKeySet = false;  // MCLP_CURSEFORGE_API_KEY is set
 	double shownAt = 0.0;              // ImGui::GetTime() when the page was opened (entrance animation)
