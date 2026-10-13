@@ -1,4 +1,4 @@
-# Makes sure every pull request configures, builds and passes the offline checks.
+# Makes sure every pull request configures, builds and passes the offline checks on Windows and Linux.
 # Debug only: it compiles about four times faster than Release on the runner. release.yml builds
 # and checks Release before publishing, and merging to main does not rebuild.
 name: CI
@@ -16,5 +16,10 @@ permissions:
 jobs:
   build:
     uses: ./.github/workflows/build.yml
+    with:
+      configuration: Debug
+
+  build-linux:
+    uses: ./.github/workflows/build-linux.yml
     with:
       configuration: Debug
