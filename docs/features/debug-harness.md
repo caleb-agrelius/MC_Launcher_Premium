@@ -12,7 +12,7 @@ Prints what the launcher is doing to the console as it happens: API requests, fi
 | `MC_Launcher_Premium.exe --debug=http,body` | Only the listed channels |
 | `MCLP_DEBUG=file,process` (environment) | Same list syntax; `1` or empty means all. `--debug` on the command line adds to it |
 
-An unknown channel name prints a warning to the console and is ignored. `mcdebug run` still starts the app in its own window with the harness off.
+The app is a GUI-subsystem executable (no console window of its own, in every build configuration). At startup Platform::AttachParentConsole() joins the terminal that launched it, if any, so the trace prints there; mcdebug debug and mcdebug offline use start /b /wait so the batch file waits for the app. Started from Explorer, nothing is shown. An unknown channel name prints a warning to the console and is ignored. `mcdebug run` still starts the app in its own window with the harness off.
 
 ## Offline mode
 

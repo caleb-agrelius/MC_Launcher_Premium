@@ -3,7 +3,9 @@
 
 #include <GLFW/glfw3.h>
 
+#include <cstdio>
 #include <filesystem>
+#include <iostream>
 #include <iterator>
 
 #define WIN32_LEAN_AND_MEAN
@@ -177,6 +179,23 @@ void UsePreciseTimer()
 	timeBeginPeriod(1);
 }
 
+void AttachParentConsole()
+{
+	if (!AttachConsole(ATTACH_PARENT_PROCESS))
+		return;
+	// Streams already redirected to a file or pipe keep their target.
+	const auto reopenIfUnset = [](DWORD id, const char* device, const char* mode, FILE* stream) {
+		const HANDLE handle = GetStdHandle(id);
+		if (handle == nullptr || handle == INVALID_HANDLE_VALUE) {
+			FILE* reopened = nullptr;
+			freopen_s(&reopened, device, mode, stream);
+		}
+	};
+	reopenIfUnset(STD_OUTPUT_HANDLE, "CONOUT$", "w", stdout);
+	reopenIfUnset(STD_ERROR_HANDLE, "CONOUT$", "w", stderr);
+	reopenIfUnset(STD_INPUT_HANDLE, "CONIN$", "r", stdin);
+	std::ios::sync_with_stdio();
+}
 std::filesystem::path ExecutableDir()
 {
 	wchar_t buffer[MAX_PATH * 4];

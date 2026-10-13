@@ -73,6 +73,9 @@ void UsePreciseTimer()
 {
 }
 
+void AttachParentConsole()
+{
+}
 std::filesystem::path ExecutableDir()
 {
 	std::error_code ec;

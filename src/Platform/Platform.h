@@ -56,6 +56,11 @@ bool WaitForDisplayRefresh();
 // different rate from the monitor a window is on (mixed-refresh multi-monitor setups).
 double CompositorRefreshRate();
 
+// The app has no console of its own on Windows. When it was started from a terminal (mcdebug debug, a shell),
+// joins that terminal so the debug harness can print there and points stdout/stderr at it unless they were
+// already redirected. Does nothing when started from Explorer or on other systems. Call first in main().
+void AttachParentConsole();
+
 // The folder holding the running executable, or empty if the OS can't say.
 std::filesystem::path ExecutableDir();
 

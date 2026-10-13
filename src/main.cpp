@@ -39,6 +39,8 @@ fs::path FindDataRoot()
 
 int main(int argc, char** argv)
 {
+	// Release builds are GUI-subsystem apps with no console; reuse the terminal that started us, if any.
+	Platform::AttachParentConsole();
 	// The debug harness (--debug[=channels] or MCLP_DEBUG) traces to the console; off by default.
 	std::vector<std::string> debugWarnings;
 	const unsigned debugChannels = Debug::ConfigureFromEnvironment(argc, argv, debugWarnings);

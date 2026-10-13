@@ -58,7 +58,7 @@ goto collect_channels
 if defined CHANNELS (set "MCLP_DEBUG=%CHANNELS:~1%") else set "MCLP_DEBUG=all"
 echo Debug harness on [%MCLP_DEBUG%]. Close the app window or press Ctrl+C to stop.
 pushd "%PROJECT_DIR%"
-"%APP%"
+start "" /b /wait "%APP%"
 set "APP_EXIT=%errorlevel%"
 popd
 exit /b %APP_EXIT%
@@ -85,7 +85,7 @@ if defined CHANNELS (set "MCLP_DEBUG=%CHANNELS:~1%") else set "MCLP_DEBUG=http,l
 set "MCLP_OFFLINE=1"
 echo Offline mode on, debug harness on [%MCLP_DEBUG%]. Close the app window or press Ctrl+C to stop.
 pushd "%PROJECT_DIR%"
-"%APP%"
+start "" /b /wait "%APP%"
 set "APP_EXIT=%errorlevel%"
 popd
 exit /b %APP_EXIT%
