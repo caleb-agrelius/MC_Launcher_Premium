@@ -363,6 +363,15 @@ std::filesystem::path ExecutableDir()
 	return ec ? std::filesystem::path() : self.parent_path();
 }
 
+std::filesystem::path UserDataDir()
+{
+	if (const char* data = std::getenv("XDG_DATA_HOME"); data && *data)
+		return std::filesystem::path(data) / "mc-launcher-premium";
+	if (const char* home = std::getenv("HOME"); home && *home)
+		return std::filesystem::path(home) / ".local" / "share" / "mc-launcher-premium";
+	return {};
+}
+
 void ApplyTitleBarStyle(GLFWwindow*, const TitleBarStyle&)
 {
 }

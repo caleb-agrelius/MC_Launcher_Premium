@@ -109,6 +109,12 @@ void AttachParentConsole();
 // The folder holding the running executable, or empty if the OS can't say.
 std::filesystem::path ExecutableDir();
 
+// The per-user folder for the launcher's data, used when the folder holding resources/ can't be written
+// to (an AppImage, a system-wide install): $XDG_DATA_HOME/mc-launcher-premium, else
+// ~/.local/share/mc-launcher-premium. Empty where the launcher keeps its data beside the executable
+// (Windows) or the OS has no such folder. The folder is not created.
+std::filesystem::path UserDataDir();
+
 // RGB, 0-255.
 struct Rgb {
 	unsigned char r = 0;

@@ -3,6 +3,7 @@
 #include "Storage/Settings.h"
 
 #include <filesystem>
+#include <initializer_list>
 #include <iterator>
 
 namespace Theme {
@@ -216,6 +217,18 @@ static ImFont* AddFontIfExists(const char* path, const ImFontConfig* config = nu
 	return ImGui::GetIO().Fonts->AddFontFromFileTTF(path, kFontBody, config);
 }
 
+#ifndef _WIN32
+// The first of paths that exists, added to the atlas.
+static ImFont* AddFirstFontThatExists(std::initializer_list<const char*> paths, const ImFontConfig* config = nullptr)
+{
+	for (const char* path : paths) {
+		if (ImFont* font = AddFontIfExists(path, config))
+			return font;
+	}
+	return nullptr;
+}
+#endif
+
 // Merges fallback fonts into the most recently added font, so text in other scripts
 // (pack descriptions are often Chinese, Russian, ...) and symbols render instead of '?'.
 // Glyphs are rasterized on demand, so this costs nothing until they're used.
@@ -233,6 +246,16 @@ static void AddFallbackFonts()
 	};
 	for (const char* path : fallbacks)
 		AddFontIfExists(path, &merge);
+#else
+	// Chinese, Japanese and Korean, where Noto CJK is installed. Distributions keep it in different places.
+	ImFontConfig merge;
+	merge.MergeMode = true;
+	AddFirstFontThatExists({
+		"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", // Debian, Ubuntu
+		"/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",      // Arch
+		"/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc", // Fedora
+		"/usr/share/fonts/OTF/NotoSansCJK-Regular.ttc",
+	}, &merge);
 #endif
 }
 
@@ -247,6 +270,28 @@ void LoadFonts()
 	g_fonts.bold = AddFontIfExists("C:\\Windows\\Fonts\\seguisb.ttf");
 	if (!g_fonts.bold)
 		g_fonts.bold = AddFontIfExists("C:\\Windows\\Fonts\\segoeuib.ttf");
+	if (g_fonts.bold)
+		AddFallbackFonts();
+#else
+	// Noto Sans, else DejaVu Sans (nearly every desktop has one); without either, ImGui's built-in font is used.
+	g_fonts.regular = AddFirstFontThatExists({
+		"/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+		"/usr/share/fonts/noto/NotoSans-Regular.ttf",
+		"/usr/share/fonts/google-noto/NotoSans-Regular.ttf",
+		"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+		"/usr/share/fonts/TTF/DejaVuSans.ttf",
+		"/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
+	});
+	if (g_fonts.regular)
+		AddFallbackFonts();
+	g_fonts.bold = AddFirstFontThatExists({
+		"/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
+		"/usr/share/fonts/noto/NotoSans-Bold.ttf",
+		"/usr/share/fonts/google-noto/NotoSans-Bold.ttf",
+		"/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+		"/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+		"/usr/share/fonts/dejavu-sans-fonts/DejaVuSans-Bold.ttf",
+	});
 	if (g_fonts.bold)
 		AddFallbackFonts();
 #endif

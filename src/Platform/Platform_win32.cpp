@@ -364,6 +364,11 @@ std::filesystem::path ExecutableDir()
 	return {};
 }
 
+std::filesystem::path UserDataDir()
+{
+	return {};
+}
+
 void ApplyTitleBarStyle(GLFWwindow* window, const TitleBarStyle& style)
 {
 	const HWND hwnd = glfwGetWin32Window(window);
